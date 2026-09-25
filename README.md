@@ -29,7 +29,7 @@ Core principles:
             └──────────────┘        │   └─ runtime ─▶ Agno Registry  │
                                     └──────┬───────────────┬────────┘
                                            │               │
-                          platform/ · commerce/ · intelligence/   (future core layers)
+                          core/ · commerce/ · intelligence/   (future product layers)
                                            │
                           integrations/contracts ◀─ integrations/adapters ─▶ external systems
                                            │
@@ -59,7 +59,7 @@ page) and local PostgreSQL/Redis infrastructure are implemented.
 apps/
   api/            FastAPI application (import package `app`)
   web/            Next.js application
-platform/         generic core layers (agents, teams, workflows, tools, actions, policies,
+core/             generic core layers (agents, teams, workflows, tools, actions, policies,
                   permissions, approvals, verification, audit) — placeholders
 commerce/         generic commerce domain — placeholder
 integrations/
@@ -140,3 +140,7 @@ uv run ruff check . && uv run ruff format --check .
 cd apps/web && npm run typecheck && npm run build
 docker compose --env-file .env.example config --quiet   # validate compose
 ```
+
+CI (`.github/workflows/ci.yml`) runs the backend, frontend and infrastructure checks above on
+every pull request and on pushes to `main`. It also starts PostgreSQL/Redis and verifies they
+are healthy and that pgvector is enabled.
