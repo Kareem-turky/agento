@@ -1,4 +1,4 @@
-# platform/
+# core/
 
 Generic core product layers built **around** Agno (Agno itself is an external dependency).
 
@@ -17,5 +17,5 @@ Generic core product layers built **around** Agno (Agno itself is an external de
 
 Empty placeholders for now. No company-specific logic belongs here.
 
-Note: when Python code is added, it must not be importable as a top-level package
-named `platform`, which would shadow the Python standard library module of the same name.
+Named `core` (not `platform`) so future Python code here never collides with the
+Python standard-library `platform` module.
