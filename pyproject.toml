@@ -1,0 +1,53 @@
+[project]
+name = "commerce-ai-platform"
+version = "0.1.0"
+description = "Installable AI operating layer for commerce and business operations (foundation)."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = { text = "Proprietary" }
+dependencies = [
+    # Agent runtime / framework. External, pinned dependency — never forked or vendored.
+    "agno==3.0.11",
+    # HTTP API
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.54.0",
+    # Configuration
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    # PostgreSQL (async) + pgvector
+    "sqlalchemy[asyncio]==2.1.1",
+    "psycopg[binary]==3.3.6",
+    "pgvector==0.5.0",
+    # Redis (cache / queue / locks)
+    "redis==8.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "httpx==0.28.1",
+    "ruff==0.16.9",
+]
+
+[tool.uv]
+# The repository root is a monorepo, not a distributable package.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["apps/api"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["apps/web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
