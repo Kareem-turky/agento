@@ -9,6 +9,7 @@ Run with: ``uvicorn app.main:create_app --factory --app-dir apps/api``
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from agno.models.base import Model
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
@@ -20,6 +21,7 @@ from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_statu
 def create_app(
     settings: Settings | None = None,
     runtime_settings: AgnoAPISettings | None = None,
+    default_model: Model | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -57,5 +59,5 @@ def create_app(
             "agent_runtime": runtime_status(app.state.agent_os, app.state.runtime_started),
         }
 
-    app.state.agent_os = attach_agent_os(app, settings, runtime_settings)
+    app.state.agent_os = attach_agent_os(app, settings, runtime_settings, default_model)
     return app
