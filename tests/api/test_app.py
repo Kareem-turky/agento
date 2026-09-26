@@ -1,5 +1,4 @@
 import importlib
-import importlib.util
 from collections import Counter
 from importlib.metadata import version
 
@@ -92,17 +91,19 @@ def test_agno_version_is_pinned() -> None:
     assert "site-packages" in agno.__file__
 
 
-def test_no_model_provider_or_key_is_required(
+def test_disabled_provider_boots_without_any_provider_key(
     monkeypatch: pytest.MonkeyPatch, settings, runtime_settings
 ) -> None:
     for variable in PROVIDER_KEY_VARIABLES:
         monkeypatch.delenv(variable, raising=False)
 
     app = create_app(settings, runtime_settings)
+    agent_ids = [agent.id for agent in app.state.agent_os.agents]
     model = registered_agent(app, SMOKE_TEST_AGENT_ID).model
 
+    assert settings.default_model_provider == "disabled"
+    assert agent_ids == [SMOKE_TEST_AGENT_ID]
     assert isinstance(model, NonExecutingModel)
-    assert importlib.util.find_spec("openai") is None
     with pytest.raises(ModelExecutionDisabledError):
         model.invoke()
 

@@ -67,10 +67,56 @@ PostgreSQL database
 The schema name comes from `APP_AGNO_DB_SCHEMA` (default `agno_runtime`). Do not write to
 Agno's tables from product code.
 
-**Smoke-test agent.** One non-production agent, `runtime-smoke-test`, proves component
-registration. It has no tools and no memory, and uses `NonExecutingModel` — a placeholder
-that satisfies Agno's `Model` interface and raises if invoked — so no model provider SDK or
-API key is needed (AgentOS would otherwise default to OpenAI). It is never executed.
+**Registered agents** (decided in `app/runtime/components.py`):
+
+| Agent | Registered when | Purpose |
+|---|---|---|
+| `runtime-smoke-test` | `APP_ENVIRONMENT` is `local` or `test` | Proves component registration. Uses `NonExecutingModel` (raises if invoked); never executed. Never registered in `staging`/`production`. |
+| `generic-reasoning` | a default model is configured (any environment) | Proves the real model execution path. Not a business agent. |
+
+With the provider `disabled` in `staging`/`production`, AgentOS starts with no agents — the
+platform never needs an LLM provider just to boot.
+
+### Model providers
+
+**Agno is the provider abstraction.** Agents depend on Agno's `Model`
+(`agno.models.base.Model`); our code never defines its own model/LLM interface.
+`app/runtime/models.py` only maps configuration to a native Agno model class:
+
+```
+APP_DEFAULT_MODEL_PROVIDER + APP_DEFAULT_MODEL_ID
+        │  build_default_model(settings)
+        ▼
+openai    → agno.models.openai.responses.OpenAIResponses(id=...)
+anthropic → agno.models.anthropic.claude.Claude(id=...)
+disabled  → None (no live agent)
+        │
+        ▼
+generic-reasoning Agent(model=...) → AgentOS(agents=[...])
+```
+
+- **Supported providers:** OpenAI (Responses API) and Anthropic. Provider-specific code
+  lives **only** in the model factory; business agents must depend on Agno `Model`, never on
+  OpenAI/Anthropic classes.
+- **Explicit model IDs:** `APP_DEFAULT_MODEL_ID` has no default and is always passed to the
+  model; Agno's built-in default IDs are never relied on.
+- **Credentials:** the providers' standard variables (`OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`), read by Agno's model classes. They are not product settings, are
+  never stored in PostgreSQL, logged, or returned by `/health`; the factory only checks
+  that the selected provider's key is present. Only that provider's key is required.
+- **Fail fast:** selecting a provider without `APP_DEFAULT_MODEL_ID` or without its key
+  stops startup with a `ModelConfigurationError` naming the missing variable; unsupported
+  provider values are rejected by settings validation. `disabled` (the default) is valid.
+- **Adding a provider** (e.g. Google, OpenRouter, a local model) means adding one entry to
+  `_PROVIDERS` in the factory and its Agno extra — no agent or domain code changes.
+- **Default, not only:** this is the deployment-default model for generic agents; later
+  agents may use other models.
+
+**`generic-reasoning`** (`app/agents/generic_reasoning.py`) is a plain Agno `Agent` with the
+configured model, no tools, no knowledge/RAG, no memory behaviour and no system access. Its
+instructions keep it to the information in the user's message (no outside facts) and forbid
+claiming company data, external systems, tools or performed actions. It is infrastructure
+validation, not a product chatbot.
 
 **Security.** The AgentOS routes are protected by Agno's `OS_SECURITY_KEY` bearer-key
 mechanism. The app refuses to start if the key is missing or shorter than 32 characters
@@ -102,7 +148,8 @@ directly on AgentOS APIs. Product-facing APIs will sit above the runtime where a
 | Concern | Choice |
 |---|---|
 | Backend | Python 3.13, FastAPI 0.141.1, Uvicorn 0.54.0 |
-| Agent runtime | Agno 3.0.11 — AgentOS + PostgresDb (`agno[os,postgres]==3.0.11`) |
+| Agent runtime | Agno 3.0.11 — AgentOS + PostgresDb (`agno[os,postgres,openai,anthropic]==3.0.11`) |
+| Model providers | Agno native models: OpenAI Responses, Anthropic Claude (optional, `disabled` by default) |
 | Python packaging | uv (`pyproject.toml`, `uv.lock`) |
 | Config | pydantic-settings 2.15.0 |
 | Database | PostgreSQL 17 + pgvector 0.8.6 (SQLAlchemy 2.1 async + psycopg 3) |
@@ -165,6 +212,10 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `APP_REDIS_URL` | API | Optional Redis DSN (not used yet) |
 | `OS_SECURITY_KEY` | Agno | **Required**, ≥ 32 chars. Bearer key for AgentOS routes (read by Agno) |
 | `DOCS_ENABLED` | Agno | Optional (default `true`). Always off in `staging`/`production` |
+| `APP_DEFAULT_MODEL_PROVIDER` | API | `disabled` (default) \| `openai` \| `anthropic` |
+| `APP_DEFAULT_MODEL_ID` | API | Required when a provider is selected; no default |
+| `OPENAI_API_KEY` | Agno (OpenAI) | Required only when the provider is `openai` |
+| `ANTHROPIC_API_KEY` | Agno (Anthropic) | Required only when the provider is `anthropic` |
 | `AGNO_TELEMETRY` | Agno | Set `false` to disable Agno telemetry |
 | `NEXT_PUBLIC_API_BASE_URL` | web | API base URL (reserved for later use) |
 
@@ -232,6 +283,29 @@ curl -s -X DELETE -H "$H" "http://localhost:8000/sessions/$SID?type=agent"   # c
 The integration test `tests/integration/test_agentos_postgres.py` automates this, including
 reading the session back from a fresh application instance.
 
+### Optional: live model inference (manual)
+
+Not required for development or CI. With your own provider key, set in `.env`:
+
+```bash
+APP_DEFAULT_MODEL_PROVIDER=anthropic        # or openai
+APP_DEFAULT_MODEL_ID=<a current model ID from your provider>
+ANTHROPIC_API_KEY=<your key>                # or OPENAI_API_KEY for openai
+```
+
+Restart the API (the `--env-file .env` flag loads the key into the process environment,
+where Agno reads it), then call the native AgentOS run endpoint:
+
+```bash
+curl -s -H "Authorization: Bearer $OS_SECURITY_KEY" \
+  -F message='Rewrite as one sentence: The review moved to Tuesday. It starts at 10:00.' \
+  -F stream=false \
+  http://localhost:8000/agents/generic-reasoning/runs
+```
+
+The response contains `content`, `run_id` and `session_id`; the run is stored in
+`agno_runtime.agno_runs`. This makes a real, billable provider call.
+
 ## 9. Run the frontend
 
 ```bash
@@ -255,3 +329,11 @@ every pull request and on pushes to `main`. The backend job starts PostgreSQL vi
 runs the integration tests (they must not skip in CI), then boots the API with a CI-only
 `OS_SECURITY_KEY` and checks `/health` and AgentOS authentication. The infrastructure job starts
 PostgreSQL/Redis and verifies they are healthy and that pgvector is enabled.
+
+**CI never calls a model provider.** No provider keys exist in CI and the default provider is
+`disabled`. Agent execution is tested with a TEST-ONLY `DeterministicModel`
+(`tests/support/deterministic_model.py`, an Agno `Model` returning a fixed response): the
+`generic-reasoning` agent runs through the native `POST /agents/generic-reasoning/runs`
+endpoint against PostgreSQL, with a guard that fails the test on any outbound connection,
+and the run and session are read back from `agno_runtime`. Provider factory tests only
+construct `OpenAIResponses`/`Claude` objects with dummy values; nothing is sent.

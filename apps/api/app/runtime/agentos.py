@@ -8,38 +8,24 @@ Agno is an external, pinned dependency. This module only configures it:
 * ``OS_SECURITY_KEY`` (read by Agno's ``AgnoAPISettings``) protects the AgentOS
   routes. It is a temporary runtime guard, not product authentication.
 
-The single registered agent is a non-production smoke test: no tools, no
-memory, and a placeholder model that refuses execution (no provider, no keys).
+Which agents are registered is decided in ``app.runtime.components``; the
+default model comes from ``app.runtime.models``.
 """
 
 from importlib.metadata import version
 
-from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.models.base import Model
 from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app.config import Settings
-from app.runtime.non_executing_model import NonExecutingModel
+from app.runtime.components import build_agents
+from app.runtime.errors import RuntimeConfigurationError
+from app.runtime.models import build_default_model
 
-SMOKE_TEST_AGENT_ID = "runtime-smoke-test"
 MIN_OS_SECURITY_KEY_LENGTH = 32
-# Environments where the API docs (/docs, /redoc, /openapi.json) may be served.
-DOCS_ENVIRONMENTS = frozenset({"local", "test"})
-
-
-class RuntimeConfigurationError(RuntimeError):
-    """Raised when required agent runtime configuration is missing."""
-
-
-def _smoke_test_agent() -> Agent:
-    return Agent(
-        id=SMOKE_TEST_AGENT_ID,
-        name="Runtime smoke test",
-        model=NonExecutingModel(),
-        description="Non-production agent used only to verify AgentOS registration. Never run.",
-    )
 
 
 def resolve_runtime_settings(
@@ -61,7 +47,7 @@ def resolve_runtime_settings(
             f"OS_SECURITY_KEY must be at least {MIN_OS_SECURITY_KEY_LENGTH} characters long "
             "(generate one with: openssl rand -hex 32)."
         )
-    if settings.environment not in DOCS_ENVIRONMENTS and runtime_settings.docs_enabled:
+    if not settings.is_development and runtime_settings.docs_enabled:
         runtime_settings = runtime_settings.model_copy(update={"docs_enabled": False})
     return runtime_settings
 
@@ -70,13 +56,20 @@ def attach_agent_os(
     base_app: FastAPI,
     settings: Settings,
     runtime_settings: AgnoAPISettings | None = None,
+    default_model: Model | None = None,
 ) -> AgentOS:
-    """Attach AgentOS to ``base_app`` in place and return the AgentOS instance."""
+    """Attach AgentOS to ``base_app`` in place and return the AgentOS instance.
+
+    ``default_model`` overrides the model built from settings (used by tests to run
+    agents without a provider).
+    """
     if settings.database_url is None:
         raise RuntimeConfigurationError(
             "APP_DATABASE_URL is required: the agent runtime persists to PostgreSQL."
         )
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
+    if default_model is None:
+        default_model = build_default_model(settings)
 
     db = PostgresDb(
         id="agno-runtime-db",
@@ -90,7 +83,7 @@ def attach_agent_os(
         # Product routes (e.g. /health) win over AgentOS built-ins with the same path.
         on_route_conflict="preserve_base_app",
         db=db,
-        agents=[_smoke_test_agent()],
+        agents=build_agents(settings, default_model),
         settings=runtime_settings,
         telemetry=False,
     )
