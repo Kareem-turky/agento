@@ -1,0 +1,60 @@
+# EXAMPLE ONLY — not production configuration, and not loaded by the application.
+# Generic placeholder data describing how a company operates the canonical commerce
+# domain. Validated in tests against app.company.operating_model.CompanyOperatingModel.
+# Durations are whole seconds (3600 = 1 hour, 86400 = 1 day).
+# No provider settings, credentials, secrets, prompts or URLs belong in this file.
+
+company_id: 00000000-0000-4000-8000-000000000001
+version: 1
+
+order_sla:
+  confirmation_sla: 3600        # 1 hour from pending to confirmed
+  processing_sla: 86400         # 24 hours in processing
+  fulfillment_sla: 172800       # 48 hours to fulfilled
+  late_order_statuses: [pending, confirmed, processing]
+
+shipment_sla:
+  ready_to_ship_sla: 86400      # 24 hours to be ready
+  ship_to_delivery_sla: 432000  # 5 days from shipped to delivered
+  terminal_statuses: [delivered, returned, cancelled]
+
+escalations:
+  - id: late-orders-warning
+    name: Several orders are late
+    severity: warning
+    condition_key: order.late
+    threshold: {kind: count, value: 5}
+  - id: late-orders-critical
+    name: An order is a day past its SLA
+    severity: critical
+    condition_key: order.late
+    threshold: {kind: duration, value: 86400}
+  - id: late-shipments-warning
+    name: Several shipments are late
+    severity: warning
+    condition_key: shipment.late
+    threshold: {kind: count, value: 3}
+  - id: low-inventory-info
+    name: Stock is running low
+    severity: info
+    enabled: false
+    condition_key: inventory.low
+    threshold: {kind: quantity, value: "10"}
+
+kpis:
+  enabled_kpis:
+    - orders_created
+    - orders_fulfilled
+    - late_orders
+    - fulfillment_rate
+    - late_shipments
+  primary_kpis: [late_orders, fulfillment_rate]
+
+reporting:
+  timezone: UTC
+  default_period: yesterday
+  include_comparison: true
+  max_highlights: 5
+
+capabilities:
+  enabled_agents: [operations, analytics]
