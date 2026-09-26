@@ -253,6 +253,63 @@ Shopify · WooCommerce · custom ERP · mock systems (later)
 - `Company` is the business entity inside one physically isolated installation, not a
   SaaS tenant.
 
+### Company Operating Model (company configuration, not executed)
+
+The **Commerce Domain** describes the universal entities: orders, shipments, products
+and inventory. The **Company Operating Model** (`app/company/operating_model/`) describes
+how one company operates them: SLAs, escalation thresholds, the KPIs it cares about,
+reporting preferences and which product capabilities it enables.
+
+Example: an `Order` with `status=processing` and a company `processing_sla` of 24 hours
+(`86400` seconds). A **future** evaluator will combine the two to decide whether the order
+is late. Task 006 only defines and validates the configuration; nothing calculates
+lateness, raises escalations, computes KPIs or builds reports yet.
+
+```
+Canonical Commerce Domain  +  Company Operating Model
+                  ↓ (later)
+        Policy / evaluation layer   → escalations, KPIs, reports
+                  ↓ (later)
+        Agents & workflows (enabled per `capabilities`)
+```
+
+- **Model:** `CompanyOperatingModel(company_id, version, order_sla, shipment_sla,
+  escalations, kpis, reporting, capabilities)`. `company_id` is the canonical `Company.id`
+  and `version` is an integer ≥ 1. The version lifecycle, persistence and a loader are
+  later work.
+- **Durations** hold a `timedelta` in memory and appear in YAML/JSON as whole positive
+  **integer seconds**. Floats, booleans, strings and human phrases such as `"2 days"` are
+  rejected.
+- **SLAs:**
+  - `OrderSLAConfig`: optional `confirmation_sla`, `processing_sla` and `fulfillment_sla`,
+    plus `late_order_statuses` (canonical `OrderStatus` values, empty by default).
+  - `ShipmentSLAConfig`: optional `ready_to_ship_sla` and `ship_to_delivery_sla`, plus
+    `terminal_statuses`, which defaults to `delivered`, `returned` and `cancelled`.
+- **Escalations:** each `EscalationRule` has an `id`, `name`, `severity`
+  (`info`/`warning`/`critical`), `enabled`, a fixed `condition_key` (`order.late`,
+  `shipment.late`, `inventory.low`) and a typed `threshold`. The threshold is one of
+  `count`, `duration` or `quantity`, and its kind must suit the condition. Rules hold no
+  expressions, code or prompts, and there is no rules engine.
+- **KPIs:** `enabled_kpis` is a set of operational `KPIKey`s. `primary_kpis` is an ordered
+  list without duplicates, and every entry must also be enabled. There are no finance or
+  marketing KPIs yet.
+- **Reporting:** `timezone`, `default_period` (`today`, `yesterday`, `last_7_days`,
+  `last_30_days`), `include_comparison` and `max_highlights` (1–100).
+- **Capabilities:** `enabled_agents` is a declarative set (`operations`, `finance`,
+  `marketing`, `customer_experience`, `analytics`, `growth`). It never builds or imports
+  any agent.
+- **Core invariants vs. company config:** rules that always hold (positive item
+  quantities, `Decimal` money, timezone-aware timestamps, trusted actor identity) stay in
+  code and the domain. Choices that vary per company live here.
+- **It is not** provider or model configuration, credentials, authentication, or
+  permission policy. It holds no secrets, prompts or URLs.
+- **Serialization:** every model is immutable and rejects unknown fields. Sets serialize
+  as sorted lists, so JSON/YAML output is deterministic, and round trips are lossless.
+- **Example:** `company/operating_model/operating-model.example.yaml` holds generic,
+  non-production placeholder data. Tests validate it; the application does not load it.
+- **Boundaries:** the package imports only the standard library, Pydantic and the
+  commerce domain (enforced by `tests/company/test_architecture.py`).
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -280,7 +337,7 @@ commerce/         placeholder (the canonical domain lives in apps/api/app/commer
 integrations/
   contracts/      system-neutral interfaces — placeholder
   adapters/       external-system implementations — placeholder
-company/          per-installation config, policies, operating model — placeholder
+company/          per-installation config; operating_model/ holds a non-production example
 intelligence/     memory, knowledge, evals, datasets — placeholders
 infra/            infrastructure (postgres init scripts)
 deployments/      deployment manifests — placeholder
