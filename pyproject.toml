@@ -7,7 +7,7 @@ requires-python = ">=3.13,<3.14"
 license = { text = "Proprietary" }
 dependencies = [
     # Agent runtime / framework. External, pinned dependency — never forked or vendored.
-    "agno==3.0.11",
+    "agno[os,postgres]==3.0.11",
     # HTTP API
     "fastapi==0.141.1",
     "uvicorn[standard]==0.54.0",
@@ -37,6 +37,7 @@ package = false
 testpaths = ["tests"]
 pythonpath = ["apps/api"]
 addopts = "-ra --strict-markers"
+markers = ["integration: requires a running PostgreSQL (APP_DATABASE_URL)"]
 
 [tool.ruff]
 line-length = 100

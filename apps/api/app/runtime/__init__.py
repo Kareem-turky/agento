@@ -1,5 +1,10 @@
-"""Integration point between the application and the Agno agent runtime."""
+"""Integration point between the Product API and the Agno AgentOS runtime."""
 
-from app.runtime.agno_runtime import AgentRuntime, build_agent_runtime
+from app.runtime.agentos import (
+    SMOKE_TEST_AGENT_ID,
+    RuntimeConfigurationError,
+    attach_agent_os,
+    runtime_status,
+)
 
-__all__ = ["AgentRuntime", "build_agent_runtime"]
+__all__ = ["SMOKE_TEST_AGENT_ID", "RuntimeConfigurationError", "attach_agent_os", "runtime_status"]
