@@ -1,8 +1,13 @@
 """Structured application configuration.
 
-Settings are loaded from environment variables (prefix ``APP_``) and, when present,
-from a local ``.env`` file. No secrets have defaults: connection URLs are optional
-until a component actually needs them.
+Two configuration surfaces are kept separate on purpose:
+
+* Product settings (this module): ``APP_*`` environment variables, optionally read
+  from a local ``.env`` file.
+* Agno runtime settings: Agno's own ``AgnoAPISettings``, which reads Agno-defined
+  variables such as ``OS_SECURITY_KEY``. See ``app.runtime.agentos``.
+
+No credentials have defaults.
 """
 
 from functools import lru_cache
@@ -31,8 +36,12 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
 
+    # Required by the agent runtime; validated when the application is built.
     database_url: PostgresDsn | None = None
     redis_url: RedisDsn | None = None
+
+    # PostgreSQL schema owned by Agno for its runtime tables.
+    agno_db_schema: str = Field(default="agno_runtime", pattern=r"^[a-z_][a-z0-9_]*$")
 
 
 @lru_cache
