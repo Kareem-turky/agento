@@ -22,6 +22,7 @@ def build_smoke_test_agent() -> Agent:
         name="Runtime smoke test",
         model=NonExecutingModel(),
         description="Non-production agent used only to verify AgentOS registration. Never run.",
+        telemetry=False,  # product policy, see app.runtime.telemetry
     )
 
 

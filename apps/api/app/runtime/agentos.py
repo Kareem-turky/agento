@@ -24,6 +24,7 @@ from app.config import Settings
 from app.runtime.components import build_agents
 from app.runtime.errors import RuntimeConfigurationError
 from app.runtime.models import build_default_model
+from app.runtime.telemetry import enforce_telemetry_policy
 
 MIN_OS_SECURITY_KEY_LENGTH = 32
 
@@ -68,6 +69,7 @@ def attach_agent_os(
             "APP_DATABASE_URL is required: the agent runtime persists to PostgreSQL."
         )
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
+    enforce_telemetry_policy()
     if default_model is None:
         default_model = build_default_model(settings)
 

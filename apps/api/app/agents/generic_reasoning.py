@@ -35,4 +35,5 @@ def build_generic_reasoning_agent(model: Model) -> Agent:
         add_memories_to_context=False,
         search_knowledge=False,
         read_chat_history=False,
+        telemetry=False,  # product policy, see app.runtime.telemetry
     )

@@ -192,6 +192,25 @@ Permissions / Policy / Tools (later)
   the business entity inside that installation. Nothing is persisted: there are no user,
   role, permission, company or session tables for this.
 
+### Agno telemetry policy
+
+No Agno usage telemetry leaves an installation by default:
+
+- Disabled in product code: `AgentOS(..., telemetry=False)`, and every product-created Agno
+  `Agent` is built with `telemetry=False` (`runtime-smoke-test`, `generic-reasoning`).
+- Agno 3.0.11 lets `AGNO_TELEMETRY` override an agent's flag (at initialization and on each
+  run), so startup is **refused** unless it is unset or `false`
+  (`app/runtime/telemetry.py`). An attempt to enable it (`true`) fails visibly instead of
+  being silently rewritten; ambiguous values (`1`, `yes`, blank, …) are rejected too.
+- `AGNO_TELEMETRY=false` stays in `.env.example`/deployment config as defense in depth;
+  the code does not depend on it.
+- Tests prove it: agents stay `telemetry=False` through a real AgentOS run with the
+  variable unset, and no Agno telemetry dispatch or outbound connection happens.
+
+**Model provider calls are not telemetry.** With `APP_DEFAULT_MODEL_PROVIDER=openai` or
+`anthropic`, model requests go to that provider by design; an installation is only fully
+offline when the provider is `disabled` (or, later, a local model).
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -265,7 +284,7 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `APP_DEFAULT_MODEL_ID` | API | Required when a provider is selected; no default |
 | `OPENAI_API_KEY` | Agno (OpenAI) | Required only when the provider is `openai` |
 | `ANTHROPIC_API_KEY` | Agno (Anthropic) | Required only when the provider is `anthropic` |
-| `AGNO_TELEMETRY` | Agno | Set `false` to disable Agno telemetry |
+| `AGNO_TELEMETRY` | Agno | Optional; unset or `false` only. Anything else (e.g. `true`) stops startup |
 | `NEXT_PUBLIC_API_BASE_URL` | web | API base URL (reserved for later use) |
 
 ## 7. Start PostgreSQL / Redis
