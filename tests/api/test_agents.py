@@ -32,9 +32,15 @@ def test_generic_agent_is_a_plain_agno_agent_without_tools_or_knowledge() -> Non
 
 
 def test_generic_agent_instructions_state_its_boundaries() -> None:
-    text = " ".join(build_generic_reasoning_agent(DeterministicModel()).instructions).lower()
+    instructions = build_generic_reasoning_agent(DeterministicModel()).instructions
+    text = " ".join(instructions).lower()
 
-    assert "only the information in the user's message" in text
+    # Answers come from the user's message only: no outside knowledge.
+    assert instructions[0] == "Answer using only the information provided in the user's message."
+    assert "general knowledge" not in text
+    assert "do not introduce facts, figures or other knowledge" in text
+    assert "that the user did not provide" in text
+    assert "not contain enough information to answer, say so plainly" in text
     assert "no access to company data" in text
     assert "external systems" in text
     assert "no tools" in text

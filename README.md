@@ -114,8 +114,9 @@ generic-reasoning Agent(model=...) → AgentOS(agents=[...])
 
 **`generic-reasoning`** (`app/agents/generic_reasoning.py`) is a plain Agno `Agent` with the
 configured model, no tools, no knowledge/RAG, no memory behaviour and no system access. Its
-instructions keep it to the user's message and forbid claiming company data, external
-systems, tools or performed actions. It is infrastructure validation, not a product chatbot.
+instructions keep it to the information in the user's message (no outside facts) and forbid
+claiming company data, external systems, tools or performed actions. It is infrastructure
+validation, not a product chatbot.
 
 **Security.** The AgentOS routes are protected by Agno's `OS_SECURITY_KEY` bearer-key
 mechanism. The app refuses to start if the key is missing or shorter than 32 characters
@@ -297,7 +298,7 @@ where Agno reads it), then call the native AgentOS run endpoint:
 
 ```bash
 curl -s -H "Authorization: Bearer $OS_SECURITY_KEY" \
-  -F message='Summarise the difference between TCP and UDP in two sentences.' \
+  -F message='Rewrite as one sentence: The review moved to Tuesday. It starts at 10:00.' \
   -F stream=false \
   http://localhost:8000/agents/generic-reasoning/runs
 ```
