@@ -1,4 +1,5 @@
 # commerce/
 
-Generic commerce domain layer (future). Vendor- and company-neutral concepts only.
-Empty placeholder for now.
+Placeholder. The canonical, provider-independent commerce domain currently lives in the
+importable API package at `apps/api/app/commerce/domain/` (see the root README,
+"Commerce domain"). Vendor- and company-neutral concepts only.
