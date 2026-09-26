@@ -211,6 +211,48 @@ No Agno usage telemetry leaves an installation by default:
 `anthropic`, model requests go to that provider by design; an installation is only fully
 offline when the provider is `disabled` (or, later, a local model).
 
+### Commerce domain (canonical, provider-independent)
+
+`app/commerce/domain/` is the product's business language. External systems are never our
+domain model: adapters (not built yet) will translate into these models.
+
+```
+Agents · Workflows · Policies · Analytics
+                  ↓ depend on
+        Canonical Commerce Domain            (app/commerce/domain)
+                  ↑ adapters translate into it (later)
+Shopify · WooCommerce · custom ERP · mock systems (later)
+```
+
+- **Models:** `Company`, `Store`, `Customer`, `Product`, `Variant`, `Warehouse`,
+  `InventoryLevel`, `Order`, `OrderItem`, `Shipment`, plus the value objects `Money` and
+  `ExternalReference`. All are immutable Pydantic models that reject unknown fields; their
+  collections are immutable too (`frozenset` references, `tuple` order items).
+- **Identity:** canonical IDs are product-owned UUIDs. A provider's IDs live only in
+  `ExternalReference(system, external_id)` inside `external_refs`; they never become our
+  `id`. Mapping external IDs to canonical ones is left to future adapters/persistence.
+- **Statuses:** small canonical enums (`ProductStatus`, `OrderStatus`, `ShipmentStatus`).
+  Adapters map source values onto them and keep the original in `source_status`.
+- **Exact numbers:** money and quantities are `Decimal` (floats, NaN and Infinity are
+  rejected; scale is preserved as given; JSON carries them as strings). Currencies are
+  3-letter codes normalized to upper case. There is no exchange-rate logic.
+- **Order invariants:** at least one item, positive item quantities, every item priced in
+  the order's currency, timezone-aware timestamps. `total` is taken as reported and is
+  **not** derived from line prices, because discounts, tax, shipping fees and manual
+  adjustments make that equality unsafe.
+- **Inventory:** `available` is required; `on_hand`/`reserved` are optional; quantities may
+  be negative (backorders, overselling) and no `available = on_hand - reserved` rule is
+  imposed, since systems define these differently.
+- **Datetimes** must be timezone-aware; naive values are rejected.
+- **Customer contact fields** are not format-validated; blank optional strings become
+  `None`.
+- **Boundaries:** the domain imports only the standard library and Pydantic — no Agno,
+  FastAPI, SQLAlchemy or provider SDKs (enforced by `tests/commerce/test_architecture.py`).
+  There is no persistence, API, adapter or referential-integrity check yet; cross-entity
+  existence checks belong to a later application/repository layer.
+- `Company` is the business entity inside one physically isolated installation, not a
+  SaaS tenant.
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -234,7 +276,7 @@ apps/
   web/            Next.js application
 core/             generic core layers (agents, teams, workflows, tools, actions, policies,
                   permissions, approvals, verification, audit) — placeholders
-commerce/         generic commerce domain — placeholder
+commerce/         placeholder (the canonical domain lives in apps/api/app/commerce/domain)
 integrations/
   contracts/      system-neutral interfaces — placeholder
   adapters/       external-system implementations — placeholder
