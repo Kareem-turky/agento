@@ -5,8 +5,12 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/config.py` — product settings (`APP_*` environment variables, optional `.env`).
 - `app/main.py` — `create_app()` factory and the Product `GET /health` route.
 - `app/runtime/agentos.py` — attaches `AgentOS(base_app=...)` with a native `PostgresDb`
-  (schema `agno_runtime`) and the `runtime-smoke-test` agent. Requires `APP_DATABASE_URL`
+  (schema `agno_runtime`) and the agents from `components.py`. Requires `APP_DATABASE_URL`
   and `OS_SECURITY_KEY`.
+- `app/runtime/models.py` — maps `APP_DEFAULT_MODEL_PROVIDER`/`APP_DEFAULT_MODEL_ID` to a
+  native Agno model (`OpenAIResponses`, `Claude`) or `None` when disabled.
+- `app/runtime/components.py` — decides which agents AgentOS registers per environment.
+- `app/agents/generic_reasoning.py` — the `generic-reasoning` agent (takes any Agno `Model`).
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
