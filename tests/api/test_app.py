@@ -116,9 +116,25 @@ def test_missing_database_url_fails_clearly(
         create_app(Settings(_env_file=None), runtime_settings)
 
 
-def test_missing_os_security_key_fails_clearly(settings) -> None:
-    with pytest.raises(RuntimeConfigurationError, match="OS_SECURITY_KEY"):
-        create_app(settings, AgnoAPISettings(os_security_key=None))
+@pytest.mark.parametrize("key", [None, "", "   "])
+def test_missing_os_security_key_is_rejected(settings, key) -> None:
+    with pytest.raises(RuntimeConfigurationError, match="OS_SECURITY_KEY is required"):
+        create_app(settings, AgnoAPISettings(os_security_key=key))
+
+
+@pytest.mark.parametrize("key", ["123", "secret", "development", "x" * 31, " " + "x" * 31])
+def test_short_os_security_key_is_rejected(settings, key) -> None:
+    with pytest.raises(RuntimeConfigurationError, match="at least 32 characters"):
+        create_app(settings, AgnoAPISettings(os_security_key=key))
+
+
+@pytest.mark.parametrize("key", ["x" * 32, "0123456789abcdef" * 4])
+def test_os_security_key_of_32_or_more_characters_is_accepted(settings, key) -> None:
+    app = create_app(settings, AgnoAPISettings(os_security_key=key))
+
+    with TestClient(app) as client:
+        response = client.get("/agents", headers={"Authorization": f"Bearer {key}"})
+    assert response.status_code == 200
 
 
 class TestRouting:

@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # CI-only throwaway value for the AgentOS runtime guard. Not a real secret.
-      OS_SECURITY_KEY: ci-only-agentos-key-not-a-secret
+      OS_SECURITY_KEY: ci-only-agentos-security-key-not-a-secret-0000
       # Integration tests must run (not skip) in CI.
       REQUIRE_INTEGRATION_TESTS: "1"
     steps:

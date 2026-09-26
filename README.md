@@ -73,10 +73,26 @@ that satisfies Agno's `Model` interface and raises if invoked — so no model pr
 API key is needed (AgentOS would otherwise default to OpenAI). It is never executed.
 
 **Security.** The AgentOS routes are protected by Agno's `OS_SECURITY_KEY` bearer-key
-mechanism; the app refuses to start without it. `GET /health` stays public for
-infrastructure monitoring. Agno also leaves `/`, `/info`, `/docs`, `/redoc` and
-`/openapi.json` public. This key is a **temporary runtime guard**, not product
-authentication: user identity, roles and authorization will come in later tasks.
+mechanism. The app refuses to start if the key is missing or shorter than 32 characters
+(generate one with `openssl rand -hex 32`). `GET /health` stays public for infrastructure
+monitoring. This key is a **temporary runtime guard**, not product authentication: user
+identity, roles and authorization will come in later tasks.
+
+**API docs by environment.** `/docs`, `/redoc` and `/openapi.json` are controlled by Agno's
+native `docs_enabled` setting (`DOCS_ENABLED`). The product forces it off when
+`APP_ENVIRONMENT` is `staging` or `production`, so those paths return 404 there; in `local`
+and `test` they are served unless `DOCS_ENABLED=false`. Because AgentOS only applies
+`docs_enabled` to apps it creates itself, `create_app()` passes the same value to our
+FastAPI constructor (`docs_url`, `redoc_url`, `openapi_url`).
+
+**Public AgentOS endpoints and `/info`.** Agno intentionally leaves `/` and `/info` public
+(plus the docs, where enabled). `/info` is an AgentOS runtime discovery endpoint and may
+expose runtime metadata such as component IDs (e.g. `runtime-smoke-test`). Therefore:
+
+- AgentOS is an **internal runtime surface**. A production deployment must **not** expose
+  AgentOS directly to the public internet.
+- Future product authentication and network routing will sit in front of the runtime.
+- The frontend must not consume `/info` or any other AgentOS endpoint directly.
 
 **AgentOS is an internal runtime/API surface.** The frontend must not be designed to depend
 directly on AgentOS APIs. Product-facing APIs will sit above the runtime where appropriate.
@@ -147,7 +163,8 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `APP_DATABASE_URL` | API | **Required.** PostgreSQL DSN (`postgresql+psycopg://...`) |
 | `APP_AGNO_DB_SCHEMA` | API | Schema for Agno runtime tables (default `agno_runtime`) |
 | `APP_REDIS_URL` | API | Optional Redis DSN (not used yet) |
-| `OS_SECURITY_KEY` | Agno | **Required.** Bearer key for AgentOS routes (read by Agno) |
+| `OS_SECURITY_KEY` | Agno | **Required**, ≥ 32 chars. Bearer key for AgentOS routes (read by Agno) |
+| `DOCS_ENABLED` | Agno | Optional (default `true`). Always off in `staging`/`production` |
 | `AGNO_TELEMETRY` | Agno | Set `false` to disable Agno telemetry |
 | `NEXT_PUBLIC_API_BASE_URL` | web | API base URL (reserved for later use) |
 
@@ -165,8 +182,8 @@ the API starts; no product schemas are created.
 
 ## 8. Run the API
 
-Set `OS_SECURITY_KEY` in `.env` first (e.g. `openssl rand -hex 32`); the API refuses to
-start without it or without `APP_DATABASE_URL`. PostgreSQL must be running (section 7).
+Set `OS_SECURITY_KEY` in `.env` first (`openssl rand -hex 32`); the API refuses to start
+without `APP_DATABASE_URL` or without a key of at least 32 characters. PostgreSQL must be running (section 7).
 
 ```bash
 uv run uvicorn app.main:create_app --factory --app-dir apps/api --env-file .env --reload --port 8000
@@ -193,8 +210,8 @@ curl -H "Authorization: Bearer $OS_SECURITY_KEY" http://localhost:8000/agents  #
 
 ### Inspect the AgentOS API docs
 
-Open <http://localhost:8000/docs> (Swagger UI) or <http://localhost:8000/redoc>. Product and
-AgentOS routes appear together. Use **Authorize** with the security key to call AgentOS routes.
+Open <http://localhost:8000/docs> (Swagger UI) or <http://localhost:8000/redoc> — available in
+`local`/`test` only. Product and AgentOS routes appear together. Use **Authorize** with the security key to call AgentOS routes.
 
 ### Verify runtime/session persistence
 

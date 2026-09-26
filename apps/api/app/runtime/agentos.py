@@ -24,6 +24,9 @@ from app.config import Settings
 from app.runtime.non_executing_model import NonExecutingModel
 
 SMOKE_TEST_AGENT_ID = "runtime-smoke-test"
+MIN_OS_SECURITY_KEY_LENGTH = 32
+# Environments where the API docs (/docs, /redoc, /openapi.json) may be served.
+DOCS_ENVIRONMENTS = frozenset({"local", "test"})
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -39,6 +42,30 @@ def _smoke_test_agent() -> Agent:
     )
 
 
+def resolve_runtime_settings(
+    settings: Settings, runtime_settings: AgnoAPISettings | None = None
+) -> AgnoAPISettings:
+    """Validate Agno's runtime settings and apply the product's environment policy.
+
+    * ``OS_SECURITY_KEY`` must be set and at least 32 characters long.
+    * Agno's ``docs_enabled`` is forced off outside local/test environments.
+    """
+    runtime_settings = runtime_settings or AgnoAPISettings()
+    key = (runtime_settings.os_security_key or "").strip()
+    if not key:
+        raise RuntimeConfigurationError(
+            "OS_SECURITY_KEY is required: AgentOS routes must not be served unauthenticated."
+        )
+    if len(key) < MIN_OS_SECURITY_KEY_LENGTH:
+        raise RuntimeConfigurationError(
+            f"OS_SECURITY_KEY must be at least {MIN_OS_SECURITY_KEY_LENGTH} characters long "
+            "(generate one with: openssl rand -hex 32)."
+        )
+    if settings.environment not in DOCS_ENVIRONMENTS and runtime_settings.docs_enabled:
+        runtime_settings = runtime_settings.model_copy(update={"docs_enabled": False})
+    return runtime_settings
+
+
 def attach_agent_os(
     base_app: FastAPI,
     settings: Settings,
@@ -49,11 +76,7 @@ def attach_agent_os(
         raise RuntimeConfigurationError(
             "APP_DATABASE_URL is required: the agent runtime persists to PostgreSQL."
         )
-    runtime_settings = runtime_settings or AgnoAPISettings()
-    if not runtime_settings.os_security_key:
-        raise RuntimeConfigurationError(
-            "OS_SECURITY_KEY is required: AgentOS routes must not be served unauthenticated."
-        )
+    runtime_settings = resolve_runtime_settings(settings, runtime_settings)
 
     db = PostgresDb(
         id="agno-runtime-db",

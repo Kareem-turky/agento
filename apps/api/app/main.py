@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.config import Settings, get_settings
-from app.runtime import attach_agent_os, runtime_status
+from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 
 
 def create_app(
@@ -22,6 +22,10 @@ def create_app(
     runtime_settings: AgnoAPISettings | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
+    runtime_settings = resolve_runtime_settings(settings, runtime_settings)
+    # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
+    # base_app the docs routes come from this constructor, so use the same setting here.
+    docs_enabled = runtime_settings.docs_enabled
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -29,7 +33,15 @@ def create_app(
         yield
         app.state.runtime_started = False
 
-    app = FastAPI(title=settings.name, version=__version__, debug=settings.debug, lifespan=lifespan)
+    app = FastAPI(
+        title=settings.name,
+        version=__version__,
+        debug=settings.debug,
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
     app.state.settings = settings
     app.state.runtime_started = False
 

@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 
-TEST_OS_SECURITY_KEY = "test-only-os-security-key"  # noqa: S105 - test fixture, not a secret
+# Test fixture, not a secret. Satisfies the 32-character minimum.
+TEST_OS_SECURITY_KEY = "test-only-agentos-security-key-000000"  # noqa: S105
 
 # Unit tests never reach a database: this address refuses connections immediately,
 # and AgentOS only logs a warning when it cannot provision tables at startup.
