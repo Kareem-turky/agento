@@ -361,7 +361,11 @@ Application · (later) Tools → Permission/Policy → CommerceIntegration
     entity types never collide. There is no persistence; real adapters may later persist
     identity mappings.
   - Relationships (store, customer, variant, order, warehouse) use the same derivation,
-    so they always point at real mapped entities.
+    so they always point at real mapped entities. Every provider reference must exist and
+    belong together, otherwise the read raises `IntegrationDataError`:
+    - a shop or warehouse must belong to the mock account;
+    - an order's buyer and SKU listings must belong to the order's store;
+    - a stocked SKU must have a listing.
 - **Statuses:** provider vocabularies map onto canonical statuses. An unrecognized
   provider value becomes `unknown`, with the exact value kept in `source_status`. It is
   never an error.

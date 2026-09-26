@@ -211,14 +211,45 @@ class MockCommerceAdapter:
             # pydantic.ValidationError is a ValueError. Provider IDs are not echoed.
             raise IntegrationDataError(entity, "provider record failed validation") from exc
 
-    def _known(self, entity: str, found: object) -> None:
+    def _known[R](self, entity: str, found: R | None) -> R:
         if found is None:
             raise IntegrationDataError(entity, "references a record the provider does not have")
+        return found
+
+    # Relationship integrity: every provider reference must exist and belong to the same
+    # account/shop as the record that points at it; otherwise it is a data error.
+
+    def _owned_by_account(self, entity: str, account_key: str) -> None:
+        if account_key != self._system.fetch_account().account_key:
+            raise IntegrationDataError(entity, "belongs to an unknown account")
+
+    def _checked_shop(self, entity: str, shop_key: str) -> MockShopRecord:
+        shop = self._known(entity, self._system.fetch_shop(shop_key))
+        self._owned_by_account(entity, shop.account_key)
+        return shop
+
+    def _checked_buyer(self, entity: str, buyer_key: str, shop_key: str) -> None:
+        buyer = self._known(entity, self._system.fetch_buyer(buyer_key))
+        if buyer.shop_key != shop_key:
+            raise IntegrationDataError(entity, "references a customer of another store")
+
+    def _checked_sku(self, entity: str, sku_key: str, shop_key: str | None = None) -> None:
+        """SKU -> listing must exist; with ``shop_key``, the listing must be that shop's.
+        Without it (inventory), the listing's shop must belong to this account."""
+        sku = self._known(entity, self._system.fetch_sku(sku_key))
+        listing = self._known(entity, self._system.fetch_listing(sku.listing_key))
+        if shop_key is None:
+            self._checked_shop(entity, listing.shop_key)
+        elif listing.shop_key != shop_key:
+            raise IntegrationDataError(entity, "references a product of another store")
+
+    def _checked_location(self, entity: str, location_key: str) -> None:
+        location = self._known(entity, self._system.fetch_location(location_key))
+        self._owned_by_account(entity, location.account_key)
 
     def _map_store(self, shop: MockShopRecord) -> Store:
         def build() -> Store:
-            if shop.account_key != self._system.fetch_account().account_key:
-                raise IntegrationDataError("store", "belongs to an unknown account")
+            self._owned_by_account("store", shop.account_key)
             return Store.model_validate(
                 {
                     "id": canonical_id(EntityType.STORE, shop.shop_key),
@@ -234,16 +265,16 @@ class MockCommerceAdapter:
 
     def _map_order(self, record: MockOrderRecord) -> Order:
         def build() -> Order:
-            self._known("order", self._system.fetch_shop(record.shop_key))
+            self._checked_shop("order", record.shop_key)
             customer_id = None
             if record.buyer_key is not None:
-                self._known("order", self._system.fetch_buyer(record.buyer_key))
+                self._checked_buyer("order", record.buyer_key, record.shop_key)
                 customer_id = canonical_id(EntityType.CUSTOMER, record.buyer_key)
             items = []
             for line in record.lines:
                 variant_id = None
                 if line.sku_key is not None:
-                    self._known("order item", self._system.fetch_sku(line.sku_key))
+                    self._checked_sku("order item", line.sku_key, record.shop_key)
                     variant_id = canonical_id(EntityType.VARIANT, line.sku_key)
                 items.append(
                     OrderItem.model_validate(
@@ -299,7 +330,8 @@ class MockCommerceAdapter:
 
     def _map_stock(self, record: MockStockRecord) -> InventoryLevel:
         def build() -> InventoryLevel:
-            self._known("inventory level", self._system.fetch_location(record.location_key))
+            self._checked_location("inventory level", record.location_key)
+            self._checked_sku("inventory level", record.sku_key)
             return InventoryLevel.model_validate(
                 {
                     "id": canonical_id(
