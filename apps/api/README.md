@@ -11,6 +11,9 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   native Agno model (`OpenAIResponses`, `Claude`) or `None` when disabled.
 - `app/runtime/components.py` — decides which agents AgentOS registers per environment.
 - `app/agents/generic_reasoning.py` — the `generic-reasoning` agent (takes any Agno `Model`).
+- `app/context/` — immutable `ActorContext`/`RequestContext`, the `ActorResolver`
+  boundary (default `NoActorResolver`), the per-request middleware (`X-Request-ID`) and
+  the `get_request_context` / `require_actor_context` dependencies.
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 

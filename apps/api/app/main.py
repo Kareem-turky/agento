@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.context import ActorResolver, NoActorResolver, RequestContextMiddleware
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 
 
@@ -22,6 +23,7 @@ def create_app(
     settings: Settings | None = None,
     runtime_settings: AgnoAPISettings | None = None,
     default_model: Model | None = None,
+    actor_resolver: ActorResolver | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -60,4 +62,7 @@ def create_app(
         }
 
     app.state.agent_os = attach_agent_os(app, settings, runtime_settings, default_model)
+    # Added after AgentOS so it is the outermost middleware: every response, including
+    # AgentOS auth rejections, carries the server-generated X-Request-ID.
+    app.add_middleware(RequestContextMiddleware, resolver=actor_resolver or NoActorResolver())
     return app
