@@ -310,6 +310,79 @@ Canonical Commerce Domain  +  Company Operating Model
 - **Boundaries:** the package imports only the standard library, Pydantic and the
   commerce domain (enforced by `tests/company/test_architecture.py`).
 
+### Commerce integrations (contract + mock adapter, read-only)
+
+External systems never leak their data models into agents, workflows, policy, analytics
+or business logic. Every external system is reached through a product-owned contract,
+and an adapter translates provider data into the canonical commerce domain:
+
+```
+External provider (mock today; real systems later)
+        ↓ provider-specific records (provider IDs, fields, statuses)
+Adapter (app/integrations/commerce/mock/adapter.py)   ← validation / trust boundary
+        ↓ canonical models only
+Canonical Commerce Domain (app/commerce/domain)
+        ↓
+Application · (later) Tools → Permission/Policy → CommerceIntegration
+```
+
+- **Contract:** `CommerceIntegration` (`app/integrations/commerce/contract.py`) is a small
+  async `Protocol`. The application, and later tools, depend on it, never on a provider
+  API. It offers `get_store`, `get_order`, `list_orders`, `get_shipment`, `list_shipments`
+  and `get_inventory`, and exposes a `descriptor`.
+  - It knows nothing about actors, permissions, policy, FastAPI or Agno. Authorization
+    will wrap these calls in a later layer.
+  - The methods are async because real integrations do I/O.
+- **Queries:** `OrderQuery` and `ShipmentQuery` are immutable and typed. They filter by
+  store or order, by canonical statuses (an empty set means any status), and by time
+  range, with a `limit` of 1 to 500.
+  - Ranges are half-open (`from <= t < to`) and must have `from < to`. Naive datetimes
+    are rejected.
+  - A shipment time range only matches shipments that have `shipped_at`.
+  - Orders sort by `created_at` then `id`. Shipments sort by `shipped_at`, with unshipped
+    ones last, then `id`.
+- **Capabilities:** `IntegrationDescriptor(id, name, capabilities)` describes what an
+  adapter can do (`orders_read`, `shipments_read`, `inventory_read`). This is metadata,
+  not authorization. There are no write capabilities.
+- **Errors:** `CommerceIntegrationError` has three subclasses:
+  - `IntegrationNotFoundError`: an unknown canonical ID.
+  - `IntegrationUnavailableError`: the provider or transport is down.
+  - `IntegrationDataError`: provider data cannot be mapped safely; nothing is coerced.
+
+  They carry no HTTP codes and no provider exception types; the original error is chained.
+  Inventory for an unknown variant or warehouse raises `IntegrationNotFoundError`. A known
+  variant with no stock returns `()`.
+- **Canonical ID ≠ provider ID:**
+  - Canonical IDs are product-owned UUIDs.
+  - The provider's ID is kept only in `ExternalReference(system="mock-commerce",
+    external_id=...)`.
+  - The mock adapter derives canonical IDs with `uuid5(fixed namespace,
+    "<entity type>:<provider id>")`. Repeated reads give the same UUID, and different
+    entity types never collide. There is no persistence; real adapters may later persist
+    identity mappings.
+  - Relationships (store, customer, variant, order, warehouse) use the same derivation,
+    so they always point at real mapped entities.
+- **Statuses:** provider vocabularies map onto canonical statuses. An unrecognized
+  provider value becomes `unknown`, with the exact value kept in `source_status`. It is
+  never an error.
+- **Money and quantities** arrive as strings and become `Decimal`/`Money`, never going
+  through `float`.
+- **Mock system (development and tests only):**
+  - `MockCommerceSystem` is a deterministic, in-memory stand-in for an external
+    provider. It uses provider-style string IDs such as `ord_1001`, `ship_501` and
+    `sku-tee-red-l`, and its own record types, field names and statuses.
+  - Its dataset is 1 account, 2 stores, 6 customers, 5 products, 8 variants,
+    2 warehouses, 13 orders, 9 shipments, and stock levels. All timestamps are fixed and
+    timezone-aware.
+  - The dataset includes edge cases: pending, processing, fulfilled, cancelled and
+    unknown-status orders; pending, in-transit, delivered, failed and unknown-status
+    shipments; low, zero and negative stock; an order without a customer; and manual
+    lines without a SKU.
+  - `with_availability(False)` simulates an outage.
+  - It uses no network and no credentials.
+- **Scope:** read-only. There are no writes, actions, tools, agents, policy, webhooks or
+  persistence. No real provider (for example Shopify or WooCommerce) is implemented.
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -334,9 +407,8 @@ apps/
 core/             generic core layers (agents, teams, workflows, tools, actions, policies,
                   permissions, approvals, verification, audit) — placeholders
 commerce/         placeholder (the canonical domain lives in apps/api/app/commerce/domain)
-integrations/
-  contracts/      system-neutral interfaces — placeholder
-  adapters/       external-system implementations — placeholder
+integrations/     contracts/, adapters/ placeholders (the commerce contract and mock
+                  adapter live in apps/api/app/integrations)
 company/          per-installation config; operating_model/ holds a non-production example
 intelligence/     memory, knowledge, evals, datasets — placeholders
 infra/            infrastructure (postgres init scripts)
