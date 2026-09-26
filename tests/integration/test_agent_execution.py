@@ -156,3 +156,38 @@ def test_actor_context_is_never_sent_to_the_model(
         finally:
             if session_id:
                 client.delete(f"/sessions/{session_id}?type=agent", headers=auth_headers)
+
+
+def test_telemetry_stays_off_through_agentos_initialization_and_run(
+    monkeypatch: pytest.MonkeyPatch,
+    settings,
+    runtime_settings,
+    auth_headers,
+    no_outbound_network,
+    telemetry_calls,
+) -> None:
+    """Agno re-reads AGNO_TELEMETRY during initialization and on every run."""
+    monkeypatch.delenv("AGNO_TELEMETRY", raising=False)
+    model = DeterministicModel()
+    app = create_app(settings, runtime_settings, default_model=model)
+    agent_os = app.state.agent_os
+    (agent,) = [a for a in agent_os.agents if a.id == GENERIC_REASONING_AGENT_ID]
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/agents/{GENERIC_REASONING_AGENT_ID}/runs",
+            headers=auth_headers,
+            data={"message": "hello", "stream": "false"},
+        )
+        session_id = response.json().get("session_id")
+        try:
+            assert response.status_code == 200, response.text
+            assert response.json()["content"] == DETERMINISTIC_RESPONSE
+            assert model.calls == ["ainvoke"]
+            assert agent.telemetry is False
+            assert agent_os.telemetry is False
+            assert telemetry_calls == []
+            assert no_outbound_network == []
+        finally:
+            if session_id:
+                client.delete(f"/sessions/{session_id}?type=agent", headers=auth_headers)

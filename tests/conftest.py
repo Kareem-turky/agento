@@ -33,3 +33,15 @@ def auth_headers() -> dict[str, str]:
 def client(settings: Settings, runtime_settings: AgnoAPISettings):
     with TestClient(create_app(settings, runtime_settings)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def telemetry_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
+    """Record every Agno telemetry dispatch (all Agno telemetry funnels through here)."""
+    from agno.api.api import api
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        api, "post_in_background", lambda route, payload: calls.append((route, payload))
+    )
+    return calls
