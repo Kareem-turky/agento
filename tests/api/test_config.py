@@ -4,12 +4,16 @@ from pydantic import ValidationError
 from app.config import Settings
 
 
-def test_defaults_contain_no_connection_secrets() -> None:
+def test_defaults_contain_no_connection_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    for variable in ("APP_DATABASE_URL", "APP_REDIS_URL", "APP_ENVIRONMENT"):
+        monkeypatch.delenv(variable, raising=False)
+
     settings = Settings(_env_file=None)
 
     assert settings.environment == "local"
     assert settings.database_url is None
     assert settings.redis_url is None
+    assert settings.agno_db_schema == "agno_runtime"
 
 
 def test_loads_from_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,6 +31,14 @@ def test_loads_from_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     assert str(settings.redis_url) == "redis://localhost:6379/0"
 
 
+def test_product_settings_ignore_agno_runtime_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OS_SECURITY_KEY", "runtime-only")
+
+    settings = Settings(_env_file=None)
+
+    assert "runtime-only" not in settings.model_dump_json()
+
+
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
@@ -34,6 +46,7 @@ def test_loads_from_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> Non
         ("APP_API_PORT", "70000"),
         ("APP_DATABASE_URL", "mysql://localhost/db"),
         ("APP_REDIS_URL", "http://localhost:6379"),
+        ("APP_AGNO_DB_SCHEMA", "bad-schema;drop"),
     ],
 )
 def test_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch, variable: str, value: str) -> None:
