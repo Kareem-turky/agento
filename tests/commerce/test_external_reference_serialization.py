@@ -128,6 +128,39 @@ def test_nested_order_item_references_are_sorted() -> None:
     assert isinstance(restored.items[0].external_refs, frozenset)
 
 
+# ----- schemas stay typed ----------------------------------------------------------------
+
+
+def _reference_schema(schema: dict, field: dict) -> dict:
+    items = field["items"]
+    if "$ref" in items:
+        items = schema["$defs"][items["$ref"].rsplit("/", 1)[-1]]
+    return items
+
+
+@pytest.mark.parametrize("mode", ["serialization", "validation"])
+@pytest.mark.parametrize("model", [Company, Order, Shipment])
+def test_external_refs_schema_is_an_array_of_references(model, mode: str) -> None:
+    schema = model.model_json_schema(mode=mode)
+    field = schema["properties"]["external_refs"]
+
+    assert field["type"] == "array"
+    reference = _reference_schema(schema, field)
+    assert reference["type"] == "object"
+    assert set(reference["properties"]) == {"system", "external_id"}
+    assert set(reference["required"]) == {"system", "external_id"}
+
+
+@pytest.mark.parametrize("mode", ["serialization", "validation"])
+def test_nested_order_item_external_refs_schema_is_typed(mode: str) -> None:
+    schema = Order.model_json_schema(mode=mode)
+    order_item = schema["$defs"]["OrderItem"]
+    field = order_item["properties"]["external_refs"]
+
+    assert field["type"] == "array"
+    assert set(_reference_schema(schema, field)["properties"]) == {"system", "external_id"}
+
+
 # ----- byte-identical output across hash seeds ------------------------------------------
 
 SEED_SCRIPT = """

@@ -13,7 +13,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     PlainSerializer,
-    SerializationInfo,
     StringConstraints,
 )
 
@@ -74,23 +73,21 @@ class ExternalReference(BaseModel):
 
 
 def _serialize_references(
-    references: frozenset[ExternalReference], info: SerializationInfo
-) -> list[dict[str, str]] | tuple[dict[str, str], ...]:
+    references: frozenset[ExternalReference],
+) -> tuple[ExternalReference, ...]:
     """Dump references sorted by ``(system, external_id)``.
 
-    A frozenset has no stable iteration order (it depends on the hash seed), so the
-    set itself is never dumped as-is: JSON gets a sorted list and Python mode a sorted
-    tuple of dicts (Pydantic dumps nested models as dicts, which a set cannot hold).
-    Both validate back into the same frozenset.
+    A frozenset has no stable iteration order (it depends on the hash seed), so it is
+    serialized as a sorted tuple; Pydantic then dumps each reference itself (a list in
+    JSON). The result validates back into the same frozenset.
     """
-    ordered = sorted(references, key=lambda ref: (ref.system, ref.external_id))
-    dumped = [{"system": ref.system, "external_id": ref.external_id} for ref in ordered]
-    return dumped if info.mode_is_json() else tuple(dumped)
+    return tuple(sorted(references, key=lambda ref: (ref.system, ref.external_id)))
 
 
 # In memory an immutable, duplicate-free set; serialized in a deterministic order.
 ExternalReferences = Annotated[
-    frozenset[ExternalReference], PlainSerializer(_serialize_references, return_type=Any)
+    frozenset[ExternalReference],
+    PlainSerializer(_serialize_references, return_type=tuple[ExternalReference, ...]),
 ]
 
 
