@@ -15,7 +15,9 @@ Generic core product layers built **around** Agno (Agno itself is an external de
 | `verification/` | Verification of agent outputs/actions |
 | `audit/` | Audit trail |
 
-Empty placeholders for now. No company-specific logic belongs here.
+The first of these layers is implemented in the API package:
+`apps/api/app/governance/` holds actions (catalog and intents), permissions and the
+baseline policy. The directories here remain empty placeholders. No company-specific logic belongs here.
 
 Named `core` (not `platform`) so future Python code here never collides with the
 Python standard-library `platform` module.
