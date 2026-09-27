@@ -227,7 +227,8 @@ Shopify · WooCommerce · custom ERP · mock systems (later)
 - **Models:** `Company`, `Store`, `Customer`, `Product`, `Variant`, `Warehouse`,
   `InventoryLevel`, `Order`, `OrderItem`, `Shipment`, plus the value objects `Money` and
   `ExternalReference`. All are immutable Pydantic models that reject unknown fields; their
-  collections are immutable too (`frozenset` references, `tuple` order items).
+  collections are immutable too (`frozenset` references, `tuple` order items). References
+  serialize in a deterministic order, sorted by `(system, external_id)`.
 - **Identity:** canonical IDs are product-owned UUIDs. A provider's IDs live only in
   `ExternalReference(system, external_id)` inside `external_refs`; they never become our
   `id`. Mapping external IDs to canonical ones is left to future adapters/persistence.

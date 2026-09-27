@@ -7,7 +7,14 @@ any runtime, web framework, persistence layer or external commerce system.
 from decimal import Decimal
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    PlainSerializer,
+    StringConstraints,
+)
 
 # Every domain model: immutable (and therefore hashable) and strict about unknown fields.
 DOMAIN_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
@@ -65,7 +72,23 @@ class ExternalReference(BaseModel):
     external_id: NonEmptyStr
 
 
-ExternalReferences = frozenset[ExternalReference]
+def _serialize_references(
+    references: frozenset[ExternalReference],
+) -> tuple[ExternalReference, ...]:
+    """Dump references sorted by ``(system, external_id)``.
+
+    A frozenset has no stable iteration order (it depends on the hash seed), so it is
+    serialized as a sorted tuple; Pydantic then dumps each reference itself (a list in
+    JSON). The result validates back into the same frozenset.
+    """
+    return tuple(sorted(references, key=lambda ref: (ref.system, ref.external_id)))
+
+
+# In memory an immutable, duplicate-free set; serialized in a deterministic order.
+ExternalReferences = Annotated[
+    frozenset[ExternalReference],
+    PlainSerializer(_serialize_references, return_type=tuple[ExternalReference, ...]),
+]
 
 
 class Money(BaseModel):
