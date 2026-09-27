@@ -21,6 +21,9 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/integrations/commerce/` — product-owned async `CommerceIntegration` contract,
   queries, capabilities and errors; `mock/` holds a deterministic in-memory mock provider
   and its adapter (read-only, development/tests only).
+- `app/governance/` — action catalog, untrusted action intents, permission evaluation
+  and the baseline policy (ALLOW / DENY / REQUIRE_APPROVAL); decisions only, nothing
+  is executed.
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
