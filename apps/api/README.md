@@ -18,6 +18,9 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   persistence, APIs or adapters yet; depends only on Pydantic and the standard library).
 - `app/company/operating_model/` — immutable company configuration (SLAs, escalation
   rules, KPIs, reporting, capabilities); pure config, nothing is evaluated or loaded yet.
+- `app/integrations/commerce/` — product-owned async `CommerceIntegration` contract,
+  queries, capabilities and errors; `mock/` holds a deterministic in-memory mock provider
+  and its adapter (read-only, development/tests only).
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 

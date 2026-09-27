@@ -2,7 +2,9 @@
 
 Connection to arbitrary external business systems.
 
-- `contracts/` — system-neutral interfaces the core depends on.
-- `adapters/` — implementations of those contracts for specific external systems.
+The code lives in the API package: `apps/api/app/integrations/commerce/` holds the
+product-owned `CommerceIntegration` contract (read-only), and `mock/` holds a
+deterministic mock provider with its adapter. The core depends only on the contract,
+never on a specific adapter. See the root README ("Commerce integrations").
 
-The core depends only on contracts, never on a specific adapter. Empty placeholder for now.
+`contracts/` and `adapters/` here remain empty placeholders.
