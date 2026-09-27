@@ -166,3 +166,58 @@ def test_unknown_canonical_ids_are_still_not_found(call) -> None:
     for adapter in (MockCommerceAdapter(), broken):
         with pytest.raises(IntegrationNotFoundError):
             run(call(adapter))
+
+
+# ----- requested inventory entities are validated even when no stock rows match -----------
+
+
+def test_valid_variant_without_stock_returns_empty() -> None:
+    assert inventory_of(MockCommerceAdapter(), "sku-cap-black") == ()
+
+
+def test_valid_variant_and_warehouse_without_matching_stock_returns_empty() -> None:
+    adapter = MockCommerceAdapter()
+    main = cid(EntityType.WAREHOUSE, "loc_main")
+    assert run(adapter.get_inventory(cid(EntityType.VARIANT, "sku-hoodie-grey-m"), main)) == ()
+
+
+def test_stockless_sku_with_missing_listing_is_a_data_error() -> None:
+    orphan = MockSkuRecord("sku-orphan", "lst_missing", None)
+    with pytest.raises(IntegrationDataError):
+        inventory_of(adapter_with(skus=(*SKUS, orphan)), "sku-orphan")
+
+
+@pytest.mark.parametrize("shop_key", ["shop_missing", "shop_foreign"])
+def test_stockless_sku_whose_listing_shop_is_missing_or_foreign_is_a_data_error(
+    shop_key: str,
+) -> None:
+    # sku-cap-black has no stock rows; its listing is lst_cap.
+    listings = tuple(
+        replace(listing, shop_key=shop_key) if listing.listing_key == "lst_cap" else listing
+        for listing in LISTINGS
+    )
+    shops = (*SHOPS, replace(SHOPS[1], shop_key="shop_foreign", account_key=FOREIGN))
+    with pytest.raises(IntegrationDataError):
+        inventory_of(adapter_with(listings=listings, shops=shops), "sku-cap-black")
+
+
+def test_foreign_account_warehouse_without_matching_stock_is_a_data_error() -> None:
+    # sku-hoodie-grey-m has no stock row at loc_main.
+    locations = (replace(LOCATIONS[0], account_key=FOREIGN), LOCATIONS[1])
+    adapter = adapter_with(locations=locations)
+    with pytest.raises(IntegrationDataError):
+        run(
+            adapter.get_inventory(
+                cid(EntityType.VARIANT, "sku-hoodie-grey-m"), cid(EntityType.WAREHOUSE, "loc_main")
+            )
+        )
+
+
+def test_unknown_inventory_ids_remain_not_found() -> None:
+    adapter = MockCommerceAdapter()
+    with pytest.raises(IntegrationNotFoundError) as exc:
+        run(adapter.get_inventory(uuid4()))
+    assert exc.value.entity == "variant"
+    with pytest.raises(IntegrationNotFoundError) as exc:
+        run(adapter.get_inventory(cid(EntityType.VARIANT, "sku-cap-black"), uuid4()))
+    assert exc.value.entity == "warehouse"

@@ -157,12 +157,16 @@ class MockCommerceAdapter:
         self, variant_id: UUID, warehouse_id: UUID | None = None
     ) -> tuple[InventoryLevel, ...]:
         def read() -> tuple[InventoryLevel, ...]:
+            # Validate the requested entities first, so that "no stock" is only reported for
+            # valid provider relationships; each returned stock row is validated again below.
             sku_key = self._resolve(EntityType.VARIANT, variant_id, self._system.list_sku_keys())
+            self._checked_sku("variant", sku_key)
             location_key = None
             if warehouse_id is not None:
                 location_key = self._resolve(
                     EntityType.WAREHOUSE, warehouse_id, self._system.list_location_keys()
                 )
+                self._checked_location("warehouse", location_key)
             levels = [self._map_stock(r) for r in self._system.fetch_stock(sku_key, location_key)]
             return tuple(sorted(levels, key=lambda level: level.warehouse_id))
 
