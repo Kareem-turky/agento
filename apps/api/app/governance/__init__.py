@@ -3,10 +3,11 @@
 Pure decision logic. It decides; it never executes an action, calls an integration,
 persists an approval or writes an audit record.
 
-    trusted ActorContext + untrusted ActionIntent + trusted ActionScope
-        -> trusted ActionCatalog (definition, risk, required permission)
-        -> PermissionEvaluator  -> PermissionDecision
-        -> BaselinePolicyEvaluator -> PolicyDecision (ALLOW / DENY / REQUIRE_APPROVAL)
+    untrusted ActionIntent (name only)
+      -> GovernanceGate: trusted ActionCatalog lookup (unknown -> DENY / UNKNOWN_ACTION)
+      -> trusted ActionDefinition
+      -> PermissionEvaluator(actor, action, scope) -> PermissionDecision
+      -> BaselinePolicyEvaluator(action, permission) -> PolicyDecision
 """
 
 from app.governance.actions import (

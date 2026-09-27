@@ -1,13 +1,19 @@
-"""Permission evaluation: may this trusted actor perform this action on this target?
+"""Permission evaluation: may this trusted actor perform this trusted action on this target?
 
-Rules (fail closed):
-- no actor -> denied; unknown action name -> denied;
-- the actor's company must equal the target company;
-- the target must match the action's scope requirement (STORE needs a store id,
-  COMPANY must not have one);
-- the actor must hold the action's required permission exactly: no wildcards, no
-  prefix matching, and roles grant nothing by themselves;
-- STORE-scoped actions need the target store in ``actor.store_ids`` (empty -> none).
+The evaluator only sees a trusted ``ActionDefinition``. Resolving an untrusted action
+name to a definition (and denying unknown names) happens earlier, in the gate.
+
+Checks, in order (fail closed, first failure wins):
+1. no actor                                   -> NO_ACTOR
+2. actor.company_id != scope.company_id       -> COMPANY_MISMATCH
+3. exact required permission not held         -> MISSING_PERMISSION
+   (no wildcards, no prefix matching; roles and actor type grant nothing)
+4. STORE actions only:
+   a. scope has no store                      -> STORE_SCOPE_MISSING
+   b. store not in actor.store_ids            -> STORE_NOT_PERMITTED (empty -> none)
+5.                                            -> GRANTED
+COMPANY actions are not constrained by stores: neither ``scope.store_id`` nor
+``actor.store_ids`` affects them.
 """
 
 from enum import StrEnum
@@ -15,68 +21,50 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from app.context.models import ActorContext
-from app.governance.actions import (
-    ActionCatalog,
-    ActionDefinition,
-    ActionIntent,
-    ActionScope,
-    ActionScopeRequirement,
-)
+from app.governance.actions import ActionDefinition, ActionScope, ActionScopeRequirement
 
 
 class PermissionReason(StrEnum):
     GRANTED = "granted"
     NO_ACTOR = "no_actor"
-    UNKNOWN_ACTION = "unknown_action"
     COMPANY_MISMATCH = "company_mismatch"
-    STORE_SCOPE_MISSING = "store_scope_missing"
-    UNEXPECTED_STORE_SCOPE = "unexpected_store_scope"
     MISSING_PERMISSION = "missing_permission"
+    STORE_SCOPE_MISSING = "store_scope_missing"
     STORE_NOT_PERMITTED = "store_not_permitted"
 
 
 class PermissionDecision(BaseModel):
+    """The authorization result for one trusted action."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     allowed: StrictBool
     reason: PermissionReason
     action_name: str
-    # The trusted definition, when the action is known.
-    action: ActionDefinition | None = None
+    required_permission: str
 
 
 class PermissionEvaluator:
-    def __init__(self, catalog: ActionCatalog) -> None:
-        self._catalog = catalog
-
     def evaluate(
-        self, actor: ActorContext | None, intent: ActionIntent, scope: ActionScope
+        self, actor: ActorContext | None, action: ActionDefinition, scope: ActionScope
     ) -> PermissionDecision:
-        action = self._catalog.get(intent.action_name)
-
-        def deny(reason: PermissionReason) -> PermissionDecision:
+        def decision(reason: PermissionReason) -> PermissionDecision:
             return PermissionDecision(
-                allowed=False, reason=reason, action_name=intent.action_name, action=action
+                allowed=reason is PermissionReason.GRANTED,
+                reason=reason,
+                action_name=action.name,
+                required_permission=action.required_permission,
             )
 
         if actor is None:
-            return deny(PermissionReason.NO_ACTOR)
-        if action is None:
-            return deny(PermissionReason.UNKNOWN_ACTION)
+            return decision(PermissionReason.NO_ACTOR)
         if actor.company_id != scope.company_id:
-            return deny(PermissionReason.COMPANY_MISMATCH)
-        is_store_action = action.scope_requirement is ActionScopeRequirement.STORE
-        if is_store_action and scope.store_id is None:
-            return deny(PermissionReason.STORE_SCOPE_MISSING)
-        if not is_store_action and scope.store_id is not None:
-            return deny(PermissionReason.UNEXPECTED_STORE_SCOPE)
+            return decision(PermissionReason.COMPANY_MISMATCH)
         if action.required_permission not in actor.permissions:
-            return deny(PermissionReason.MISSING_PERMISSION)
-        if is_store_action and scope.store_id not in actor.store_ids:
-            return deny(PermissionReason.STORE_NOT_PERMITTED)
-        return PermissionDecision(
-            allowed=True,
-            reason=PermissionReason.GRANTED,
-            action_name=intent.action_name,
-            action=action,
-        )
+            return decision(PermissionReason.MISSING_PERMISSION)
+        if action.scope_requirement is ActionScopeRequirement.STORE:
+            if scope.store_id is None:
+                return decision(PermissionReason.STORE_SCOPE_MISSING)
+            if scope.store_id not in actor.store_ids:
+                return decision(PermissionReason.STORE_NOT_PERMITTED)
+        return decision(PermissionReason.GRANTED)

@@ -1,48 +1,89 @@
+import inspect
+
 import pytest
 
-from app.governance import ActionIntent, PermissionEvaluator, PermissionReason
+from app.governance import (
+    ActionRisk,
+    ActionScopeRequirement,
+    PermissionDecision,
+    PermissionEvaluator,
+    PermissionReason,
+)
+from app.governance import permissions as permissions_module
 from tests.governance.factories import (
     CATALOG,
-    COMPANY,
     STORE_A,
     STORE_B,
     actor,
     company_scope,
+    definition,
     store_scope,
 )
 
-EVALUATOR = PermissionEvaluator(CATALOG)
+EVALUATOR = PermissionEvaluator()
+STORE_READ = CATALOG.get("orders.read")
+STORE_CANCEL = CATALOG.get("orders.cancel")
+COMPANY_READ = CATALOG.get("reports.read")
 
 
-def check(actor_ctx, name: str, scope):
-    return EVALUATOR.evaluate(actor_ctx, ActionIntent(action_name=name), scope)
+# ----- contract ---------------------------------------------------------------------------
 
 
-def test_granted_store_action() -> None:
-    decision = check(actor(), "orders.read", store_scope())
-    assert decision.allowed and decision.reason is PermissionReason.GRANTED
-    assert decision.action == CATALOG.get("orders.read")
+def test_evaluator_takes_a_trusted_definition_and_knows_no_catalog_or_intent() -> None:
+    assert list(inspect.signature(PermissionEvaluator).parameters) == []
+    assert list(inspect.signature(PermissionEvaluator.evaluate).parameters) == [
+        "self", "actor", "action", "scope",
+    ]  # fmt: skip
+    source = inspect.getsource(permissions_module)
+    assert "ActionCatalog" not in source and "ActionIntent" not in source
+    assert "UNKNOWN_ACTION" not in {r.name for r in PermissionReason}
 
 
-def test_granted_company_action() -> None:
-    decision = check(actor(), "reports.read", company_scope())
-    assert decision.allowed and decision.reason is PermissionReason.GRANTED
+def test_evaluator_accepts_a_definition_built_directly() -> None:
+    uncatalogued = definition("stock.read", ActionRisk.READ, ActionScopeRequirement.COMPANY)
+    decision = EVALUATOR.evaluate(
+        actor(permissions=frozenset({"stock.read"})), uncatalogued, company_scope()
+    )
+    assert decision.allowed
 
 
-def test_no_actor_is_denied() -> None:
-    decision = check(None, "orders.read", store_scope())
-    assert not decision.allowed and decision.reason is PermissionReason.NO_ACTOR
+def test_decision_fields_and_exact_required_permission() -> None:
+    assert set(PermissionDecision.model_fields) == {
+        "allowed", "reason", "action_name", "required_permission",
+    }  # fmt: skip
+    custom = definition(
+        "orders.export", ActionRisk.READ, ActionScopeRequirement.STORE,
+        required_permission="orders.export_csv",
+    )  # fmt: skip
+    for granted in (frozenset(), frozenset({"orders.export_csv"})):
+        decision = EVALUATOR.evaluate(actor(permissions=granted), custom, store_scope())
+        assert decision.action_name == "orders.export"
+        assert decision.required_permission == "orders.export_csv"
+    with pytest.raises(Exception):  # noqa: B017 - pydantic frozen instance error
+        decision.allowed = False  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("name", ["orders.delete", "ORDERS.READ", "orders", "*", "orders.*"])
-def test_unknown_action_is_denied(name: str) -> None:
-    decision = check(actor(permissions=frozenset({name, "*"})), name, store_scope())
-    assert not decision.allowed and decision.reason is PermissionReason.UNKNOWN_ACTION
-    assert decision.action is None
+# ----- reasons ----------------------------------------------------------------------------
 
 
-def test_missing_permission_is_denied() -> None:
-    decision = check(actor(permissions=frozenset({"orders.read"})), "orders.cancel", store_scope())
+def test_granted() -> None:
+    assert EVALUATOR.evaluate(actor(), STORE_READ, store_scope()).reason is PermissionReason.GRANTED
+    assert EVALUATOR.evaluate(actor(), COMPANY_READ, company_scope()).allowed
+
+
+def test_no_actor() -> None:
+    assert EVALUATOR.evaluate(None, STORE_READ, store_scope()).reason is PermissionReason.NO_ACTOR
+
+
+@pytest.mark.parametrize("action", [STORE_READ, COMPANY_READ])
+def test_company_must_match(action) -> None:
+    scope = store_scope(company_id="company-2")
+    assert EVALUATOR.evaluate(actor(), action, scope).reason is PermissionReason.COMPANY_MISMATCH
+
+
+def test_missing_permission() -> None:
+    reader = actor(permissions=frozenset({"orders.read"}))
+    decision = EVALUATOR.evaluate(reader, STORE_CANCEL, store_scope())
     assert decision.reason is PermissionReason.MISSING_PERMISSION
 
 
@@ -50,55 +91,90 @@ def test_missing_permission_is_denied() -> None:
     "granted", ["*", "orders.*", "orders", "ORDERS.CANCEL", "order.cancel", "orders.cancel.all"]
 )
 def test_permissions_match_exactly_without_wildcards(granted: str) -> None:
-    decision = check(actor(permissions=frozenset({granted})), "orders.cancel", store_scope())
+    decision = EVALUATOR.evaluate(
+        actor(permissions=frozenset({granted})), STORE_CANCEL, store_scope()
+    )
     assert decision.reason is PermissionReason.MISSING_PERMISSION
 
 
 def test_roles_alone_grant_nothing() -> None:
     admin = actor(role_ids=frozenset({"admin", "owner", "superuser"}), permissions=frozenset())
-    for name, scope in [("orders.read", store_scope()), ("settings.update", company_scope())]:
-        assert check(admin, name, scope).reason is PermissionReason.MISSING_PERMISSION
+    assert EVALUATOR.evaluate(admin, STORE_READ, store_scope()).reason is (
+        PermissionReason.MISSING_PERMISSION
+    )
+    assert EVALUATOR.evaluate(admin, COMPANY_READ, company_scope()).reason is (
+        PermissionReason.MISSING_PERMISSION
+    )
 
 
 @pytest.mark.parametrize("actor_type", ["user", "api_client", "system_agent"])
 def test_actor_type_grants_nothing(actor_type: str) -> None:
     bare = actor(actor_type=actor_type, permissions=frozenset())
-    assert not check(bare, "orders.read", store_scope()).allowed
+    assert not EVALUATOR.evaluate(bare, STORE_READ, store_scope()).allowed
 
 
-def test_store_action_requires_the_exact_target_store() -> None:
-    assert check(actor(), "orders.read", store_scope(STORE_B)).reason is (
+# ----- store scope --------------------------------------------------------------------------
+
+
+def test_store_action_requires_a_target_store() -> None:
+    assert EVALUATOR.evaluate(actor(), STORE_READ, company_scope()).reason is (
+        PermissionReason.STORE_SCOPE_MISSING
+    )
+
+
+def test_store_action_requires_the_exact_granted_store() -> None:
+    assert EVALUATOR.evaluate(actor(), STORE_READ, store_scope(STORE_B)).reason is (
         PermissionReason.STORE_NOT_PERMITTED
     )
-    assert check(actor(store_ids=frozenset()), "orders.read", store_scope()).reason is (
+    assert EVALUATOR.evaluate(actor(store_ids=frozenset()), STORE_READ, store_scope()).reason is (
         PermissionReason.STORE_NOT_PERMITTED
     )
+    assert EVALUATOR.evaluate(
+        actor(store_ids=frozenset({"*"})), STORE_READ, store_scope()
+    ).reason is (PermissionReason.STORE_NOT_PERMITTED)
     both = actor(store_ids=frozenset({STORE_A, STORE_B}))
-    assert check(both, "orders.read", store_scope(STORE_B)).allowed
-    assert check(actor(store_ids=frozenset({"*"})), "orders.read", store_scope()).reason is (
+    assert EVALUATOR.evaluate(both, STORE_READ, store_scope(STORE_B)).allowed
+
+
+# ----- company scope ------------------------------------------------------------------------
+
+
+def test_company_action_is_allowed_with_a_store_in_scope() -> None:
+    for store in (STORE_A, STORE_B, "store-not-granted"):
+        assert EVALUATOR.evaluate(actor(), COMPANY_READ, store_scope(store)).allowed
+
+
+def test_company_action_ignores_actor_store_ids() -> None:
+    for stores in (frozenset(), frozenset({STORE_B}), frozenset({"*"})):
+        assert EVALUATOR.evaluate(actor(store_ids=stores), COMPANY_READ, company_scope()).allowed
+        assert EVALUATOR.evaluate(actor(store_ids=stores), COMPANY_READ, store_scope()).allowed
+
+
+# ----- evaluation order ---------------------------------------------------------------------
+
+
+def test_check_order() -> None:
+    no_rights = actor(permissions=frozenset(), store_ids=frozenset())
+    # 1. no actor beats everything
+    assert EVALUATOR.evaluate(None, STORE_READ, store_scope(company_id="x")).reason is (
+        PermissionReason.NO_ACTOR
+    )
+    # 2. company mismatch beats missing permission and store checks
+    assert EVALUATOR.evaluate(no_rights, STORE_READ, store_scope(company_id="x")).reason is (
+        PermissionReason.COMPANY_MISMATCH
+    )
+    # 3. missing permission beats both store checks
+    assert EVALUATOR.evaluate(no_rights, STORE_READ, company_scope()).reason is (
+        PermissionReason.MISSING_PERMISSION
+    )
+    assert EVALUATOR.evaluate(no_rights, STORE_READ, store_scope(STORE_B)).reason is (
+        PermissionReason.MISSING_PERMISSION
+    )
+    # 4a. missing store beats store membership
+    assert EVALUATOR.evaluate(actor(store_ids=frozenset()), STORE_READ, company_scope()).reason is (
+        PermissionReason.STORE_SCOPE_MISSING
+    )
+    # 4b. then store membership
+    assert EVALUATOR.evaluate(actor(), STORE_READ, store_scope(STORE_B)).reason is (
         PermissionReason.STORE_NOT_PERMITTED
     )
-
-
-def test_store_action_without_a_store_is_denied() -> None:
-    decision = check(actor(), "orders.read", company_scope())
-    assert decision.reason is PermissionReason.STORE_SCOPE_MISSING
-
-
-def test_company_action_with_a_store_is_denied() -> None:
-    decision = check(actor(), "reports.read", store_scope())
-    assert decision.reason is PermissionReason.UNEXPECTED_STORE_SCOPE
-
-
-@pytest.mark.parametrize("name,scope_factory", [("orders.read", store_scope),
-                                                ("reports.read", company_scope)])  # fmt: skip
-def test_company_must_match(name: str, scope_factory) -> None:
-    decision = check(actor(), name, scope_factory(company_id="company-2"))
-    assert decision.reason is PermissionReason.COMPANY_MISMATCH
-    assert COMPANY != "company-2"
-
-
-def test_company_mismatch_wins_over_store_grant() -> None:
-    # Store ids are only meaningful inside the actor's own company.
-    decision = check(actor(), "orders.read", store_scope(STORE_A, company_id="company-2"))
-    assert decision.reason is PermissionReason.COMPANY_MISMATCH

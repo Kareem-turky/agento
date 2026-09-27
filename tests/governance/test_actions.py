@@ -13,17 +13,34 @@ from app.governance import (
 )
 from tests.governance.factories import CATALOG, definition
 
+VALID = {
+    "name": "orders.read",
+    "description": "Read orders",
+    "risk": "read",
+    "required_permission": "orders.read",
+    "scope_requirement": "store",
+}
+
 
 def test_enums() -> None:
     assert [r.value for r in ActionRisk] == ["read", "low_risk_write", "medium_risk", "high_risk"]
     assert {s.value for s in ActionScopeRequirement} == {"company", "store"}
 
 
-def test_definition_is_frozen_and_strict() -> None:
-    action = definition("orders.read", ActionRisk.READ, ActionScopeRequirement.STORE)
-    assert action.approval_required is False
+def test_definition_fields_are_exactly_the_trusted_metadata() -> None:
+    assert set(ActionDefinition.model_fields) == {
+        "name", "description", "risk", "required_permission", "scope_requirement",
+    }  # fmt: skip
+    action = ActionDefinition(**VALID)
     with pytest.raises(ValidationError):
         action.risk = ActionRisk.HIGH_RISK
+
+
+def test_approval_required_no_longer_exists() -> None:
+    assert "approval_required" not in ActionDefinition.model_fields
+    for value in (True, False):
+        with pytest.raises(ValidationError):
+            ActionDefinition(**VALID, approval_required=value)
 
 
 @pytest.mark.parametrize(
@@ -37,31 +54,22 @@ def test_definition_is_frozen_and_strict() -> None:
         {"required_permission": ""},
         {"risk": "critical"},
         {"scope_requirement": "tenant"},
-        {"approval_required": "yes"},
         {"description": "  "},
         {"handler": "module.function"},
+        {"tool": "some_tool"},
     ],
 )
 def test_definition_rejects_invalid_values(overrides: dict) -> None:
-    data = {
-        "name": "orders.read",
-        "description": "Read orders",
-        "risk": "read",
-        "required_permission": "orders.read",
-        "scope_requirement": "store",
-        **overrides,
-    }
     with pytest.raises(ValidationError):
-        ActionDefinition(**data)
+        ActionDefinition(**{**VALID, **overrides})
 
 
 def test_catalog_lookup_is_exact_and_immutable() -> None:
     assert CATALOG.get("orders.read").risk is ActionRisk.READ
-    assert CATALOG.get("orders.READ") is None
-    assert CATALOG.get("orders") is None
-    assert CATALOG.get("orders.read ") is None
+    for near_miss in ("orders.READ", "orders", "orders.read ", "orders.*", "*"):
+        assert CATALOG.get(near_miss) is None
     assert "orders.cancel" in CATALOG
-    assert len(CATALOG) == 7
+    assert len(CATALOG) == 6
     with pytest.raises(TypeError):
         CATALOG._definitions["x.y"] = CATALOG.get("orders.read")  # type: ignore[index]
 
@@ -74,11 +82,14 @@ def test_catalog_rejects_duplicates_and_non_definitions() -> None:
         ActionCatalog([{"name": "orders.read"}])  # type: ignore[list-item]
 
 
-def test_intent_carries_only_the_action_name() -> None:
-    intent = ActionIntent(action_name="orders.read")
-    assert intent.model_dump() == {"action_name": "orders.read"}
+def test_intent_carries_only_the_name() -> None:
+    assert set(ActionIntent.model_fields) == {"name"}
+    intent = ActionIntent(name="orders.read")
+    assert intent.model_dump() == {"name": "orders.read"}
     with pytest.raises(ValidationError):
-        intent.action_name = "orders.refund"
+        intent.name = "orders.refund"
+    with pytest.raises(ValidationError):
+        ActionIntent(action_name="orders.read")  # the old field name is not accepted
 
 
 @pytest.mark.parametrize(
@@ -95,16 +106,17 @@ def test_intent_carries_only_the_action_name() -> None:
         {"store_id": "store-b"},
     ],
 )
-def test_intent_cannot_supply_governing_fields(smuggled: dict) -> None:
+def test_intent_cannot_smuggle_governance_metadata(smuggled: dict) -> None:
+    payload = {"name": "orders.refund", **smuggled}
     with pytest.raises(ValidationError):
-        ActionIntent(action_name="orders.refund", **smuggled)
+        ActionIntent(**payload)
     with pytest.raises(ValidationError):
-        ActionIntent.model_validate({"action_name": "orders.refund", **smuggled})
+        ActionIntent.model_validate(payload)
     with pytest.raises(ValidationError):
-        ActionIntent.model_validate_json(json.dumps({"action_name": "orders.refund", **smuggled}))
+        ActionIntent.model_validate_json(json.dumps(payload))
 
 
-@pytest.mark.parametrize("bad", [{"action_name": ""}, {"action_name": "  "}, {}])
+@pytest.mark.parametrize("bad", [{"name": ""}, {"name": "  "}, {}])
 def test_intent_requires_a_name(bad: dict) -> None:
     with pytest.raises(ValidationError):
         ActionIntent(**bad)
@@ -112,10 +124,11 @@ def test_intent_requires_a_name(bad: dict) -> None:
 
 def test_scope_validation() -> None:
     assert ActionScope(company_id="c").store_id is None
-    for bad in (
+    invalid = (
         {"company_id": ""},
         {"company_id": "c", "store_id": " "},
         {"company_id": "c", "x": 1},
-    ):
+    )
+    for bad in invalid:
         with pytest.raises(ValidationError):
             ActionScope(**bad)

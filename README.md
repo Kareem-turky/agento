@@ -395,47 +395,56 @@ terms. It is pure decision logic: nothing is executed, no integration is called,
 no approval or audit record is stored. The decision is the end of the flow.
 
 ```
-trusted ActorContext + untrusted ActionIntent + trusted ActionScope
-        ↓
-trusted ActionCatalog      (risk, required permission, scope requirement)
-        ↓
-PermissionEvaluator  →  PermissionDecision (allowed + typed reason)
-        ↓
-BaselinePolicyEvaluator  →  PolicyDecision (ALLOW / DENY / REQUIRE_APPROVAL + reason)
+untrusted ActionIntent(name)
+        ↓  GovernanceGate: trusted ActionCatalog lookup
+        ↓  (unknown name → DENY / UNKNOWN_ACTION, no permission check)
+trusted ActionDefinition (risk, required permission, scope requirement)
+        ↓  PermissionEvaluator.evaluate(actor, action, scope)
+PermissionDecision (allowed, reason, action_name, required_permission)
+        ↓  BaselinePolicyEvaluator.evaluate(action, permission)
+PolicyDecision (ALLOW / DENY / REQUIRE_APPROVAL + reason)
 ```
 
 - **Trusted and untrusted inputs:**
-  - `ActionIntent` is untrusted and carries only an `action_name`. Extra fields such as
-    risk, permission, scope, approval, roles or identity are rejected.
-  - Everything that governs a decision comes from backend objects: the `ActionDefinition`
-    in the `ActionCatalog`, the existing `ActorContext` from `app.context` (no second
-    actor model), and the `ActionScope` target (company, optional store) that backend
-    code resolves.
-- **Permission rules (fail closed):**
-  - No actor, or an unknown action name, is denied.
-  - The actor's `company_id` must equal the target company.
-  - STORE actions need a target store, and COMPANY actions must not have one.
-  - The actor must hold the exact `required_permission`. There are no wildcards and no
-    prefix matching, and roles grant nothing, so `role_ids={"admin"}` alone is denied.
-  - STORE actions also need the target store in `actor.store_ids`. An empty set grants
-    no stores.
-- **Baseline policy:**
+  - `ActionIntent` is untrusted and carries only a `name`. Governing fields such as risk,
+    permission, scope requirement, approval, permissions, roles, actor, company or
+    store are rejected.
+  - Everything that governs a decision comes from trusted backend objects: the
+    `ActionDefinition` in the `ActionCatalog`, the existing `ActorContext` from
+    `app.context` (there is no second actor model), and the `ActionScope` target
+    (company, optional store) that backend code resolves.
+- **Unknown actions:** `GovernanceGate` denies an unknown action name (`UNKNOWN_ACTION`,
+  with no risk and no permission decision) before any permission evaluation.
+  `PermissionEvaluator` only ever receives a trusted `ActionDefinition`; it knows
+  nothing about the catalog or intents.
+- **Permission checks** run in this order, and the first failure wins:
+  1. no actor → `NO_ACTOR`
+  2. the actor's company is not the target company → `COMPANY_MISMATCH`
+  3. the exact required permission is not held → `MISSING_PERMISSION`. There are no
+     wildcards and no prefix matching, and roles or actor type grant nothing, so
+     `role_ids={"admin"}` alone is denied.
+  4. STORE actions only: no target store → `STORE_SCOPE_MISSING`; the target store is
+     not in `actor.store_ids` → `STORE_NOT_PERMITTED` (an empty set grants no stores)
+  5. otherwise → `GRANTED`
+
+  COMPANY actions are not constrained by stores: neither `scope.store_id` nor
+  `actor.store_ids` affects them.
+- **Baseline policy.** There is a single deterministic baseline, based only on the
+  trusted risk:
 
   | Case | Outcome |
   |---|---|
+  | Unknown action | `DENY` (`UNKNOWN_ACTION`) |
   | Permission denied | `DENY` (never `REQUIRE_APPROVAL`) |
   | `READ` | `ALLOW` |
   | `LOW_RISK_WRITE` | `ALLOW` |
   | `MEDIUM_RISK` | `REQUIRE_APPROVAL` |
   | `HIGH_RISK` | `REQUIRE_APPROVAL` |
 
-  A definition with `approval_required=True` requires approval even when its risk alone
-  would allow it.
-- **Entry point:** `GovernanceGate(catalog).decide(actor, intent, scope)` returns a
-  `PolicyDecision`. Every decision carries a typed reason code (`PermissionReason`,
-  `PolicyReason`).
+  There is no per-action or company-specific approval override yet. MEDIUM and HIGH
+  require approval purely because of the baseline risk policy.
 - **Not built yet:** action execution, tools, approval workflow and persistence, audit,
-  verification and company-specific policy are later work.
+  verification and configurable policy are later work.
 - **Boundaries:** the package imports only the standard library, Pydantic and
   `app.context.models`. `tests/governance/test_architecture.py` enforces this.
 

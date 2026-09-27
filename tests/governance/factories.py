@@ -35,12 +35,6 @@ CATALOG = ActionCatalog(
         definition("orders.refund", ActionRisk.HIGH_RISK, ActionScopeRequirement.STORE),
         definition("reports.read", ActionRisk.READ, ActionScopeRequirement.COMPANY),
         definition("settings.update", ActionRisk.HIGH_RISK, ActionScopeRequirement.COMPANY),
-        definition(
-            "orders.tag",
-            ActionRisk.LOW_RISK_WRITE,
-            ActionScopeRequirement.STORE,
-            approval_required=True,
-        ),
     ]
 )
 

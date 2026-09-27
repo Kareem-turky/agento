@@ -63,6 +63,11 @@ def test_reuses_the_existing_actor_context() -> None:
     assert "class ActorContext" not in source and "class Actor(" not in source
 
 
+def test_permission_evaluator_does_not_depend_on_catalog_or_intent() -> None:
+    source = (GOVERNANCE_DIR / "permissions.py").read_text()
+    assert "ActionCatalog" not in source and "ActionIntent" not in source
+
+
 def test_no_forbidden_identifiers() -> None:
     offenders = []
     for path in SOURCE_FILES:

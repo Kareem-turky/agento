@@ -1,12 +1,12 @@
 """Action definitions (trusted), the action catalog (trusted) and action intents (untrusted).
 
 An ``ActionDefinition`` carries everything that governs an action: its risk, the
-exact permission it requires, its scope requirement and whether it always needs
-approval. Definitions live only in a backend-built ``ActionCatalog``.
+exact permission it requires and its scope requirement. Definitions live only in a
+backend-built ``ActionCatalog``.
 
 An ``ActionIntent`` is what a caller (a user, an API client, later an agent) asks
-for. It is untrusted and can carry nothing but an action name: risk, permission,
-scope requirement, approval and identity can never be supplied or overridden by it.
+for. It is untrusted and can carry nothing but an action name: risk, permission, scope
+requirement and identity can never be supplied or overridden by it.
 """
 
 from collections.abc import Iterable, Mapping
@@ -14,7 +14,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.context.models import Identifier
 
@@ -35,7 +35,8 @@ class ActionRisk(StrEnum):
 
 class ActionScopeRequirement(StrEnum):
     """COMPANY: the actor's company must be the target company.
-    STORE: additionally, the target store must be one the actor is granted."""
+    STORE: additionally, the target store must be one the actor is granted.
+    A COMPANY action is not constrained by any store in the scope."""
 
     COMPANY = "company"
     STORE = "store"
@@ -51,8 +52,6 @@ class ActionDefinition(BaseModel):
     risk: ActionRisk
     required_permission: DottedName
     scope_requirement: ActionScopeRequirement
-    # Force approval even when the risk alone would allow the action.
-    approval_required: StrictBool = False
 
 
 class ActionCatalog:
@@ -90,14 +89,13 @@ class ActionIntent(BaseModel):
 
     model_config = _FROZEN
 
-    action_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class ActionScope(BaseModel):
     """Trusted target of an action, resolved by backend code (not by the caller).
 
-    ``store_id`` is required for STORE-scoped actions and must be absent for
-    COMPANY-scoped ones.
+    ``store_id`` is required for STORE-scoped actions and ignored by COMPANY-scoped ones.
     """
 
     model_config = _FROZEN
