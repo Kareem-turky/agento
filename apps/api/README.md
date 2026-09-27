@@ -24,6 +24,9 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/governance/` — action catalog, untrusted action intents, permission evaluation
   and the baseline policy (ALLOW / DENY / REQUIRE_APPROVAL); decisions only, nothing
   is executed.
+- `app/execution/` — governed execution coordinator (govern → validate → execute →
+  verify → audit), handler protocol and immutable registry, `ActionRun` statuses and
+  metadata-only audit events; no real actions or persistence.
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 

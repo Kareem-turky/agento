@@ -1,0 +1,404 @@
+"""Security and lifecycle matrix for the ExecutionCoordinator."""
+
+import itertools
+import json
+from uuid import UUID
+
+import pytest
+
+from app.execution import ActionRunReason, ActionRunStatus, AuditEventType
+from app.governance import PolicyOutcome, PolicyReason
+from tests.execution.fakes import (
+    COMPANY,
+    SECRET_MARKER,
+    STORE,
+    VALID_PARAMS,
+    FakeHandler,
+    NoteInput,
+    RecordingAuditSink,
+    actor,
+    coordinator,
+    execute,
+    request,
+    store_scope,
+)
+
+S, R, E = ActionRunStatus, ActionRunReason, AuditEventType
+
+
+def handlers() -> dict[str, FakeHandler]:
+    names = ("notes.add", "notes.read", "orders.cancel", "orders.refund", "reports.rebuild")
+    return {name: FakeHandler(name) for name in names}
+
+
+def assert_untouched(handler: FakeHandler) -> None:
+    assert handler.validate_calls == []
+    assert handler.execute_calls == []
+    assert handler.verify_calls == []
+
+
+# ----- governance first -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        request(actor(permissions=frozenset())),
+        request(actor(role_ids=frozenset({"admin", "owner"}), permissions=frozenset())),
+        request(actor(company_id="company-2")),
+        request(actor(store_ids=frozenset())),
+    ],
+)
+def test_denied_never_touches_the_handler(req) -> None:
+    hs = handlers()
+    coord, sink = coordinator(*hs.values())
+    result = execute(coord, "notes.add", req=req)
+    assert (result.status, result.reason) == (S.DENIED, R.POLICY_DENIED)
+    assert result.policy_decision.outcome is PolicyOutcome.DENY
+    assert_untouched(hs["notes.add"])
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.DENIED]
+
+
+def test_no_actor_is_denied() -> None:
+    hs = handlers()
+    coord, _ = coordinator(*hs.values())
+    from app.context.models import RequestContext
+
+    result = execute(coord, req=RequestContext())
+    assert result.status is S.DENIED
+    assert_untouched(hs["notes.add"])
+
+
+@pytest.mark.parametrize("name", ["orders.cancel", "orders.refund"])
+def test_require_approval_never_executes(name: str) -> None:
+    hs = handlers()
+    coord, sink = coordinator(*hs.values())
+    result = execute(coord, name)
+    assert (result.status, result.reason) == (S.AWAITING_APPROVAL, R.APPROVAL_REQUIRED)
+    assert result.policy_decision.outcome is PolicyOutcome.REQUIRE_APPROVAL
+    assert result.execution_result is None and result.verification_result is None
+    assert_untouched(hs[name])
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.AWAITING_APPROVAL]
+
+
+def test_no_approval_bypass_exists() -> None:
+    hs = handlers()
+    coord, _ = coordinator(*hs.values())
+    for params in ({"approved": True}, {"approval_token": "x"}, {"status": "approved"}):
+        assert execute(coord, "orders.refund", params=params).status is S.AWAITING_APPROVAL
+    import inspect
+
+    assert list(inspect.signature(coord.run).parameters) == ["request", "intent", "scope",
+                                                            "parameters"]  # fmt: skip
+    assert_untouched(hs["orders.refund"])
+
+
+def test_unknown_action_never_touches_any_handler() -> None:
+    hs = handlers()
+    coord, sink = coordinator(*hs.values())
+    result = execute(coord, "notes.delete")
+    assert (result.status, result.reason) == (S.DENIED, R.POLICY_DENIED)
+    assert result.policy_decision.reason is PolicyReason.UNKNOWN_ACTION
+    for handler in hs.values():
+        assert_untouched(handler)
+
+
+# ----- handler lookup and validation ------------------------------------------------------
+
+
+def test_missing_handler_fails_closed() -> None:
+    coord, sink = coordinator(*handlers().values())
+    result = execute(coord, "labels.print")
+    assert (result.status, result.reason) == (S.FAILED, R.HANDLER_NOT_REGISTERED)
+    assert result.policy_decision.outcome is PolicyOutcome.ALLOW
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.HANDLER_NOT_REGISTERED]
+
+
+def test_exact_governed_name_selects_the_handler() -> None:
+    hs = handlers()
+    coord, _ = coordinator(*hs.values())
+    assert execute(coord, "notes.add").status is S.VERIFIED
+    assert len(hs["notes.add"].execute_calls) == 1
+    assert all(not h.execute_calls for n, h in hs.items() if n != "notes.add")
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {},
+        {"order_ref": "ord-1"},
+        {"order_ref": "", "text": "x"},
+        {"order_ref": "ord-1", "text": "x", "extra": SECRET_MARKER},
+        {"order_ref": "ord-1", "text": "x" * 500},
+        {"order_ref": 5, "text": ["x"]},
+    ],
+)
+def test_invalid_input_fails_without_execute_or_verify(params) -> None:
+    handler = FakeHandler()
+    coord, sink = coordinator(handler)
+    result = execute(coord, params=params)
+    assert (result.status, result.reason) == (S.FAILED, R.INPUT_INVALID)
+    assert len(handler.validate_calls) == 1
+    assert handler.execute_calls == [] and handler.verify_calls == []
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.VALIDATION_FAILED]
+    assert SECRET_MARKER not in result.model_dump_json()
+
+
+def test_non_mapping_parameters_are_invalid() -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler)
+    result = execute(coord, params=["not", "a", "mapping"])  # type: ignore[arg-type]
+    assert result.reason is R.INPUT_INVALID
+    assert handler.execute_calls == []
+
+
+@pytest.mark.parametrize("bad", [{"order_ref": "x", "text": "y"}, "raw", True])
+def test_validator_must_return_an_immutable_model(bad) -> None:
+    handler = FakeHandler(validate_returns=bad)
+    coord, _ = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.FAILED, R.HANDLER_CONTRACT_VIOLATION)
+    assert handler.execute_calls == []
+
+
+def test_executor_receives_validated_model_not_raw_parameters() -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler)
+    params = dict(VALID_PARAMS)
+    execute(coord, params=params)
+    (received,) = handler.execute_calls
+    assert isinstance(received, NoteInput)
+    assert received is not params and not isinstance(received, dict)
+    assert received == NoteInput(**VALID_PARAMS)
+    raw_seen = handler.validate_calls[0]
+    assert raw_seen is not params  # a read-only copy, not the caller's object
+    with pytest.raises(TypeError):
+        raw_seen["text"] = "changed"  # type: ignore[index]
+
+
+# ----- raw parameters cannot influence governance ---------------------------------------
+
+SMUGGLED = {
+    "actor_id": "admin-1", "company_id": "company-2", "store_id": "store-z",
+    "store_ids": ["store-z"], "permissions": ["notes.add", "orders.refund"],
+    "role_ids": ["admin"], "risk": "read", "required_permission": "notes.read",
+    "scope_requirement": "company", "handler": "orders.refund", "approved": True,
+}  # fmt: skip
+
+
+def test_parameters_cannot_grant_identity_or_permissions() -> None:
+    hs = handlers()
+    coord, sink = coordinator(*hs.values())
+    unprivileged = request(actor(actor_id="user-9", permissions=frozenset()))
+    result = execute(coord, params={**VALID_PARAMS, **SMUGGLED}, req=unprivileged)
+    assert result.status is S.DENIED
+    assert_untouched(hs["notes.add"])
+    assert {e.actor_id for e in sink.events} == {"user-9"}
+
+
+def test_parameters_cannot_change_scope() -> None:
+    hs = handlers()
+    coord, sink = coordinator(*hs.values())
+    result = execute(coord, params={**VALID_PARAMS, **SMUGGLED}, scope=store_scope("store-z"))
+    assert result.status is S.DENIED  # the trusted scope decides, not parameters
+    assert {(e.company_id, e.store_id) for e in sink.events} == {(COMPANY, "store-z")}
+
+
+def test_parameters_cannot_lower_risk_or_change_permission() -> None:
+    hs = handlers()
+    coord, _ = coordinator(*hs.values())
+    result = execute(coord, "orders.refund", params={**VALID_PARAMS, **SMUGGLED})
+    assert result.status is S.AWAITING_APPROVAL
+    assert result.policy_decision.risk.value == "high_risk"
+    assert result.policy_decision.permission.required_permission == "orders.refund"
+    reader = request(actor(permissions=frozenset({"notes.read"})))
+    assert execute(coord, "notes.add", params=SMUGGLED, req=reader).status is S.DENIED
+
+
+def test_task_008_store_and_company_rules_still_apply() -> None:
+    hs = handlers()
+    coord, _ = coordinator(*hs.values())
+    assert execute(coord, scope=store_scope("store-b")).status is S.DENIED
+    assert execute(coord, scope=store_scope(company_id="company-2")).status is S.DENIED
+    from app.governance import ActionScope
+
+    company_scope = ActionScope(company_id=COMPANY, store_id="any-store")
+    assert execute(coord, "reports.rebuild", scope=company_scope).status is S.VERIFIED
+
+
+# ----- execution and verification ---------------------------------------------------------
+
+
+def test_success_path_is_verified_with_full_audit() -> None:
+    handler = FakeHandler()
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.VERIFIED, R.VERIFIED)
+    assert result.audit_complete is True
+    assert result.execution_result.reference_id == "note-123"
+    assert result.verification_result.verified is True
+    assert len(handler.execute_calls) == 1 and len(handler.verify_calls) == 1
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.EXECUTION_STARTED,
+                          E.EXECUTION_COMPLETED, E.VERIFICATION_STARTED, E.VERIFIED]  # fmt: skip
+
+
+def test_verification_always_follows_a_completed_execute() -> None:
+    for verify_behaviour in ("ok", "mismatch", "crash", "bad_result"):
+        handler = FakeHandler(verify_behaviour=verify_behaviour)
+        coord, _ = coordinator(handler)
+        execute(coord)
+        assert len(handler.execute_calls) == 1
+        assert len(handler.verify_calls) == 1
+        assert handler.verify_calls[0][1].reference_id == "note-123"
+
+
+def test_verification_false_requires_a_human() -> None:
+    handler = FakeHandler(verify_behaviour="mismatch")
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.VERIFICATION_FAILED)
+    assert result.verification_result.reason_code == "note_missing"
+    assert sink.types[-1] is E.REQUIRES_HUMAN
+
+
+@pytest.mark.parametrize("behaviour", ["crash", "bad_result"])
+def test_verification_error_requires_a_human(behaviour: str) -> None:
+    coord, _ = coordinator(FakeHandler(verify_behaviour=behaviour))
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.VERIFICATION_ERROR)
+    assert result.verification_result is None
+
+
+def test_confirmed_no_effect_failure_is_failed() -> None:
+    handler = FakeHandler(execute_behaviour="no_effect")
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.FAILED, R.EXECUTION_FAILED_NO_EFFECT)
+    assert handler.verify_calls == []
+    assert sink.types[-1] is E.EXECUTION_FAILED
+
+
+@pytest.mark.parametrize("behaviour", ["uncertain", "crash", "bad_result"])
+def test_uncertain_execution_requires_a_human_never_verified(behaviour: str) -> None:
+    handler = FakeHandler(execute_behaviour=behaviour)
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.EXECUTION_OUTCOME_UNCERTAIN)
+    assert result.status is not S.VERIFIED
+    assert result.execution_result is None
+    assert sink.types[-2:] == [E.EXECUTION_FAILED, E.REQUIRES_HUMAN]
+
+
+# ----- audit failures -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("failing", [E.REQUESTED, E.POLICY_DECIDED, E.EXECUTION_STARTED])
+def test_pre_execution_audit_failure_blocks_execution(failing) -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler, sink=RecordingAuditSink(fail_on=frozenset({failing})))
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.FAILED, R.AUDIT_UNAVAILABLE)
+    assert result.audit_complete is False
+    assert handler.execute_calls == [] and handler.verify_calls == []
+
+
+@pytest.mark.parametrize("failing", [E.EXECUTION_COMPLETED, E.VERIFICATION_STARTED, E.VERIFIED])
+def test_post_execution_audit_failure_still_verifies_but_never_reports_verified(failing) -> None:
+    handler = FakeHandler()
+    sink = RecordingAuditSink(fail_on=frozenset({failing}))
+    coord, _ = coordinator(handler, sink=sink)
+    result = execute(coord)
+    assert len(handler.verify_calls) == 1  # verification still attempted
+    assert result.status is S.REQUIRES_HUMAN
+    assert result.reason is R.AUDIT_INCOMPLETE
+    assert result.audit_complete is False
+    assert result.verification_result.verified is True
+    assert sink.attempts[-1] is E.REQUIRES_HUMAN
+
+
+def test_post_execution_audit_failure_with_failed_verification() -> None:
+    handler = FakeHandler(verify_behaviour="mismatch")
+    coord, _ = coordinator(
+        handler, sink=RecordingAuditSink(fail_on=frozenset({E.EXECUTION_COMPLETED}))
+    )
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.VERIFICATION_FAILED)
+    assert result.audit_complete is False
+
+
+def test_terminal_audit_failure_on_deny_keeps_denied_but_marks_incomplete() -> None:
+    coord, _ = coordinator(FakeHandler(), sink=RecordingAuditSink(fail_on=frozenset({E.DENIED})))
+    result = execute(coord, req=request(actor(permissions=frozenset())))
+    assert result.status is S.DENIED and result.audit_complete is False
+
+
+# ----- audit content --------------------------------------------------------------------------
+
+
+def test_audit_events_carry_trusted_metadata() -> None:
+    coord, sink = coordinator(FakeHandler())
+    req = request(actor(actor_id="user-7"), channel="web", session_id="sess-1")
+    result = execute(coord, req=req)
+    for event in sink.events:
+        assert event.run_id == result.run_id
+        assert event.request_id == UUID("00000000-0000-4000-8000-00000000000a")
+        assert (event.actor_id, event.actor_type) == ("user-7", "user")
+        assert (event.company_id, event.store_id, event.channel) == (COMPANY, STORE, "web")
+        assert event.action_name == "notes.add"
+    assert sink.events[0].policy_outcome is None
+    assert {e.policy_outcome for e in sink.events[1:]} == {PolicyOutcome.ALLOW}
+    final = sink.events[-1]
+    assert (final.run_status, final.run_reason) == (S.VERIFIED, R.VERIFIED)
+    assert final.execution_reference_id == "note-123"
+    assert final.verification_code == "note_present"
+    assert len({e.event_id for e in sink.events}) == len(sink.events)
+
+
+def test_audit_never_contains_raw_parameters_results_or_error_text() -> None:
+    marker_params = {"order_ref": "ord-1", "text": f"note {SECRET_MARKER}"}
+    for execute_b, verify_b in itertools.product(
+        ["ok", "no_effect", "uncertain", "crash", "bad_result"], ["ok", "mismatch", "crash"]
+    ):
+        coord, sink = coordinator(FakeHandler(execute_behaviour=execute_b,
+                                              verify_behaviour=verify_b))  # fmt: skip
+        result = execute(coord, params=marker_params)
+        dumped = json.dumps([e.model_dump(mode="json") for e in sink.events])
+        assert SECRET_MARKER not in dumped and "note " not in dumped
+        assert SECRET_MARKER not in result.model_dump_json()
+    bad = {"order_ref": "ord-1", "text": "x", "junk": SECRET_MARKER}
+    coord, sink = coordinator(FakeHandler())
+    execute(coord, params=bad)
+    assert SECRET_MARKER not in json.dumps([e.model_dump(mode="json") for e in sink.events])
+
+
+def test_audit_event_fields_have_no_room_for_payloads() -> None:
+    from app.execution import AuditEvent
+
+    assert set(AuditEvent.model_fields) == {
+        "event_id", "run_id", "request_id", "occurred_at", "event_type", "action_name",
+        "actor_id", "actor_type", "company_id", "store_id", "channel", "policy_outcome",
+        "policy_reason", "run_status", "run_reason", "execution_reference_id",
+        "verification_code",
+    }  # fmt: skip
+
+
+# ----- determinism --------------------------------------------------------------------------
+
+
+def test_repeated_runs_are_deterministic_apart_from_ids() -> None:
+    def outcome():
+        coord, sink = coordinator(FakeHandler(verify_behaviour="mismatch"))
+        result = execute(coord)
+        return (result.status, result.reason, result.audit_complete,
+                [(e.event_type, e.run_status, e.run_reason) for e in sink.events])  # fmt: skip
+
+    assert outcome() == outcome()
+
+
+def test_injected_ids_and_clock_are_used() -> None:
+    counter = itertools.count(1)
+    coord, sink = coordinator(FakeHandler(), ids=lambda: UUID(int=next(counter)))
+    result = execute(coord)
+    assert result.run_id == UUID(int=1)
+    assert [e.event_id for e in sink.events] == [UUID(int=i) for i in range(2, 8)]
+    assert {e.occurred_at.isoformat() for e in sink.events} == {"2026-03-01T12:00:00+00:00"}
