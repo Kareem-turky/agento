@@ -589,9 +589,73 @@ ActionRun: VERIFIED · REQUIRES_HUMAN · FAILED · DENIED
 - **The execute response alone is not proof.** Verification re-reads the ticket by
   run correlation. After an uncertain write the re-read still runs and its evidence
   is kept, but the run stays `requires_human / execution_outcome_uncertain`.
-- **Not connected yet:** no Agent, LLM, Agno tool, HTTP action endpoint,
-  persistence, Redis or approval workflow. Nothing outside `app/operations/`
-  imports it; tests drive it through the product components directly.
+- **Connections:** Task 010 itself added no agent or HTTP endpoint. Since Task 011
+  the Operations Agent (below) reaches this action through `ExecutionCoordinator`;
+  there is still no HTTP action endpoint, persistence, Redis or approval workflow.
+
+### Operations Agent (Agno) with governed product tools
+
+`app/agents/operations*.py` holds a real Agno agent (`id="operations"`, "Operations
+Agent") that analyzes an order and its shipments and can request an operational
+ticket. It is wired programmatically only:
+
+```
+OperationsAgentRunner.run(request, scope, message)      # trusted request + store scope
+  → TrustedOperationsRunContext(request, scope)          # built by the runner only
+  → Agent.arun(message, dependencies={operations_run_context: <object>},
+               add_dependencies_to_context=False)
+  → Agno tool loop → product tools (RunContext injected by Agno)
+      get_order            → GovernanceGate(operations.order.read)     → CommerceIntegration
+      get_order_shipments  → GovernanceGate(operations.shipments.read) → CommerceIntegration
+      create_operational_ticket → ExecutionCoordinator(operations.ticket.create)
+                                  → handler → TicketingIntegration → verify → audit
+  → final answer
+```
+
+| Action | Permission | Risk | Scope |
+|---|---|---|---|
+| `operations.order.read` | `orders.read` | `READ` | `STORE` |
+| `operations.shipments.read` | `shipments.read` | `READ` | `STORE` |
+| `operations.ticket.create` | `tickets.create` | `LOW_RISK_WRITE` | `STORE` |
+
+- **Tools are not authorization.** Every read is governed by `GovernanceGate`
+  before any integration call, and the only write goes through
+  `ExecutionCoordinator`. Having a tool, a role name, the agent id or an Agno
+  `user_id`/`session_id` grants nothing.
+- **Trusted context comes only from the product runner.** `OperationsAgentRunner`
+  builds a frozen `TrustedOperationsRunContext` (the trusted `RequestContext`, whose
+  `actor` is the only actor authority, plus a store-scoped `ActionScope`; a run
+  without a store fails closed). The user's message cannot change it.
+- **`RunContext` is Agno's injection mechanism.** Tools declare
+  `run_context: RunContext`; Agno injects it and omits it from the tool schema, so
+  the model sees only `order_id` or `title`/`description`. A model-supplied
+  `run_context` is replaced by the injected one, and unknown arguments are
+  rejected. Tools accept the dependency only if it is a real
+  `TrustedOperationsRunContext` object; a missing value, dict, JSON string or anything
+  else yields `trusted_context_unavailable` and nothing is read or written.
+- **Dependencies are not model context.** The agent and the runner set
+  `add_dependencies_to_context=False` (and `resolve_in_context=False`), so actor,
+  company, store, roles and permissions never appear in the prompt.
+- **Scope checks on data.** The trusted store is enforced before reading, and every
+  returned order is checked against it before anything is exposed; another store's
+  order is reported as `not_found`, and its shipments are never listed.
+- **Safe outputs.** Order: `order_id`, `status`, `created_at`, `total_amount`,
+  `currency`, `item_count`. Shipment: `shipment_id`, `status`, `shipped_at`,
+  `delivered_at`. Ticket: `status`, `reason`, and `ticket_id` only when `verified`.
+  No external references, provider IDs, customer contact data, courier data, raw
+  statuses or exception text. Read failures are typed outcomes (`ok`, `denied`,
+  `invalid_id`, `not_found`, `unavailable`, `data_error`,
+  `trusted_context_unavailable`).
+- **External content is untrusted data.** The instructions tell the agent to treat
+  tool output as data, never instructions; to create a ticket only when the user
+  explicitly asked; and to claim success only for `verified` (a `requires_human`
+  result must be reported as needing human review).
+- **Configuration:** only the three tools, `tool_call_limit=6`, `telemetry=False`,
+  no memory, knowledge/RAG or history. The agent takes any Agno `Model`.
+- **Not registered with AgentOS and no HTTP entry point yet.** The AgentOS security
+  key is not product actor authentication; the authenticated product-facing run
+  boundary comes later. Tests drive the agent through the real Agno tool loop with a
+  test-only scripted model (`tests/support/scripted_tool_model.py`).
 
 ## 3. Technology stack
 

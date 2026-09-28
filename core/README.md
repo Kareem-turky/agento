@@ -20,7 +20,8 @@ The first of these layers are implemented in the API package:
 baseline policy, and `apps/api/app/execution/` holds governed action execution,
 verification and audit events (no approval workflow yet), and
 `apps/api/app/operations/` holds the first governed business action
-(`operations.ticket.create`). The directories here remain empty placeholders. No company-specific logic belongs here.
+(`operations.ticket.create`) and its read actions; `apps/api/app/agents/operations*.py`
+is the Operations Agent that uses them through governed tools. The directories here remain empty placeholders. No company-specific logic belongs here.
 
 Named `core` (not `platform`) so future Python code here never collides with the
 Python standard-library `platform` module.

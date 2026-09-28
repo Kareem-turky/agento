@@ -108,16 +108,27 @@ def test_no_module_level_mutable_state() -> None:
     assert offenders == []
 
 
-def test_operations_are_not_wired_into_http_agents_or_runtime() -> None:
-    """No HTTP action endpoint, agent tool or runtime hook reaches the ticket write yet."""
-    offenders = [
-        f"{p.relative_to(APP_DIR)}: {m}"
+# Task 011: the Operations Agent modules are the one intended consumer of operations.
+OPERATIONS_AGENT_MODULES = {"agents/operations.py", "agents/operations_tools.py"}
+
+
+def test_operations_are_reached_only_by_the_operations_agent() -> None:
+    """Nothing but the Operations Agent imports app.operations: no HTTP endpoint,
+    runtime hook or other agent reaches the ticket write."""
+    importers = {
+        str(p.relative_to(APP_DIR))
         for p in sorted(APP_DIR.rglob("*.py"))
         if OPERATIONS_DIR not in p.parents
-        for m in imports(p)
-        if m.startswith("app.operations")
-    ]
-    assert offenders == []
+        and any(m.startswith("app.operations") for m in imports(p))
+    }
+    assert importers <= OPERATIONS_AGENT_MODULES
+
+
+def test_runtime_and_http_do_not_wire_the_operations_agent() -> None:
+    banned = ("app.operations", "app.agents.operations")
+    for path in [APP_DIR / "main.py", *sorted((APP_DIR / "runtime").rglob("*.py"))]:
+        bad = [m for m in imports(path) if m.startswith(banned)]
+        assert bad == [], f"{path.relative_to(APP_DIR)}: {bad}"
 
 
 def test_generic_layers_do_not_depend_on_operations_or_integrations() -> None:
