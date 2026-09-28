@@ -4,14 +4,18 @@ A handler is backend code bound to exactly one governed action name:
 
 - ``validate(parameters)`` turns untrusted raw parameters into a trusted, immutable
   input model. No side effects.
-- ``execute(validated_input)`` is the ONLY side-effect boundary. It returns a safe
-  ``ExecutionResult`` or raises an ``ActionExecutionError``.
-- ``verify(validated_input, execution_result)`` independently confirms the intended
+- ``execute(context, validated_input)`` is the ONLY side-effect boundary. It returns a
+  safe ``ExecutionResult`` or raises an ``ActionExecutionError``.
+- ``verify(context, validated_input, execution_result)`` independently confirms the intended
   effect (a re-read of the external system), never by trusting ``execute``'s answer.
   ``execution_result`` is the safe receipt of a completed execute, or ``None`` when
   execute was attempted but its outcome is uncertain (timeout, crash, invalid
   return). With ``None`` the verifier inspects the target state from the validated
   input alone; its answer is recovery evidence and never makes the run VERIFIED.
+
+``context`` is the trusted ``ActionExecutionContext`` built by the coordinator (run,
+request, actor, company, store, channel). It is the only source of scope and
+identity: handlers never take company, store or actor from raw parameters.
 """
 
 from collections.abc import Iterable, Mapping
@@ -20,6 +24,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, JsonValue
 
+from app.execution.context import ActionExecutionContext
 from app.execution.models import ExecutionResult, VerificationResult
 
 RawParameters = Mapping[str, JsonValue]
@@ -32,10 +37,15 @@ class ActionHandler(Protocol):
 
     def validate(self, parameters: RawParameters) -> BaseModel: ...
 
-    async def execute(self, validated_input: BaseModel) -> ExecutionResult: ...
+    async def execute(
+        self, context: ActionExecutionContext, validated_input: BaseModel
+    ) -> ExecutionResult: ...
 
     async def verify(
-        self, validated_input: BaseModel, execution_result: ExecutionResult | None
+        self,
+        context: ActionExecutionContext,
+        validated_input: BaseModel,
+        execution_result: ExecutionResult | None,
     ) -> VerificationResult: ...
 
 

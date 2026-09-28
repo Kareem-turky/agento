@@ -5,8 +5,15 @@ import json
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.execution import ActionRunReason, ActionRunStatus, AuditEventType, ExecutionResult
+from app.execution import (
+    ActionExecutionContext,
+    ActionRunReason,
+    ActionRunStatus,
+    AuditEventType,
+    ExecutionResult,
+)
 from app.governance import PolicyOutcome, PolicyReason
 from tests.execution.fakes import (
     COMPANY,
@@ -174,6 +181,75 @@ def test_executor_receives_validated_model_not_raw_parameters() -> None:
     assert raw_seen is not params  # a read-only copy, not the caller's object
     with pytest.raises(TypeError):
         raw_seen["text"] = "changed"  # type: ignore[index]
+
+
+# ----- trusted execution context ---------------------------------------------------------
+
+
+def test_one_trusted_context_is_passed_to_execute_and_verify() -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler, ids=lambda: UUID(int=7))
+    req = request(actor(actor_id="user-7"), channel="web", session_id="sess-1")
+    result = execute(coord, req=req)
+    (exec_ctx,) = handler.execute_contexts
+    (verify_ctx,) = handler.verify_contexts
+    assert exec_ctx is verify_ctx  # the same immutable object, built once
+    assert exec_ctx == ActionExecutionContext(
+        run_id=result.run_id, request_id=req.request_id, action_name="notes.add",
+        actor_id="user-7", actor_type="user", company_id=COMPANY, store_id=STORE,
+        channel="web", session_id="sess-1",
+    )  # fmt: skip
+    with pytest.raises(ValidationError):
+        exec_ctx.company_id = "company-2"  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        ActionExecutionContext(**{**exec_ctx.model_dump(), "extra": "x"})
+
+
+@pytest.mark.parametrize("behaviour", ["uncertain", "crash", "bad_result"])
+def test_uncertain_verification_gets_the_same_context(behaviour: str) -> None:
+    handler = FakeHandler(execute_behaviour=behaviour)
+    coord, _ = coordinator(handler)
+    execute(coord)
+    assert handler.execute_contexts[0] is handler.verify_contexts[0]
+
+
+SMUGGLED_CONTEXT = {
+    "actor_id": "admin-1", "actor_type": "system_agent", "company_id": "company-2",
+    "store_id": "store-z", "permissions": ["*"], "role_ids": ["admin"],
+    "run_id": str(UUID(int=99)), "request_id": str(UUID(int=98)), "channel": "system",
+    "session_id": "evil", "action_name": "orders.refund",
+}  # fmt: skip
+
+
+class _PermissiveInput(BaseModel):
+    """A handler input that tolerates unknown keys, to prove the context is unaffected
+    even when a handler's validator does not reject smuggled fields."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    order_ref: str
+    text: str
+
+
+def test_raw_parameters_cannot_alter_the_execution_context() -> None:
+    handler = FakeHandler(validate_model=_PermissiveInput)
+    coord, _ = coordinator(handler)
+    result = execute(coord, params={**VALID_PARAMS, **SMUGGLED_CONTEXT})
+    assert result.status is S.VERIFIED
+    ctx = handler.execute_contexts[0]
+    assert ctx.run_id == result.run_id
+    assert ctx.request_id == UUID("00000000-0000-4000-8000-00000000000a")
+    assert (ctx.actor_id, ctx.actor_type) == ("user-1", "user")
+    assert (ctx.company_id, ctx.store_id) == (COMPANY, STORE)
+    assert (ctx.action_name, ctx.channel, ctx.session_id) == ("notes.add", "api", None)
+    assert handler.verify_contexts[0] is ctx
+
+
+def test_no_context_is_built_when_nothing_executes() -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler)
+    execute(coord, params={})
+    execute(coord, "orders.cancel")
+    assert handler.execute_contexts == [] and handler.verify_contexts == []
 
 
 # ----- raw parameters cannot influence governance ---------------------------------------

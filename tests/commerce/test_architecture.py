@@ -29,7 +29,7 @@ FORBIDDEN_MODULES = (
 def test_domain_has_source_files() -> None:
     assert {p.name for p in SOURCE_FILES} >= {
         "common.py", "company.py", "catalog.py", "customer.py",
-        "inventory.py", "orders.py", "shipping.py",
+        "inventory.py", "orders.py", "shipping.py", "tickets.py",
     }  # fmt: skip
 
 

@@ -11,6 +11,8 @@ from app.integrations.commerce.mock.identity import (
     canonical_id,
 )
 from app.integrations.commerce.mock.system import MockCommerceSystem, MockProviderDownError
+from app.integrations.commerce.mock.ticket_desk import MockTicketDesk, MockTicketWriteMode
+from app.integrations.commerce.mock.ticketing_adapter import MockTicketingAdapter
 
 __all__ = [
     "MOCK_DESCRIPTOR",
@@ -20,5 +22,8 @@ __all__ = [
     "MockCommerceAdapter",
     "MockCommerceSystem",
     "MockProviderDownError",
+    "MockTicketDesk",
+    "MockTicketWriteMode",
+    "MockTicketingAdapter",
     "canonical_id",
 ]

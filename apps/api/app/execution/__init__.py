@@ -5,6 +5,7 @@ Generic product core. It depends only on the standard library, Pydantic,
 """
 
 from app.execution.audit import AuditEvent, AuditEventType, AuditSink
+from app.execution.context import ActionExecutionContext
 from app.execution.coordinator import ExecutionCoordinator
 from app.execution.errors import (
     ActionExecutionError,
@@ -22,6 +23,7 @@ from app.execution.models import (
 )
 
 __all__ = [
+    "ActionExecutionContext",
     "ActionExecutionError",
     "ActionHandler",
     "ActionHandlerRegistry",

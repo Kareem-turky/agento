@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from app.context.models import ActorContext, RequestContext
 from app.execution import (
+    ActionExecutionContext,
     ActionHandlerRegistry,
     AuditEvent,
     AuditEventType,
@@ -77,14 +78,18 @@ class FakeHandler:
         execute_behaviour: str = "ok",
         verify_behaviour: str = "ok",
         validate_returns: Any = None,
+        validate_model: type[BaseModel] | None = None,
     ) -> None:
         self._name = action_name
         self.execute_behaviour = execute_behaviour
         self.verify_behaviour = verify_behaviour
         self.validate_returns = validate_returns
+        self.validate_model = validate_model or NoteInput
         self.validate_calls: list[Mapping[str, JsonValue]] = []
         self.execute_calls: list[Any] = []
         self.verify_calls: list[tuple[Any, ExecutionResult | None]] = []
+        self.execute_contexts: list[ActionExecutionContext] = []
+        self.verify_contexts: list[ActionExecutionContext] = []
 
     @property
     def action_name(self) -> str:
@@ -94,9 +99,12 @@ class FakeHandler:
         self.validate_calls.append(parameters)
         if self.validate_returns is not None:
             return self.validate_returns
-        return NoteInput.model_validate(dict(parameters))
+        return self.validate_model.model_validate(dict(parameters))
 
-    async def execute(self, validated_input: BaseModel) -> ExecutionResult:
+    async def execute(
+        self, context: ActionExecutionContext, validated_input: BaseModel
+    ) -> ExecutionResult:
+        self.execute_contexts.append(context)
         self.execute_calls.append(validated_input)
         match self.execute_behaviour:
             case "ok":
@@ -112,8 +120,12 @@ class FakeHandler:
         raise AssertionError(self.execute_behaviour)
 
     async def verify(
-        self, validated_input: BaseModel, execution_result: ExecutionResult | None
+        self,
+        context: ActionExecutionContext,
+        validated_input: BaseModel,
+        execution_result: ExecutionResult | None,
     ) -> VerificationResult:
+        self.verify_contexts.append(context)
         self.verify_calls.append((validated_input, execution_result))
         match self.verify_behaviour:
             case "ok":
