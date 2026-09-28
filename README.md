@@ -385,8 +385,10 @@ Application · (later) Tools → Permission/Policy → CommerceIntegration
     lines without a SKU.
   - `with_availability(False)` simulates an outage.
   - It uses no network and no credentials.
-- **Scope:** read-only. There are no writes, actions, tools, agents, policy, webhooks or
+- **Scope:** `CommerceIntegration` is read-only: no tools, agents, policy, webhooks or
   persistence. No real provider (for example Shopify or WooCommerce) is implemented.
+  The only write is the separate `TicketingIntegration` contract, reached through
+  the governed `operations.ticket.create` action (see below).
 
 ### Governance: actions, permissions and baseline policy (decision only)
 
@@ -474,9 +476,17 @@ ActionRun (status + typed reason; VERIFIED only when every step succeeded)
   are untrusted JSON: they never reach governance, cannot change the actor, company,
   store, permissions, risk or handler, and reach `execute` only as the handler's
   validated, immutable model.
-- **Handlers** implement the `ActionHandler` protocol (`action_name`, `validate`,
-  async `execute`, async `verify`). `ActionHandlerRegistry` is immutable, rejects
-  duplicate names and is passed in explicitly; there is no global registry.
+- **Handlers** implement the `ActionHandler` protocol: `action_name`,
+  `validate(parameters)`, async `execute(context, validated_input)` and async
+  `verify(context, validated_input, execution_result | None)`. `ActionHandlerRegistry`
+  is immutable, rejects duplicate names and is passed in explicitly; there is no
+  global registry.
+- **Trusted execution context.** The coordinator builds exactly one frozen
+  `ActionExecutionContext` per run (run id, request id, action name, actor id/type,
+  company, store, channel, session) from the trusted `RequestContext`, the trusted
+  `ActionScope` and its own run id, and passes the same object to `execute` and
+  `verify`. Raw parameters never reach it, so they cannot choose company, store,
+  actor or run.
 - **Terminal statuses and reasons:**
 
   | Situation | Status | Reason |
@@ -524,6 +534,64 @@ ActionRun (status + typed reason; VERIFIED only when every step succeeded)
 - **Boundaries:** the package imports only the standard library, Pydantic,
   `app.governance` and `app.context.models`. `tests/execution/test_architecture.py`
   enforces this.
+
+### First governed business write: `operations.ticket.create`
+
+`app/operations/` holds product business actions built on governance and execution.
+Task 010 adds exactly one real write, proving the whole path with a real (mock)
+external system:
+
+| Action | Permission | Risk | Scope |
+|---|---|---|---|
+| `operations.ticket.create` | `tickets.create` | `LOW_RISK_WRITE` (baseline ALLOW) | `STORE` |
+
+```
+RequestContext (trusted actor) + ActionIntent("operations.ticket.create")
+  + ActionScope(company UUID, store UUID) + raw {title, description}
+        ↓  GovernanceGate (exact permission tickets.create, company, granted store)
+        ↓  CreateOperationalTicketHandler.validate → frozen {title, description}
+        ↓  ExecutionCoordinator builds the trusted ActionExecutionContext
+        ↓  execute: TicketingIntegration.create_ticket(company, store from context,
+        ↓           correlation_id = run id) → Mock Ticketing → canonical Ticket
+        ↓  verify: independent re-read find_ticket_by_correlation(run id), compared
+        ↓          with trusted scope + validated input (+ reference id if any)
+        ↓  audit (metadata only)
+ActionRun: VERIFIED · REQUIRES_HUMAN · FAILED · DENIED
+```
+
+- **Input is business content only.** `CreateOperationalTicketInput` is `title`
+  (1–160 chars, trimmed) and `description` (1–4000 chars, trimmed); unknown fields
+  are rejected. Raw parameters cannot choose company, store, actor, permissions,
+  risk, approval, run or correlation: those come from the trusted context, and a
+  request that tries fails as `failed / input_invalid` with no write.
+- **Trusted scope.** The ticket is created for the `ActionScope` company and store,
+  which must be canonical UUID strings. A malformed trusted scope fails before any
+  external call (`failed / execution_failed_no_effect`); nothing is guessed.
+- **Canonical `Ticket`** (`app/commerce/domain/tickets.py`): `id`, `company_id`,
+  `store_id`, `title`, `description`, `status` (`open`, `resolved`, `cancelled`,
+  `unknown`), `created_at`, `external_refs`. The provider ticket ID lives only in
+  `ExternalReference` (system `mock-commerce`); it is never the canonical `id`.
+- **`TicketingIntegration`** (`app/integrations/commerce/ticketing.py`) is the
+  product-owned write contract: `create_ticket`, `get_ticket`,
+  `find_ticket_by_correlation`. Write failures are typed:
+  `IntegrationWriteRejectedError` (nothing was written) maps to
+  `ExecutionFailedWithoutEffect`; `IntegrationWriteUncertainError` (may have been
+  written) and any unexpected error map to `ExecutionOutcomeUncertain`. Provider
+  error text never crosses the contract.
+- **Mock ticketing** (`MockTicketDesk` + `MockTicketingAdapter`) shares the Mock
+  Commerce identity: tickets belong to the same canonical company/store UUIDs the
+  commerce adapter returns. The provider key is `tkt_<correlation>`, so the same
+  correlation never creates a duplicate; timestamps come from an injectable clock.
+  The desk is separate from the read dataset, so orders, shipments, inventory and
+  stores are never mutated. Test modes: `normal`, `confirmed_no_effect`,
+  `uncertain_after_write` (the ticket is stored, then the desk times out) and
+  `altered_on_write` (the stored ticket differs from the request).
+- **The execute response alone is not proof.** Verification re-reads the ticket by
+  run correlation. After an uncertain write the re-read still runs and its evidence
+  is kept, but the run stays `requires_human / execution_outcome_uncertain`.
+- **Not connected yet:** no Agent, LLM, Agno tool, HTTP action endpoint,
+  persistence, Redis or approval workflow. Nothing outside `app/operations/`
+  imports it; tests drive it through the product components directly.
 
 ## 3. Technology stack
 

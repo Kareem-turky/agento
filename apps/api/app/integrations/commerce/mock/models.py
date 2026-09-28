@@ -101,6 +101,20 @@ class MockStockRecord:
 
 
 @dataclass(frozen=True)
+class MockTicketRecord:
+    """A support/ops ticket as the external ticket desk stores it."""
+
+    ticket_key: str
+    account_key: str
+    shop_key: str
+    subject: str
+    body: str
+    status: str
+    correlation_key: str
+    created_timestamp: str
+
+
+@dataclass(frozen=True)
 class MockDataset:
     account: MockAccountRecord
     shops: tuple[MockShopRecord, ...]

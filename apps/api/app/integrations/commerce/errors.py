@@ -37,3 +37,29 @@ class IntegrationDataError(CommerceIntegrationError):
         super().__init__(f"cannot map {entity} to the canonical model: {reason}")
         self.entity = entity
         self.reason = reason
+
+
+class IntegrationWriteError(CommerceIntegrationError):
+    """A write through the integration did not complete with a trustworthy result.
+
+    ``effect_may_have_occurred`` tells the caller whether the external system may
+    have applied the write anyway. Provider details are never part of the message.
+    """
+
+    effect_may_have_occurred: bool = True
+
+    def __init__(self, entity: str) -> None:
+        super().__init__(f"{entity} write did not complete")
+        self.entity = entity
+
+
+class IntegrationWriteRejectedError(IntegrationWriteError):
+    """The write definitely did NOT happen (rejected or failed before sending)."""
+
+    effect_may_have_occurred = False
+
+
+class IntegrationWriteUncertainError(IntegrationWriteError):
+    """The write MAY have happened (e.g. timeout or disconnect after sending)."""
+
+    effect_may_have_occurred = True

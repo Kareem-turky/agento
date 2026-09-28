@@ -1,4 +1,5 @@
-"""Commerce integration contract, capabilities, queries and errors."""
+"""Commerce integration contracts (read-only commerce, ticketing), capabilities,
+queries and errors."""
 
 from app.integrations.commerce.capabilities import (
     IntegrationCapability,
@@ -10,8 +11,12 @@ from app.integrations.commerce.errors import (
     IntegrationDataError,
     IntegrationNotFoundError,
     IntegrationUnavailableError,
+    IntegrationWriteError,
+    IntegrationWriteRejectedError,
+    IntegrationWriteUncertainError,
 )
 from app.integrations.commerce.queries import MAX_QUERY_LIMIT, OrderQuery, ShipmentQuery
+from app.integrations.commerce.ticketing import TicketingIntegration
 
 __all__ = [
     "MAX_QUERY_LIMIT",
@@ -22,6 +27,10 @@ __all__ = [
     "IntegrationDescriptor",
     "IntegrationNotFoundError",
     "IntegrationUnavailableError",
+    "IntegrationWriteError",
+    "IntegrationWriteRejectedError",
+    "IntegrationWriteUncertainError",
     "OrderQuery",
     "ShipmentQuery",
+    "TicketingIntegration",
 ]

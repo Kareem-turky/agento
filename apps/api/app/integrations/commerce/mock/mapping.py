@@ -4,7 +4,7 @@ Unknown provider values are not errors: they map to ``UNKNOWN`` and the exact
 provider value is kept in ``source_status``. Matching is exact (no case folding).
 """
 
-from app.commerce.domain import OrderStatus, ShipmentStatus
+from app.commerce.domain import OrderStatus, ShipmentStatus, TicketStatus
 
 ORDER_STATE_MAP: dict[str, OrderStatus] = {
     "open_draft": OrderStatus.DRAFT,
@@ -38,3 +38,16 @@ def map_delivery_state(state: object) -> ShipmentStatus:
     if isinstance(state, str):
         return DELIVERY_STATE_MAP.get(state, ShipmentStatus.UNKNOWN)
     return ShipmentStatus.UNKNOWN
+
+
+TICKET_STATE_MAP: dict[str, TicketStatus] = {
+    "new": TicketStatus.OPEN,
+    "solved": TicketStatus.RESOLVED,
+    "withdrawn": TicketStatus.CANCELLED,
+}
+
+
+def map_ticket_state(state: object) -> TicketStatus:
+    if isinstance(state, str):
+        return TICKET_STATE_MAP.get(state, TicketStatus.UNKNOWN)
+    return TicketStatus.UNKNOWN

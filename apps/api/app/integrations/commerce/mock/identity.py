@@ -26,6 +26,7 @@ class EntityType(StrEnum):
     ORDER_ITEM = "order_item"
     SHIPMENT = "shipment"
     INVENTORY_LEVEL = "inventory_level"
+    TICKET = "ticket"
 
 
 def canonical_id(entity: EntityType, external_id: str) -> UUID:

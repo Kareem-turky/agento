@@ -7,6 +7,7 @@
        ALLOW
     -> handler lookup (missing -> FAILED handler_not_registered)
     -> validate raw parameters (invalid -> FAILED input_invalid)
+    -> build the trusted ActionExecutionContext (once; passed to execute AND verify)
     -> audit EXECUTION_STARTED (must succeed, else FAILED audit_unavailable: no execute)
     -> execute (the only side-effect boundary)
          confirmed no effect -> FAILED (the only attempted execute that skips verify)
@@ -31,6 +32,7 @@ from pydantic import BaseModel
 
 from app.context.models import RequestContext
 from app.execution.audit import AuditEvent, AuditEventType, AuditSink
+from app.execution.context import ActionExecutionContext
 from app.execution.errors import ActionExecutionError
 from app.execution.handlers import ActionHandler, ActionHandlerRegistry
 from app.execution.models import (
@@ -89,6 +91,22 @@ class _Run:
             self.audit_complete = False
             return False
         return True
+
+    def execution_context(self, action_name: str) -> ActionExecutionContext:
+        """The trusted handler context: only request, scope and run identity, never
+        anything from raw parameters."""
+        actor = self.request.actor
+        return ActionExecutionContext(
+            run_id=self.run_id,
+            request_id=self.request.request_id,
+            action_name=action_name,
+            actor_id=actor.actor_id if actor else None,
+            actor_type=actor.actor_type if actor else None,
+            company_id=self.scope.company_id,
+            store_id=self.scope.store_id,
+            channel=self.request.channel,
+            session_id=self.request.session_id,
+        )
 
     def result(
         self,
@@ -180,26 +198,28 @@ class ExecutionCoordinator:
         if isinstance(validated, ActionRunReason):
             return await run.finish(E.VALIDATION_FAILED, S.FAILED, validated)
 
+        context = run.execution_context(run.policy.action_name)
+
         # Audit before the side effect is mandatory: no record, no execution.
         if not await run.audit(E.EXECUTION_STARTED):
             return run.result(S.FAILED, R.AUDIT_UNAVAILABLE)
 
         try:
-            execution = await handler.execute(validated)
+            execution = await handler.execute(context, validated)
             if not isinstance(execution, ExecutionResult):
                 raise TypeError("handler returned an invalid execution result")
         except ActionExecutionError as exc:
             if not exc.effect_may_have_occurred:
                 return await run.finish(E.EXECUTION_FAILED, S.FAILED, R.EXECUTION_FAILED_NO_EFFECT)
-            return await self._uncertain(run, handler, validated)
+            return await self._uncertain(run, handler, context, validated)
         except Exception:  # noqa: BLE001 - unknown failure inside the side-effect boundary
-            return await self._uncertain(run, handler, validated)
+            return await self._uncertain(run, handler, context, validated)
 
         await run.audit(E.EXECUTION_COMPLETED, execution_reference_id=execution.reference_id)
         await run.audit(E.VERIFICATION_STARTED, execution_reference_id=execution.reference_id)
 
         # Verification always runs after a completed execute, whatever the audit state.
-        verification = await self._verify(handler, validated, execution)
+        verification = await self._verify(handler, context, validated, execution)
         if verification is None:
             return await run.finish(
                 E.REQUIRES_HUMAN, S.REQUIRES_HUMAN, R.VERIFICATION_ERROR, execution
@@ -234,17 +254,24 @@ class ExecutionCoordinator:
 
     @staticmethod
     async def _verify(
-        handler: ActionHandler, validated: BaseModel, execution: ExecutionResult | None
+        handler: ActionHandler,
+        context: ActionExecutionContext,
+        validated: BaseModel,
+        execution: ExecutionResult | None,
     ) -> VerificationResult | None:
         """Call the handler's independent verifier; None if it raised or broke contract."""
         try:
-            verification = await handler.verify(validated, execution)
+            verification = await handler.verify(context, validated, execution)
         except Exception:  # noqa: BLE001 - never leak verifier errors; None means unverified
             return None
         return verification if isinstance(verification, VerificationResult) else None
 
     async def _uncertain(
-        self, run: _Run, handler: ActionHandler, validated: BaseModel
+        self,
+        run: _Run,
+        handler: ActionHandler,
+        context: ActionExecutionContext,
+        validated: BaseModel,
     ) -> ActionRun:
         """Execution may have had an effect but produced no trustworthy receipt.
 
@@ -257,7 +284,7 @@ class ExecutionCoordinator:
             AuditEventType.EXECUTION_FAILED, run_status=S.REQUIRES_HUMAN, run_reason=reason
         )
         await run.audit(AuditEventType.VERIFICATION_STARTED)
-        verification = await self._verify(handler, validated, None)
+        verification = await self._verify(handler, context, validated, None)
         return await run.finish(
             AuditEventType.REQUIRES_HUMAN, S.REQUIRES_HUMAN, reason, verification=verification
         )
