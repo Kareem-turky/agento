@@ -464,7 +464,8 @@ RequestContext (trusted actor) + ActionIntent(name) + ActionScope + raw paramete
         ↓  Validate: handler.validate(read-only copy of raw params) → frozen model
         ↓            invalid → FAILED / input_invalid (no execute, no verify)
         ↓  Execute:  handler.execute(validated input) → ExecutionResult(reference_id)
-        ↓  Verify:   handler.verify(validated input, result) → VerificationResult
+        ↓            confirmed no effect → FAILED (the only case that skips Verify)
+        ↓  Verify:   handler.verify(validated input, result | None) → VerificationResult
         ↓  Audit:    AuditSink.record(event) at every step
 ActionRun (status + typed reason; VERIFIED only when every step succeeded)
 ```
@@ -487,14 +488,26 @@ ActionRun (status + typed reason; VERIFIED only when every step succeeded)
   | Validator returned a mutable or non-model value | `failed` | `handler_contract_violation` |
   | Pre-execution audit write failed | `failed` | `audit_unavailable` |
   | Execution failed and confirmed no effect | `failed` | `execution_failed_no_effect` |
-  | Execution failed, effect unknown | `requires_human` | `execution_outcome_uncertain` |
+  | Execution failed, effect unknown (verified anyway, see below) | `requires_human` | `execution_outcome_uncertain` |
   | Verification returned `verified=False` | `requires_human` | `verification_failed` |
   | Verification raised or returned garbage | `requires_human` | `verification_error` |
   | Verified, but a post-execution audit write failed | `requires_human` | `audit_incomplete` |
   | Everything succeeded and was audited | `verified` | `verified` |
 
   Handlers signal a confirmed no-effect failure by raising `ExecutionFailedWithoutEffect`.
-  Any other exception is treated as uncertain.
+  Any other exception, or an invalid return value, is treated as uncertain.
+- **Every execute attempt that may have produced a side effect triggers an independent
+  verification attempt.** Only a handler-confirmed no-effect failure skips it.
+  - After a completed execute, `verify(validated_input, execution_result)` receives the
+    safe receipt.
+  - After an uncertain execute (timeout, crash, invalid return), `verify(validated_input,
+    None)` runs with no receipt and must inspect the target state from the validated
+    input alone. Its answer is recovery evidence for a human: a valid
+    `VerificationResult` is kept on the `ActionRun` and its `reason_code` is audited, but
+    the run stays `requires_human` / `execution_outcome_uncertain` even when
+    `verified=True`. A verifier error leaves `verification_result=None`.
+  - Audit write failures on this path never skip the verification attempt; they only
+    set `audit_complete=False`.
 - **Results are references only.** `ExecutionResult` carries a safe `reference_id`, never
   raw provider data. `VerificationResult` is `verified` plus a short `reason_code`.
 - **Audit** events are metadata only: ids, time, event type, action, trusted actor and
@@ -502,8 +515,10 @@ ActionRun (status + typed reason; VERIFIED only when every step succeeded)
   verification code. They never hold raw parameters, provider data, secrets or
   exception messages. `AuditSink` is a protocol passed in explicitly; tests use a
   recording sink. Audit failure semantics:
-  - before execution (`requested`, `policy_decided`, `execution_started`): the run stops
-    with `failed` / `audit_unavailable` and nothing is executed;
+  - before execution (`requested`, `execution_started`, or `policy_decided` on an ALLOW
+    decision): the run stops with `failed` / `audit_unavailable` and nothing is executed.
+    If `policy_decided` fails on a DENY or REQUIRE_APPROVAL decision, that governance
+    outcome is kept and `audit_complete=False` (nothing can execute either way);
   - after execution: verification still runs, the run is never `verified`,
     `audit_complete=False`, and the status becomes `requires_human`.
 - **Boundaries:** the package imports only the standard library, Pydantic,

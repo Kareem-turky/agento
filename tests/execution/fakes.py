@@ -84,7 +84,7 @@ class FakeHandler:
         self.validate_returns = validate_returns
         self.validate_calls: list[Mapping[str, JsonValue]] = []
         self.execute_calls: list[Any] = []
-        self.verify_calls: list[tuple[Any, ExecutionResult]] = []
+        self.verify_calls: list[tuple[Any, ExecutionResult | None]] = []
 
     @property
     def action_name(self) -> str:
@@ -112,7 +112,7 @@ class FakeHandler:
         raise AssertionError(self.execute_behaviour)
 
     async def verify(
-        self, validated_input: BaseModel, execution_result: ExecutionResult
+        self, validated_input: BaseModel, execution_result: ExecutionResult | None
     ) -> VerificationResult:
         self.verify_calls.append((validated_input, execution_result))
         match self.verify_behaviour:

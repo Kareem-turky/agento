@@ -12,8 +12,9 @@ class ActionInputError(Exception):
 class ActionExecutionError(Exception):
     """Execution failed. ``effect_may_have_occurred`` decides the outcome:
 
-    - False: the handler can establish that nothing changed        -> FAILED
-    - True:  the outcome is uncertain (e.g. timeout after sending) -> REQUIRES_HUMAN
+    - False: the handler can establish that nothing changed        -> FAILED (no verify)
+    - True:  the outcome is uncertain (e.g. timeout after sending) -> verify with no
+             receipt, then REQUIRES_HUMAN
     """
 
     effect_may_have_occurred: bool = True

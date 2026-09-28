@@ -8,6 +8,10 @@ A handler is backend code bound to exactly one governed action name:
   ``ExecutionResult`` or raises an ``ActionExecutionError``.
 - ``verify(validated_input, execution_result)`` independently confirms the intended
   effect (a re-read of the external system), never by trusting ``execute``'s answer.
+  ``execution_result`` is the safe receipt of a completed execute, or ``None`` when
+  execute was attempted but its outcome is uncertain (timeout, crash, invalid
+  return). With ``None`` the verifier inspects the target state from the validated
+  input alone; its answer is recovery evidence and never makes the run VERIFIED.
 """
 
 from collections.abc import Iterable, Mapping
@@ -31,7 +35,7 @@ class ActionHandler(Protocol):
     async def execute(self, validated_input: BaseModel) -> ExecutionResult: ...
 
     async def verify(
-        self, validated_input: BaseModel, execution_result: ExecutionResult
+        self, validated_input: BaseModel, execution_result: ExecutionResult | None
     ) -> VerificationResult: ...
 
 

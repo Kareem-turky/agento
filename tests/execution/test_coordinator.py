@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from app.execution import ActionRunReason, ActionRunStatus, AuditEventType
+from app.execution import ActionRunReason, ActionRunStatus, AuditEventType, ExecutionResult
 from app.governance import PolicyOutcome, PolicyReason
 from tests.execution.fakes import (
     COMPANY,
@@ -269,24 +269,97 @@ def test_verification_error_requires_a_human(behaviour: str) -> None:
     assert result.verification_result is None
 
 
-def test_confirmed_no_effect_failure_is_failed() -> None:
+def test_confirmed_no_effect_failure_is_failed_without_verification() -> None:
     handler = FakeHandler(execute_behaviour="no_effect")
     coord, sink = coordinator(handler)
     result = execute(coord)
     assert (result.status, result.reason) == (S.FAILED, R.EXECUTION_FAILED_NO_EFFECT)
-    assert handler.verify_calls == []
+    assert len(handler.execute_calls) == 1
+    assert handler.verify_calls == []  # the handler established nothing changed
+    assert result.verification_result is None
+    assert E.VERIFICATION_STARTED not in sink.types
     assert sink.types[-1] is E.EXECUTION_FAILED
 
 
-@pytest.mark.parametrize("behaviour", ["uncertain", "crash", "bad_result"])
-def test_uncertain_execution_requires_a_human_never_verified(behaviour: str) -> None:
+UNCERTAIN = ["uncertain", "crash", "bad_result"]
+
+
+@pytest.mark.parametrize("behaviour", UNCERTAIN)
+def test_uncertain_execution_is_still_verified_without_a_receipt(behaviour: str) -> None:
     handler = FakeHandler(execute_behaviour=behaviour)
     coord, sink = coordinator(handler)
     result = execute(coord)
     assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.EXECUTION_OUTCOME_UNCERTAIN)
-    assert result.status is not S.VERIFIED
+    assert len(handler.execute_calls) == 1
+    assert len(handler.verify_calls) == 1
+    validated, receipt = handler.verify_calls[0]
+    assert receipt is None  # no fabricated ExecutionResult
+    assert validated == NoteInput(**VALID_PARAMS)  # validated input, never raw parameters
     assert result.execution_result is None
-    assert sink.types[-2:] == [E.EXECUTION_FAILED, E.REQUIRES_HUMAN]
+    assert result.audit_complete is True
+    assert sink.types[-4:] == [E.EXECUTION_STARTED, E.EXECUTION_FAILED,
+                               E.VERIFICATION_STARTED, E.REQUIRES_HUMAN]  # fmt: skip
+    assert all(e.execution_reference_id is None for e in sink.events)
+
+
+@pytest.mark.parametrize("behaviour", UNCERTAIN)
+@pytest.mark.parametrize(
+    ("verify_behaviour", "verified", "code"),
+    [("ok", True, "note_present"), ("mismatch", False, "note_missing")],
+)
+def test_uncertain_execution_keeps_verification_evidence_but_is_never_verified(
+    behaviour: str, verify_behaviour: str, verified: bool, code: str
+) -> None:
+    handler = FakeHandler(execute_behaviour=behaviour, verify_behaviour=verify_behaviour)
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert result.status is S.REQUIRES_HUMAN and result.status is not S.VERIFIED
+    assert result.reason is R.EXECUTION_OUTCOME_UNCERTAIN
+    assert result.verification_result.verified is verified
+    assert result.verification_result.reason_code == code
+    final = sink.events[-1]
+    assert (final.event_type, final.run_status, final.run_reason) == (
+        E.REQUIRES_HUMAN, S.REQUIRES_HUMAN, R.EXECUTION_OUTCOME_UNCERTAIN,
+    )  # fmt: skip
+    assert final.verification_code == code
+    assert final.execution_reference_id is None
+
+
+@pytest.mark.parametrize("behaviour", UNCERTAIN)
+@pytest.mark.parametrize("verify_behaviour", ["crash", "bad_result"])
+def test_uncertain_execution_with_broken_verifier(behaviour: str, verify_behaviour: str) -> None:
+    handler = FakeHandler(execute_behaviour=behaviour, verify_behaviour=verify_behaviour)
+    coord, sink = coordinator(handler)
+    result = execute(coord)
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.EXECUTION_OUTCOME_UNCERTAIN)
+    assert len(handler.verify_calls) == 1
+    assert result.verification_result is None
+    assert sink.events[-1].verification_code is None
+    dumped = result.model_dump_json() + "".join(e.model_dump_json() for e in sink.events)
+    assert SECRET_MARKER not in dumped and "re-read failed" not in dumped
+
+
+@pytest.mark.parametrize("behaviour", UNCERTAIN)
+@pytest.mark.parametrize("failing", [E.EXECUTION_FAILED, E.VERIFICATION_STARTED])
+def test_audit_failure_never_skips_uncertain_verification(behaviour: str, failing) -> None:
+    handler = FakeHandler(execute_behaviour=behaviour)
+    sink = RecordingAuditSink(fail_on=frozenset({failing}))
+    coord, _ = coordinator(handler, sink=sink)
+    result = execute(coord)
+    assert len(handler.verify_calls) == 1
+    assert handler.verify_calls[0][1] is None
+    assert (result.status, result.reason) == (S.REQUIRES_HUMAN, R.EXECUTION_OUTCOME_UNCERTAIN)
+    assert result.audit_complete is False
+    assert result.verification_result.verified is True  # evidence kept, still not VERIFIED
+    assert sink.attempts[-1] is E.REQUIRES_HUMAN
+
+
+def test_completed_execution_passes_its_receipt_to_verify() -> None:
+    handler = FakeHandler()
+    coord, _ = coordinator(handler)
+    assert execute(coord).status is S.VERIFIED
+    ((_, receipt),) = handler.verify_calls
+    assert receipt == ExecutionResult(reference_id="note-123")
 
 
 # ----- audit failures -----------------------------------------------------------------------

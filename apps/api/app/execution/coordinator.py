@@ -9,9 +9,12 @@
     -> validate raw parameters (invalid -> FAILED input_invalid)
     -> audit EXECUTION_STARTED (must succeed, else FAILED audit_unavailable: no execute)
     -> execute (the only side-effect boundary)
-         confirmed no effect -> FAILED; uncertain -> REQUIRES_HUMAN
+         confirmed no effect -> FAILED (the only attempted execute that skips verify)
+         uncertain -> audit EXECUTION_FAILED -> audit VERIFICATION_STARTED
+                   -> verify(validated, None) as recovery evidence
+                   -> REQUIRES_HUMAN execution_outcome_uncertain (never VERIFIED)
     -> audit EXECUTION_COMPLETED -> audit VERIFICATION_STARTED
-    -> verify (always runs after a completed execute, even if an audit write failed)
+    -> verify(validated, result) (always runs, even if an audit write failed)
     -> VERIFIED only if verified AND every audit write succeeded, else REQUIRES_HUMAN
 
 ALLOW is permission to attempt execution, not proof of success. There is no approval
@@ -188,19 +191,16 @@ class ExecutionCoordinator:
         except ActionExecutionError as exc:
             if not exc.effect_may_have_occurred:
                 return await run.finish(E.EXECUTION_FAILED, S.FAILED, R.EXECUTION_FAILED_NO_EFFECT)
-            return await self._uncertain(run)
+            return await self._uncertain(run, handler, validated)
         except Exception:  # noqa: BLE001 - unknown failure inside the side-effect boundary
-            return await self._uncertain(run)
+            return await self._uncertain(run, handler, validated)
 
         await run.audit(E.EXECUTION_COMPLETED, execution_reference_id=execution.reference_id)
         await run.audit(E.VERIFICATION_STARTED, execution_reference_id=execution.reference_id)
 
         # Verification always runs after a completed execute, whatever the audit state.
-        try:
-            verification = await handler.verify(validated, execution)
-            if not isinstance(verification, VerificationResult):
-                raise TypeError("handler returned an invalid verification result")
-        except Exception:  # noqa: BLE001 - an unverifiable effect needs a human
+        verification = await self._verify(handler, validated, execution)
+        if verification is None:
             return await run.finish(
                 E.REQUIRES_HUMAN, S.REQUIRES_HUMAN, R.VERIFICATION_ERROR, execution
             )
@@ -233,12 +233,31 @@ class ExecutionCoordinator:
         return validated
 
     @staticmethod
-    async def _uncertain(run: _Run) -> ActionRun:
-        reason = ActionRunReason.EXECUTION_OUTCOME_UNCERTAIN
+    async def _verify(
+        handler: ActionHandler, validated: BaseModel, execution: ExecutionResult | None
+    ) -> VerificationResult | None:
+        """Call the handler's independent verifier; None if it raised or broke contract."""
+        try:
+            verification = await handler.verify(validated, execution)
+        except Exception:  # noqa: BLE001 - never leak verifier errors; None means unverified
+            return None
+        return verification if isinstance(verification, VerificationResult) else None
+
+    async def _uncertain(
+        self, run: _Run, handler: ActionHandler, validated: BaseModel
+    ) -> ActionRun:
+        """Execution may have had an effect but produced no trustworthy receipt.
+
+        Verification is still attempted (with no ExecutionResult) so a human gets
+        recovery evidence. Audit failures here never skip it, and its answer never
+        upgrades the run: the outcome stays REQUIRES_HUMAN / execution_outcome_uncertain.
+        """
+        S, reason = ActionRunStatus, ActionRunReason.EXECUTION_OUTCOME_UNCERTAIN
         await run.audit(
-            AuditEventType.EXECUTION_FAILED, run_status=ActionRunStatus.REQUIRES_HUMAN,
-            run_reason=reason,
-        )  # fmt: skip
+            AuditEventType.EXECUTION_FAILED, run_status=S.REQUIRES_HUMAN, run_reason=reason
+        )
+        await run.audit(AuditEventType.VERIFICATION_STARTED)
+        verification = await self._verify(handler, validated, None)
         return await run.finish(
-            AuditEventType.REQUIRES_HUMAN, ActionRunStatus.REQUIRES_HUMAN, reason
+            AuditEventType.REQUIRES_HUMAN, S.REQUIRES_HUMAN, reason, verification=verification
         )
