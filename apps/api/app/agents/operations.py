@@ -16,14 +16,17 @@ A write needs two independent trusted answers, neither from the LLM: the run's
 permission via GovernanceGate (may this actor do it?). The instruction to create a
 ticket only when asked is behavioural guidance, not the enforcement mechanism.
 
-Not registered with AgentOS and not exposed over HTTP: the authenticated
-product-facing run boundary (product auth -> trusted ActorContext -> run) does not
-exist yet.
+Still NOT registered with AgentOS. Its only HTTP entry point is the product-owned,
+read-only Operations boundary (``POST /api/v1/operations/runs`` via
+``OperationsRunService.run_product``): product auth -> trusted ActorContext -> exact
+store grant -> ``run_product``, which always runs with no requested write actions.
+HTTP writes remain disabled; ``run`` keeps the programmatic write-capable path.
 """
 
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 
 from app.agents.operations_context import OPERATIONS_CONTEXT_KEY, TrustedOperationsRunContext
 from app.agents.operations_tools import build_operations_tools
@@ -31,6 +34,7 @@ from app.context.models import RequestContext
 from app.execution import ExecutionCoordinator
 from app.governance import ActionScope, GovernanceGate
 from app.integrations.commerce import CommerceIntegration
+from app.services.operations import ProductOperationsRunResult
 
 OPERATIONS_AGENT_ID = "operations"
 OPERATIONS_TOOL_CALL_LIMIT = 6
@@ -91,8 +95,15 @@ def build_operations_agent(
     )
 
 
+class OperationsRunFailedError(Exception):
+    """The Agno run did not complete. Carries no model or provider detail."""
+
+
 class OperationsAgentRunner:
     """Runs the Operations Agent with a trusted, store-scoped context.
+
+    Implements the product ``OperationsRunService`` via ``run_product``, which is
+    always read-only; ``run`` keeps the programmatic write-capable path.
 
     ``request``, ``scope`` and ``requested_write_actions`` are trusted
     application-layer inputs; ``message`` is untrusted user input and cannot change
@@ -124,3 +135,16 @@ class OperationsAgentRunner:
             add_dependencies_to_context=False,
             stream=False,
         )
+
+    async def run_product(
+        self, request: RequestContext, scope: ActionScope, message: str
+    ) -> ProductOperationsRunResult:
+        """Product API path: READ-ONLY (no requested write actions, ever), and only the
+        final assistant text leaves this boundary (never the raw Agno ``RunOutput``)."""
+        output = await self.run(request, scope, message, requested_write_actions=frozenset())
+        if output.status is not RunStatus.completed:
+            # Agno reports a failed run (e.g. a model error) as content text: never
+            # return that text to a product caller.
+            raise OperationsRunFailedError("operations run did not complete")
+        content = output.content
+        return ProductOperationsRunResult(message=content if isinstance(content, str) else "")

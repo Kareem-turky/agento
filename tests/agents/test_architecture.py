@@ -20,6 +20,7 @@ ALLOWED_IMPORT_ROOTS = {
 ALLOWED_APP_MODULES = (
     "app.agents.operations", "app.context.models", "app.governance", "app.execution",
     "app.operations", "app.commerce.domain",
+    "app.services.operations",  # Task 012: the product run-service contract it implements
 )  # fmt: skip
 ALLOWED_INTEGRATION_MODULES = ("app.integrations.commerce",)
 FORBIDDEN_MODULES = (
@@ -71,7 +72,9 @@ def test_imports_are_agno_and_product_contracts_only() -> None:
 
 def test_agno_usage_is_the_model_abstraction_and_native_runtime() -> None:
     agno_imports = {m for p in OPERATIONS_AGENT_FILES for m in imports(p) if m.startswith("agno")}
-    assert agno_imports <= {"agno.agent", "agno.models.base", "agno.run", "agno.run.agent"}
+    assert agno_imports <= {
+        "agno.agent", "agno.models.base", "agno.run", "agno.run.agent", "agno.run.base",
+    }  # fmt: skip
     for path in OPERATIONS_AGENT_FILES:
         assert not any(
             m.startswith("agno.models.") and m != "agno.models.base" for m in imports(path)

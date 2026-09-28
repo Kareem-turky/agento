@@ -3,7 +3,12 @@
 The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package: `app`.
 
 - `app/config.py` — product settings (`APP_*` environment variables, optional `.env`).
-- `app/main.py` — `create_app()` factory and the Product `GET /health` route.
+- `app/main.py` — `create_app()` factory and the Product `GET /health` route; accepts an
+  optional `operations_service` (no default and no mock fallback).
+- `app/routes/operations.py` — `POST /api/v1/operations/runs`, the read-only,
+  `ActorResolver`-authenticated Operations Agent route.
+- `app/services/operations.py` — the runtime-independent `OperationsRunService`
+  contract and `ProductOperationsRunResult`.
 - `app/runtime/agentos.py` — attaches `AgentOS(base_app=...)` with a native `PostgresDb`
   (schema `agno_runtime`) and the agents from `components.py`. Requires `APP_DATABASE_URL`
   and `OS_SECURITY_KEY`.

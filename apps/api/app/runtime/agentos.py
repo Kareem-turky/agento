@@ -7,6 +7,10 @@ Agno is an external, pinned dependency. This module only configures it:
   Agno creates and owns the tables in that schema.
 * ``OS_SECURITY_KEY`` (read by Agno's ``AgnoAPISettings``) protects the AgentOS
   routes. It is a temporary runtime guard, not product authentication.
+* Product routes authenticate through the product ``ActorResolver`` instead, so
+  their exact paths are exempted from the AgentOS auth layer (Agno's documented
+  ``AuthorizationConfig.excluded_route_paths``). Every AgentOS route still requires
+  the key.
 
 Which agents are registered is decided in ``app.runtime.components``; the
 default model comes from ``app.runtime.models``.
@@ -17,6 +21,7 @@ from importlib.metadata import version
 from agno.db.postgres import PostgresDb
 from agno.models.base import Model
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
@@ -58,12 +63,16 @@ def attach_agent_os(
     settings: Settings,
     runtime_settings: AgnoAPISettings | None = None,
     default_model: Model | None = None,
+    product_route_paths: tuple[str, ...] = (),
 ) -> AgentOS:
     """Attach AgentOS to ``base_app`` in place and return the AgentOS instance.
 
     ``default_model`` overrides the model built from settings (used by tests to run
-    agents without a provider).
+    agents without a provider). ``product_route_paths`` are exact product paths that
+    use product authentication instead of the AgentOS key (no wildcards).
     """
+    if any(any(c in path for c in "*?[") for path in product_route_paths):
+        raise RuntimeConfigurationError("product route paths must be exact, not patterns")
     if settings.database_url is None:
         raise RuntimeConfigurationError(
             "APP_DATABASE_URL is required: the agent runtime persists to PostgreSQL."
@@ -87,6 +96,7 @@ def attach_agent_os(
         db=db,
         agents=build_agents(settings, default_model),
         settings=runtime_settings,
+        authorization_config=AuthorizationConfig(excluded_route_paths=list(product_route_paths)),
         telemetry=False,
     )
     agent_os.get_app()
