@@ -16,9 +16,11 @@ A write needs two independent trusted answers, neither from the LLM: the run's
 permission via GovernanceGate (may this actor do it?). The instruction to create a
 ticket only when asked is behavioural guidance, not the enforcement mechanism.
 
-Not registered with AgentOS and not exposed over HTTP: the authenticated
-product-facing run boundary (product auth -> trusted ActorContext -> run) does not
-exist yet.
+Still NOT registered with AgentOS. Its only HTTP entry point is the product-owned,
+read-only Operations boundary (``POST /api/v1/operations/runs`` via
+``OperationsRunService.run_product``): product auth -> trusted ActorContext -> exact
+store grant -> ``run_product``, which always runs with no requested write actions.
+HTTP writes remain disabled; ``run`` keeps the programmatic write-capable path.
 """
 
 from agno.agent import Agent

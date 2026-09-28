@@ -311,6 +311,36 @@ def test_service_failure_is_a_safe_503(settings, runtime_settings) -> None:
     assert_request_id(response)
 
 
+class _Misleading:
+    message = "forged by an object pretending to be a result"
+    status = "verified"
+    ticket_id = "tkt_forged"
+
+    def __repr__(self) -> str:
+        return "<_Misleading REPR-MARKER>"
+
+
+@pytest.mark.parametrize(
+    "bad_result",
+    [None, {"message": "forged"}, "forged plain string", _Misleading()],
+    ids=["none", "dict", "string", "misleading-object"],
+)
+def test_invalid_service_results_fail_closed(settings, runtime_settings, bad_result) -> None:
+    class Broken:
+        async def run_product(self, request, scope, message):
+            return bad_result
+
+    response = post(
+        app_for(settings, runtime_settings, service=Broken()), body(), {"X-Request-ID": "x"}
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Operations service unavailable"}
+    for leaked in ("forged", "REPR-MARKER", "tkt_", "Traceback", "TypeError",
+                   "invalid operations service result", "NoneType", "dict"):  # fmt: skip
+        assert leaked not in response.text, leaked
+    assert_request_id(response)
+
+
 def test_model_failure_inside_the_agent_is_a_safe_response(settings, runtime_settings) -> None:
     s = ops_stack([Reply("x")])
 

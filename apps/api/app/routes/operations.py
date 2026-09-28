@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
-from app.services.operations import OperationsRunService
+from app.services.operations import OperationsRunService, ProductOperationsRunResult
 
 OPERATIONS_SERVICE_STATE_KEY = "operations_service"
 OPERATIONS_RUNS_PATH = "/api/v1/operations/runs"
@@ -73,11 +73,16 @@ async def create_operations_run(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operations service unavailable",
         )
+    # Everything that depends on the service's answer stays inside the fail-closed
+    # boundary: a runtime-checkable Protocol does not guarantee the result type.
     try:
         result = await service.run_product(context, scope, body.message)
+        if not isinstance(result, ProductOperationsRunResult):
+            raise TypeError("invalid operations service result")
+        response = OperationsRunResponse(request_id=context.request_id, message=result.message)
     except Exception:  # noqa: BLE001 - never leak internals; the request id correlates logs
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operations service unavailable",
         ) from None
-    return OperationsRunResponse(request_id=context.request_id, message=result.message)
+    return response
