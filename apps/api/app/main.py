@@ -16,7 +16,10 @@ from fastapi import FastAPI
 from app import __version__
 from app.config import Settings, get_settings
 from app.context import ActorResolver, NoActorResolver, RequestContextMiddleware
+from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
+from app.routes.operations import router as operations_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
+from app.services.operations import OperationsRunService
 
 
 def create_app(
@@ -24,7 +27,10 @@ def create_app(
     runtime_settings: AgnoAPISettings | None = None,
     default_model: Model | None = None,
     actor_resolver: ActorResolver | None = None,
+    operations_service: OperationsRunService | None = None,
 ) -> FastAPI:
+    """``operations_service`` is composed by the caller (no default: without one the
+    Operations route answers 503; nothing falls back to mock data)."""
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
@@ -48,6 +54,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.runtime_started = False
+    setattr(app.state, OPERATIONS_SERVICE_STATE_KEY, operations_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -61,7 +68,17 @@ def create_app(
             "agent_runtime": runtime_status(app.state.agent_os, app.state.runtime_started),
         }
 
-    app.state.agent_os = attach_agent_os(app, settings, runtime_settings, default_model)
+    # Product routes are registered before AgentOS attaches its own routers.
+    app.include_router(operations_router)
+
+    app.state.agent_os = attach_agent_os(
+        app,
+        settings,
+        runtime_settings,
+        default_model,
+        # Product-authenticated (ActorResolver), not AgentOS-key-authenticated.
+        product_route_paths=(OPERATIONS_RUNS_PATH,),
+    )
     # Added after AgentOS so it is the outermost middleware: every response, including
     # AgentOS auth rejections, carries the server-generated X-Request-ID.
     app.add_middleware(RequestContextMiddleware, resolver=actor_resolver or NoActorResolver())

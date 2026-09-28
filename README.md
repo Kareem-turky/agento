@@ -668,10 +668,64 @@ OperationsAgentRunner.run(request, scope, message,     # trusted request + store
   result must be reported as needing human review).
 - **Configuration:** only the three tools, `tool_call_limit=6`, `telemetry=False`,
   no memory, knowledge/RAG or history. The agent takes any Agno `Model`.
-- **Not registered with AgentOS and no HTTP entry point yet.** The AgentOS security
-  key is not product actor authentication; the authenticated product-facing run
-  boundary comes later. Tests drive the agent through the real Agno tool loop with a
-  test-only scripted model (`tests/support/scripted_tool_model.py`).
+- **Not registered with AgentOS.** The AgentOS security key is not product actor
+  authentication. Its only HTTP entry point is the read-only product route below.
+  Tests drive the agent through the real Agno tool loop with a test-only scripted
+  model (`tests/support/scripted_tool_model.py`).
+
+### Product Operations API: `POST /api/v1/operations/runs` (read-only)
+
+The first product HTTP boundary for the Operations Agent. It is a Product API
+route, not an AgentOS route: the agent is still not registered with AgentOS.
+
+```
+HTTP request
+  → RequestContextMiddleware (server request id) → ActorResolver
+  → trusted ActorContext                          (none → 401)
+  → strict body {message, store_id}               (anything else → 422)
+  → exact store grant: store_id ∈ actor.store_ids (otherwise → 403, agent never runs)
+  → trusted ActionScope(company_id=actor.company_id, store_id=<granted store>)
+  → OperationsRunService.run_product              (OperationsAgentRunner; none → 503)
+  → requested_write_actions = ∅ → Agno Operations Agent → governed read tools
+  → {"request_id": <X-Request-ID>, "message": <assistant text>}
+```
+
+Request: `{"message": "...", "store_id": "<uuid>"}`. The message is trimmed,
+1–8000 characters. Any other field (for example `company_id`, `actor_id`,
+`permissions`, `requested_write_actions`, `allow_write`, `approved`, `session_id`,
+`run_context`) is rejected with 422.
+Response: `{"request_id": "<uuid>", "message": "<text>"}`. `request_id` equals the
+server-generated `X-Request-ID`; an incoming `X-Request-ID` is ignored.
+
+- **Product API auth is not `OS_SECURITY_KEY`.** The route is authenticated by the
+  product `ActorResolver` only. With the default `NoActorResolver` it returns 401,
+  even with a valid AgentOS key. With a trusted resolver it needs no AgentOS key.
+  Its exact path is exempted from the AgentOS auth layer (Agno's
+  `AuthorizationConfig.excluded_route_paths`; exact paths only, no wildcards), and
+  every AgentOS route still requires the key. No credential provider is added here:
+  a concrete deployment authentication adapter plugs into `ActorResolver` later.
+- **Store and company.** `store_id` is a client-selected target. It becomes trusted
+  scope only after an exact membership check against `actor.store_ids` (no
+  wildcards: `*`, `all` or an empty set grant nothing). A store not granted,
+  existing or not, is a generic 403 and the agent never runs. `company_id` always
+  comes from `ActorContext.company_id`; the request has no company field. The body
+  and prompt cannot supply identity, permissions or write intent.
+- **Read-only.** `run_product` always runs with `requested_write_actions` empty. The
+  ticket write still exists internally (programmatic `OperationsAgentRunner.run`)
+  but is not exposed over HTTP: even a model that calls `create_operational_ticket`
+  gets `action_not_requested`, and `ExecutionCoordinator` is never entered. HTTP
+  writes need a durable write-command and idempotency boundary first, which does
+  not exist yet.
+- **Tool permissions still apply.** Store access only selects the target;
+  `orders.read` and `shipments.read` are still enforced by the governed tools.
+- **Safe results and errors.** Only the final assistant text is returned, never the
+  Agno `RunOutput`, tool calls, context or policy data. That text is display text,
+  never an authorization decision. With no service configured the route returns
+  503; there is no mock fallback. A failed run (for example a model error) or a
+  service exception also gives a generic 503 with no internal detail, and every
+  response carries `X-Request-ID`.
+- **Not included:** sessions, chat history, streaming, a frontend, persistence or
+  an idempotency cache.
 
 ## 3. Technology stack
 
