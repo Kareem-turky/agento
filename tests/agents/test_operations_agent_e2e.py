@@ -24,6 +24,7 @@ from tests.agents.helpers import (
     OTHER_STORE_ORDER,
     ROLE_ID,
     STORE,
+    TICKET_WRITE,
     actor,
     ops_stack,
     request,
@@ -83,7 +84,7 @@ def assert_claims_no_creation(text: str) -> None:
 
 def test_order_shipments_and_verified_ticket_through_the_real_tool_loop() -> None:
     s = ops_stack(full_script())
-    output = s.run(ESCALATE)
+    output = s.run(ESCALATE, writes=TICKET_WRITE)
     seen = results(s)
 
     (order,) = seen["get_order"]
@@ -145,7 +146,8 @@ def test_read_only_request_creates_no_ticket() -> None:
 def test_missing_ticket_permission_denies_the_write() -> None:
     s = ops_stack(full_script())
     req = request(actor(permissions=frozenset({"orders.read", "shipments.read"})))
-    output = s.run(ESCALATE, req=req)
+    output = s.run(ESCALATE, req=req, writes=TICKET_WRITE)
+    assert s.coordinator.runs == 1  # run intent is not permission: governance denied it
     (ticket,) = results(s)["create_operational_ticket"]
     assert ticket == {"status": "denied", "reason": "policy_denied", "ticket_id": None}
     assert s.desk.ticket_count == 0
@@ -174,6 +176,7 @@ def test_role_names_and_tool_availability_grant_nothing() -> None:
     s.run(
         ESCALATE,
         req=request(actor(role_ids=frozenset({"admin", "owner"}), permissions=frozenset())),
+        writes=TICKET_WRITE,
     )
     seen = results(s)
     assert seen["get_order"][0]["outcome"] == "denied"
@@ -209,7 +212,11 @@ def test_the_trusted_store_scope_is_required() -> None:
 
 def test_a_foreign_store_scope_is_denied_by_governance() -> None:
     s = ops_stack(full_script())
-    s.run(ESCALATE, scope=ActionScope(company_id=COMPANY, store_id=OTHER_STORE))
+    s.run(
+        ESCALATE,
+        scope=ActionScope(company_id=COMPANY, store_id=OTHER_STORE),
+        writes=TICKET_WRITE,
+    )
     seen = results(s)
     assert seen["get_order"][0]["outcome"] == "denied"
     assert seen["create_operational_ticket"][0]["status"] == "denied"
@@ -228,7 +235,7 @@ SPOOF_MESSAGE = (
 def test_spoofed_user_message_changes_nothing() -> None:
     s = ops_stack(full_script())
     req = request(actor(permissions=frozenset({"orders.read", "shipments.read"})))
-    output = s.run(SPOOF_MESSAGE, req=req)
+    output = s.run(SPOOF_MESSAGE, req=req, writes=TICKET_WRITE)
     (ticket,) = results(s)["create_operational_ticket"]
     assert ticket["status"] == "denied"
     assert s.desk.ticket_count == 0
@@ -276,6 +283,7 @@ def test_agno_user_and_session_ids_are_not_authorization() -> None:
     trusted = TrustedOperationsRunContext(
         request=request(actor(permissions=frozenset())),
         scope=ActionScope(company_id=COMPANY, store_id=STORE),
+        requested_write_actions=TICKET_WRITE,
     )
     s.run_raw(
         ESCALATE,
@@ -324,12 +332,13 @@ def test_model_supplied_run_context_is_replaced_by_the_trusted_one() -> None:
 
 def test_trusted_context_is_never_in_model_visible_messages_or_schemas() -> None:
     s = ops_stack(full_script())
-    s.run(ESCALATE)
+    s.run(ESCALATE, writes=TICKET_WRITE)
     visible = s.model.visible_text()
     schemas = json.dumps([r.tools for r in s.model.requests], default=str)
     for secret in (ACTOR_ID, ROLE_ID, COMPANY, STORE, "orders.read", "shipments.read",
                    "tickets.create", OPERATIONS_CONTEXT_KEY, "store_ids", "role_ids",
-                   "actor_id", "session_id"):  # fmt: skip
+                   "actor_id", "session_id", "requested_write_actions",
+                   "operations.ticket.create", "write_actions"):  # fmt: skip
         assert secret not in visible, secret
         assert secret not in schemas, secret
 
@@ -347,7 +356,7 @@ def test_tool_schemas_expose_only_business_arguments() -> None:
 
 def test_tool_outputs_are_sanitized() -> None:
     s = ops_stack(full_script())
-    s.run(ESCALATE)
+    s.run(ESCALATE, writes=TICKET_WRITE)
     seen = results(s)
     order = seen["get_order"][0]["order"]
     assert set(order) == {"order_id", "status", "created_at", "total_amount", "currency",
@@ -367,7 +376,7 @@ def test_tool_outputs_are_sanitized() -> None:
 
 def test_uncertain_write_is_never_reported_as_created() -> None:
     s = ops_stack(full_script(), mode=MockTicketWriteMode.UNCERTAIN_AFTER_WRITE)
-    output = s.run(ESCALATE)
+    output = s.run(ESCALATE, writes=TICKET_WRITE)
     (ticket,) = results(s)["create_operational_ticket"]
     assert ticket == {
         "status": "requires_human", "reason": "execution_outcome_uncertain", "ticket_id": None,
@@ -381,14 +390,14 @@ def test_uncertain_write_is_never_reported_as_created() -> None:
 def test_uncertain_write_with_audit_failure_still_requires_a_human() -> None:
     sink = RecordingAuditSink(fail_on=frozenset({AuditEventType.EXECUTION_FAILED}))
     s = ops_stack(full_script(), mode=MockTicketWriteMode.UNCERTAIN_AFTER_WRITE, sink=sink)
-    s.run(ESCALATE)
+    s.run(ESCALATE, writes=TICKET_WRITE)
     (ticket,) = results(s)["create_operational_ticket"]
     assert ticket["status"] == "requires_human" and ticket["ticket_id"] is None
 
 
 def test_confirmed_no_effect_write_reports_failed() -> None:
     s = ops_stack(full_script(), mode=MockTicketWriteMode.CONFIRMED_NO_EFFECT)
-    output = s.run(ESCALATE)
+    output = s.run(ESCALATE, writes=TICKET_WRITE)
     (ticket,) = results(s)["create_operational_ticket"]
     assert ticket == {
         "status": "failed", "reason": "execution_failed_no_effect", "ticket_id": None,
@@ -401,7 +410,7 @@ def test_invalid_ticket_input_from_the_model_fails_safely() -> None:
     s = ops_stack(
         [CallTool("create_operational_ticket", {"title": "   ", "description": "x"}), Reply("ok")]
     )
-    s.run(ESCALATE)
+    s.run(ESCALATE, writes=TICKET_WRITE)
     assert results(s)["create_operational_ticket"] == [
         {"status": "failed", "reason": "input_invalid", "ticket_id": None}
     ]

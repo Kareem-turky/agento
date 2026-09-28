@@ -12,7 +12,10 @@ Tools are not authorization:
   resource is checked against the trusted store before any data is exposed;
 - the only write, ``create_operational_ticket``, goes through
   ``ExecutionCoordinator`` (governance, validation, handler, integration,
-  verification, audit). No tool calls an integration write or a handler directly.
+  verification, audit), and only when the trusted run context lists it in
+  ``requested_write_actions``; otherwise it stops with ``action_not_requested``
+  before anything is executed or audited. No tool calls an integration write or a
+  handler directly.
 
 Outputs are narrow, typed JSON: no external references, provider IDs, customer
 contact data, raw provider payloads or exception text. Tools never raise.
@@ -98,6 +101,9 @@ class TicketToolResult(BaseModel):
 
 
 TRUSTED_CONTEXT_UNAVAILABLE = "trusted_context_unavailable"
+# The trusted run did not request this write: not a permission decision (that is
+# GovernanceGate's), and nothing is executed or audited.
+ACTION_NOT_REQUESTED = "action_not_requested"
 
 
 def _order_snapshot(order: Order) -> OrderSnapshot:
@@ -250,6 +256,10 @@ def build_operations_tools(
         trusted = trusted_context_from(run_context)
         if trusted is None:
             return _dump(TicketToolResult(status="failed", reason=TRUSTED_CONTEXT_UNAVAILABLE))
+        if CREATE_TICKET_ACTION.name not in trusted.requested_write_actions:
+            # Trusted per-run write intent, checked before anything runs. The model can
+            # neither see nor change it; actor permission is still enforced afterwards.
+            return _dump(TicketToolResult(status="denied", reason=ACTION_NOT_REQUESTED))
         try:
             run = await coordinator.run(
                 trusted.request,

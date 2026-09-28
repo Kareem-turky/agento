@@ -600,15 +600,18 @@ Agent") that analyzes an order and its shipments and can request an operational
 ticket. It is wired programmatically only:
 
 ```
-OperationsAgentRunner.run(request, scope, message)      # trusted request + store scope
-  → TrustedOperationsRunContext(request, scope)          # built by the runner only
+OperationsAgentRunner.run(request, scope, message,     # trusted request + store scope
+                          requested_write_actions=...)  # trusted per-run write intent
+  → TrustedOperationsRunContext(request, scope, requested_write_actions)  # runner only
   → Agent.arun(message, dependencies={operations_run_context: <object>},
                add_dependencies_to_context=False)
   → Agno tool loop → product tools (RunContext injected by Agno)
       get_order            → GovernanceGate(operations.order.read)     → CommerceIntegration
       get_order_shipments  → GovernanceGate(operations.shipments.read) → CommerceIntegration
-      create_operational_ticket → ExecutionCoordinator(operations.ticket.create)
-                                  → handler → TicketingIntegration → verify → audit
+      create_operational_ticket → requested for this run? (no → action_not_requested)
+                                  → ExecutionCoordinator(operations.ticket.create)
+                                  → GovernanceGate (tickets.create?) → handler
+                                  → TicketingIntegration → verify → audit
   → final answer
 ```
 
@@ -622,10 +625,23 @@ OperationsAgentRunner.run(request, scope, message)      # trusted request + stor
   before any integration call, and the only write goes through
   `ExecutionCoordinator`. Having a tool, a role name, the agent id or an Agno
   `user_id`/`session_id` grants nothing.
+- **Actor permission and per-run write intent are separate, and both are required.**
+  `tickets.create` (GovernanceGate) answers "may this actor perform this action?".
+  The trusted `requested_write_actions` of the run answers "was this write
+  requested for this particular agent run?". It defaults to empty (a read-only run);
+  the runner's caller supplies it as trusted application-layer intent (the
+  product-facing boundary that sets it comes later). If the ticket action is not
+  requested, `create_operational_ticket` returns
+  `{"status": "denied", "reason": "action_not_requested"}` without entering
+  `ExecutionCoordinator`: nothing is executed, verified or audited. If it is
+  requested, governance still decides. The LLM answers neither question: the
+  instruction to create tickets only when asked is guidance, not the enforcement,
+  and the write intent is never shown to the model or exposed as a tool argument.
 - **Trusted context comes only from the product runner.** `OperationsAgentRunner`
   builds a frozen `TrustedOperationsRunContext` (the trusted `RequestContext`, whose
-  `actor` is the only actor authority, plus a store-scoped `ActionScope`; a run
-  without a store fails closed). The user's message cannot change it.
+  `actor` is the only actor authority, a store-scoped `ActionScope` and the
+  `requested_write_actions`; a run without a store or with an unknown write action
+  fails closed). The user's message cannot change it.
 - **`RunContext` is Agno's injection mechanism.** Tools declare
   `run_context: RunContext`; Agno injects it and omits it from the tool schema, so
   the model sees only `order_id` or `title`/`description`. A model-supplied

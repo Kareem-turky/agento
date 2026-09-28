@@ -1,7 +1,7 @@
 """The Operations Agent and its product-owned runner.
 
-    OperationsAgentRunner.run(request, scope, message)
-      -> TrustedOperationsRunContext(request, store-scoped scope)   (trusted, programmatic)
+    OperationsAgentRunner.run(request, scope, message, requested_write_actions=...)
+      -> TrustedOperationsRunContext(request, store-scoped scope, write intent)
       -> Agent.arun(message, dependencies={OPERATIONS_CONTEXT_KEY: context},
                     add_dependencies_to_context=False)
       -> Agno tool loop -> product tools (governed reads; writes via ExecutionCoordinator)
@@ -10,6 +10,11 @@ The model is untrusted: it sees only the user's message, its instructions and th
 three tool schemas. It never supplies actor, company, store, permissions, risk or
 approval, and the trusted context is never added to its prompt. Agno ``user_id`` /
 ``session_id`` are not authorization.
+
+A write needs two independent trusted answers, neither from the LLM: the run's
+``requested_write_actions`` (was this write requested for this run?) and the actor's
+permission via GovernanceGate (may this actor do it?). The instruction to create a
+ticket only when asked is behavioural guidance, not the enforcement mechanism.
 
 Not registered with AgentOS and not exposed over HTTP: the authenticated
 product-facing run boundary (product auth -> trusted ActorContext -> run) does not
@@ -89,18 +94,30 @@ def build_operations_agent(
 class OperationsAgentRunner:
     """Runs the Operations Agent with a trusted, store-scoped context.
 
-    ``request`` and ``scope`` are trusted application-layer inputs; ``message`` is
-    untrusted user input and cannot change them.
+    ``request``, ``scope`` and ``requested_write_actions`` are trusted
+    application-layer inputs; ``message`` is untrusted user input and cannot change
+    them. ``requested_write_actions`` defaults to empty: a read-only run.
     """
 
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
 
-    async def run(self, request: RequestContext, scope: ActionScope, message: str) -> RunOutput:
+    async def run(
+        self,
+        request: RequestContext,
+        scope: ActionScope,
+        message: str,
+        *,
+        requested_write_actions: frozenset[str] = frozenset(),
+    ) -> RunOutput:
         if not isinstance(request, RequestContext) or not isinstance(scope, ActionScope):
             raise TypeError("the runner takes a trusted RequestContext and ActionScope")
-        # Raises (fails closed) when the scope is not store scoped.
-        trusted = TrustedOperationsRunContext(request=request, scope=scope)
+        if not isinstance(requested_write_actions, frozenset):
+            raise TypeError("requested_write_actions must be a frozenset")
+        # Raises (fails closed) when the scope is not store scoped or an action is unknown.
+        trusted = TrustedOperationsRunContext(
+            request=request, scope=scope, requested_write_actions=requested_write_actions
+        )
         return await self._agent.arun(
             message,
             dependencies={OPERATIONS_CONTEXT_KEY: trusted},

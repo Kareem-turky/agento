@@ -109,7 +109,9 @@ def test_no_module_level_mutable_state() -> None:
 
 
 # Task 011: the Operations Agent modules are the one intended consumer of operations.
-OPERATIONS_AGENT_MODULES = {"agents/operations.py", "agents/operations_tools.py"}
+OPERATIONS_AGENT_MODULES = {
+    "agents/operations.py", "agents/operations_context.py", "agents/operations_tools.py",
+}  # fmt: skip
 
 
 def test_operations_are_reached_only_by_the_operations_agent() -> None:

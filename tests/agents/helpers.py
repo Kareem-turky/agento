@@ -12,7 +12,7 @@ from agno.run.agent import RunOutput
 from app.agents.operations import OperationsAgentRunner, build_operations_agent
 from app.commerce.domain import Order, Shipment
 from app.context.models import ActorContext, RequestContext
-from app.execution import ActionHandlerRegistry, ExecutionCoordinator
+from app.execution import ActionHandlerRegistry, ExecutionCoordinator  # noqa: F401
 from app.governance import ActionCatalog, ActionScope, GovernanceGate
 from app.integrations.commerce import CommerceIntegration, ShipmentQuery
 from app.integrations.commerce.mock import (
@@ -24,7 +24,11 @@ from app.integrations.commerce.mock import (
     MockTicketWriteMode,
     canonical_id,
 )
-from app.operations import OPERATIONS_ACTIONS, CreateOperationalTicketHandler
+from app.operations import (
+    CREATE_TICKET_ACTION,
+    OPERATIONS_ACTIONS,
+    CreateOperationalTicketHandler,
+)
 from tests.execution.fakes import FIXED_TIME, RecordingAuditSink
 from tests.support.scripted_tool_model import ScriptedToolModel, Step
 
@@ -36,6 +40,19 @@ OTHER_STORE_ORDER = str(canonical_id(EntityType.ORDER, "ord_1003"))
 ACTOR_ID = "ops-user-7f3a"
 ROLE_ID = "ops-role-91c2"
 ALL_PERMISSIONS = frozenset({"orders.read", "shipments.read", "tickets.create"})
+TICKET_WRITE = frozenset({CREATE_TICKET_ACTION.name})  # trusted per-run write intent
+
+
+class SpyCoordinator(ExecutionCoordinator):
+    """The real coordinator, counting how often a tool entered it."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.runs = 0
+
+    async def run(self, *args: Any, **kwargs: Any):
+        self.runs += 1
+        return await super().run(*args, **kwargs)
 
 
 class SpyCommerce:
@@ -80,6 +97,7 @@ class OpsStack:
     desk: MockTicketDesk
     ticketing: MockTicketingAdapter
     sink: RecordingAuditSink
+    coordinator: SpyCoordinator
     outputs: list[RunOutput] = field(default_factory=list)
 
     def run(
@@ -88,10 +106,14 @@ class OpsStack:
         *,
         req: RequestContext | None = None,
         scope: ActionScope | None = None,
+        writes: frozenset[str] = frozenset(),
     ) -> RunOutput:
         output = asyncio.run(
             self.runner.run(
-                req or request(), scope or ActionScope(company_id=COMPANY, store_id=STORE), message
+                req or request(),
+                scope or ActionScope(company_id=COMPANY, store_id=STORE),
+                message,
+                requested_write_actions=writes,
             )
         )
         self.outputs.append(output)
@@ -115,7 +137,7 @@ def ops_stack(
     ticketing = MockTicketingAdapter(MockCommerceSystem(), desk)
     sink = sink or RecordingAuditSink()
     gate = GovernanceGate(ActionCatalog(OPERATIONS_ACTIONS))
-    coordinator = ExecutionCoordinator(
+    coordinator = SpyCoordinator(
         gate,
         ActionHandlerRegistry([CreateOperationalTicketHandler(ticketing)]),
         sink,
@@ -125,7 +147,9 @@ def ops_stack(
     agent = build_operations_agent(
         model, commerce=commerce_contract, gate=gate, coordinator=coordinator
     )
-    return OpsStack(model, agent, OperationsAgentRunner(agent), spy, desk, ticketing, sink)
+    return OpsStack(
+        model, agent, OperationsAgentRunner(agent), spy, desk, ticketing, sink, coordinator
+    )
 
 
 def actor(**overrides: Any) -> ActorContext:

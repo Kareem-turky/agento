@@ -10,6 +10,13 @@ It reaches the tools through Agno's native ``RunContext`` dependency injection u
 ``OPERATIONS_CONTEXT_KEY``. Tools accept it only if the dependency is a real
 ``TrustedOperationsRunContext`` instance; a dict, JSON or any other value is
 rejected, so client-supplied dependencies can never become trusted context.
+
+``requested_write_actions`` is the trusted per-run write intent: which write
+actions the application boundary says were explicitly requested for THIS run
+(empty by default, i.e. a read-only run). It is not actor authorization and does
+not replace governance: a write needs both this run intent AND the actor's
+permission (checked by GovernanceGate inside ExecutionCoordinator). The LLM
+decides neither.
 """
 
 from typing import Self
@@ -19,8 +26,12 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.context.models import RequestContext
 from app.governance import ActionScope
+from app.operations import CREATE_TICKET_ACTION
 
 OPERATIONS_CONTEXT_KEY = "operations_run_context"
+
+# The write actions an Operations Agent run can be enabled for.
+OPERATIONS_WRITE_ACTIONS = frozenset({CREATE_TICKET_ACTION.name})
 
 
 class TrustedOperationsRunContext(BaseModel):
@@ -28,12 +39,16 @@ class TrustedOperationsRunContext(BaseModel):
 
     request: RequestContext
     scope: ActionScope
+    requested_write_actions: frozenset[str] = frozenset()
 
     @model_validator(mode="after")
     def _store_scoped(self) -> Self:
         # Operations Agent runs are store scoped; the model never chooses a store.
         if self.scope.store_id is None:
             raise ValueError("an Operations Agent run requires a store-scoped ActionScope")
+        unknown = self.requested_write_actions - OPERATIONS_WRITE_ACTIONS
+        if unknown:
+            raise ValueError("requested_write_actions contains an unknown write action")
         return self
 
 
