@@ -48,7 +48,7 @@ jobs:
         run: uv run pytest
       - name: Boot API and check health and AgentOS auth
         run: |
-          uv run uvicorn app.main:create_app --factory --app-dir apps/api \
+          uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api \
             --port 8000 > api.log 2>&1 &
           for _ in $(seq 1 30); do curl -sf localhost:8000/health > health.json && break; sleep 1; done
           cat health.json

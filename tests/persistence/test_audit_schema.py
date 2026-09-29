@@ -206,7 +206,9 @@ def test_audit_sink_is_not_wired_and_has_no_http_surface() -> None:
         text = path.read_text()
         assert "PostgresAuditSink" not in text and "audit_events" not in text, path.name
         assert "/audit" not in text, path.name
-    # Only migrations/env.py (metadata) and app.persistence reference the table.
-    users = [p for p in Path(app.main.__file__).parent.rglob("*.py")
-             if "PostgresAuditSink" in p.read_text()]  # fmt: skip
-    assert {p.parent.name for p in users} == {"persistence"}
+    # Only app.persistence defines the sink; the local/test deployment composition
+    # root (Task 018) is its only other user. create_app and routes never see it.
+    app_dir = Path(app.main.__file__).parent
+    users = [p for p in app_dir.rglob("*.py") if "PostgresAuditSink" in p.read_text()]
+    outside = {str(p.relative_to(app_dir)) for p in users if p.parent.name != "persistence"}
+    assert outside == {"composition/local_mock.py"}
