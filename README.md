@@ -579,6 +579,21 @@ ActionRun (status + typed reason; VERIFIED only when every step succeeded)
     outcome is kept and `audit_complete=False` (nothing can execute either way);
   - after execution: verification still runs, the run is never `verified`,
     `audit_complete=False`, and the status becomes `requires_human`.
+- **Durable audit log (foundation).** `app.persistence.PostgresAuditSink` implements
+  `AuditSink` on `product.audit_events` (migration `0002`). Each `record(event)`
+  accepts only an `AuditEvent` and runs one short transaction: one `INSERT`, then
+  `COMMIT`, before it returns. It never buffers, queues, retries or upserts; a
+  duplicate `event_id` fails and the stored row is unchanged. Every failure is the
+  generic `AuditPersistenceError` (no driver, SQL or connection details). Because
+  `record` returns only after the commit, `execution_started` is durable *before*
+  the handler's side effect runs; if it cannot be stored, nothing is executed
+  (`failed` / `audit_unavailable`), and any later audit failure prevents a false
+  `verified` (`requires_human` / `audit_incomplete`). Rows hold exactly the
+  metadata fields above plus a server-side `recorded_at`; there are no parameter,
+  payload, provider, idempotency-key or credential columns, and no foreign keys.
+  The audit table is separate from `product.write_commands`: a command replay adds
+  no audit rows because nothing executes. There is no audit read API or HTTP route,
+  and the sink is not yet wired into `create_app` (composition is later work).
 - **Boundaries:** the package imports only the standard library, Pydantic,
   `app.governance` and `app.context.models`. `tests/execution/test_architecture.py`
   enforces this.
@@ -840,11 +855,13 @@ trusted caller (RequestContext + ActionScope), untrusted intent + parameters, ca
   session). `app.commands` knows nothing about SQLAlchemy, FastAPI or Agno, and
   `app.execution` does not depend on either.
 - **Migrations.** The product schema is owned by Alembic (`alembic.ini`,
-  `apps/api/migrations/`, revision `0001`), targets `APP_DATABASE_URL`, lives in
+  `apps/api/migrations/`, revisions `0001` write commands and `0002` audit events),
+  targets `APP_DATABASE_URL`, lives in
   the `product` schema (its version table too) and never touches `agno_runtime`.
   `create_all` is never used. API startup does not migrate: deployments run
-  `uv run alembic upgrade head` explicitly. The downgrade drops only
-  `product.write_commands` (never the schema, never CASCADE).
+  `uv run alembic upgrade head` explicitly. Each downgrade drops only its own table
+  (`0002` → `product.audit_events`, `0001` → `product.write_commands`; never the
+  schema, never CASCADE).
 - **HTTP exposure.** Exactly one HTTP write uses it: `POST /api/v1/operations/tickets`
   (below), plus its read-only status read `GET /api/v1/operations/tickets/commands`.
   There is no generic command/action endpoint and no command listing;
@@ -1042,7 +1059,7 @@ explicitly (the API never migrates at startup):
 
 ```bash
 set -a; . ./.env; set +a
-uv run alembic upgrade head    # product schema + product.write_commands
+uv run alembic upgrade head    # product schema + write_commands + audit_events
 ```
 
 ## 8. Run the API

@@ -62,11 +62,16 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   hashing and command models. No SQLAlchemy, FastAPI or Agno. Reached over HTTP only
   through the ticket service contract.
 - `app/persistence/` — SQLAlchemy 2 async infrastructure: explicit engine/session
-  factories and `PostgresWriteCommandStore` (`product.write_commands`; also the
-  principal-scoped `WriteCommandReader`).
+  factories, `PostgresWriteCommandStore` (`product.write_commands`; also the
+  principal-scoped `WriteCommandReader`) and `PostgresAuditSink`
+  (`product.audit_events`: metadata-only, append-only, one short INSERT+COMMIT
+  transaction per event, committed before `record` returns, so `execution_started` is
+  durable before any side effect; failures raise the generic `AuditPersistenceError`
+  and the coordinator then refuses to execute or to report `verified`). Audit rows are
+  separate from command rows. No audit read API or route; not wired into `create_app`.
 - `migrations/` — Alembic migrations for the `product` schema (config: `/alembic.ini`,
-  target `APP_DATABASE_URL`). Run explicitly: `uv run alembic upgrade head`; the API
-  never migrates at startup.
+  target `APP_DATABASE_URL`): `0001` write commands, `0002` audit events. Run
+  explicitly: `uv run alembic upgrade head`; the API never migrates at startup.
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 

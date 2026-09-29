@@ -55,3 +55,30 @@ def rows_for_key(engine: sa.Engine, key: str) -> list[dict]:
             {"h": hash_idempotency_key(key)},
         ).mappings()
         return [dict(row) for row in rows]
+
+
+@asynccontextmanager
+async def audit_sink(database_url: str, **engine_options):
+    """A PostgresAuditSink with its OWN engine and connection pool."""
+    from app.persistence import PostgresAuditSink
+
+    engine = create_product_engine(database_url, **engine_options)
+    try:
+        yield PostgresAuditSink(create_session_factory(engine))
+    finally:
+        await engine.dispose()
+
+
+def audit_rows(engine: sa.Engine, **where) -> list[dict]:
+    """Audit rows matching ``column=value`` filters, in recording order."""
+    clauses = " AND ".join(f"{column} = :{column}" for column in where)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            sa.text(
+                "SELECT * FROM product.audit_events"  # noqa: S608 - fixed test columns
+                + (f" WHERE {clauses}" if clauses else "")
+                + " ORDER BY recorded_at, occurred_at"
+            ),
+            where,
+        ).mappings()
+        return [dict(row) for row in rows]

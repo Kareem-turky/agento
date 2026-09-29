@@ -26,9 +26,10 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0001"]
+    assert script.get_heads() == ["0002"]
     (base,) = script.get_bases()
     assert base == "0001"
+    assert script.get_revision("0002").down_revision == "0001"
 
 
 def alembic_config_for_scripts():
@@ -42,24 +43,50 @@ def alembic_config_for_scripts():
 def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine) -> None:
     config = alembic_config(migrated)
     agno_before = agno_snapshot(engine)
+    both = {"alembic_version", "write_commands", "audit_events"}
 
     command.upgrade(config, "head")
-    assert tables(engine, "product") == {"alembic_version", "write_commands"}
+    assert tables(engine, "product") == both
+    with engine.connect() as connection:
+        commands_before = connection.execute(
+            sa.text("SELECT count(*) FROM product.write_commands")
+        ).scalar_one()
 
     command.downgrade(config, "-1")
-    # Only the table is dropped: the schema (and its version table) stays.
-    assert tables(engine, "product") == {"alembic_version"}
-    assert "product" in sa.inspect(engine).get_schema_names()
-
-    command.upgrade(config, "head")
+    # 0002 -> 0001 drops only audit_events: the schema, its version table and
+    # write_commands (with its rows) stay.
     assert tables(engine, "product") == {"alembic_version", "write_commands"}
+    assert "product" in sa.inspect(engine).get_schema_names()
     with engine.connect() as connection:
+        assert (
+            connection.execute(sa.text("SELECT count(*) FROM product.write_commands")).scalar_one()
+            == commands_before
+        )
         version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
         assert version.scalar_one() == "0001"
 
+    command.upgrade(config, "head")
+    assert tables(engine, "product") == both
+    with engine.connect() as connection:
+        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
+        assert version.scalar_one() == "0002"
+
     # Agno's schema is byte-for-byte the same shape and holds no product table.
     assert agno_snapshot(engine) == agno_before
-    assert "write_commands" not in agno_before
+    assert "write_commands" not in agno_before and "audit_events" not in agno_before
+
+
+# SHA-256 of migration 0001 as merged in Task 013: it must never change.
+MIGRATION_0001_SHA256 = "66a1f14e4fcae5f6c17802cda7499591c9cb00693dbd5244cc3f464ea89297f2"
+
+
+def test_migration_0001_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0001_create_write_commands.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0001_SHA256
 
 
 def test_metadata_matches_the_migrated_schema(migrated: str) -> None:

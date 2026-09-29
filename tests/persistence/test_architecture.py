@@ -18,7 +18,8 @@ PRODUCTION_FILES = sorted(APP_DIR.rglob("*.py")) + sorted(
 )
 
 ALLOWED_ROOTS = {"__future__", "hmac", "typing", "uuid", "pydantic", "sqlalchemy"}
-ALLOWED_APP = ("app.persistence", "app.commands")
+# The command store contracts, and the audit event contract PostgresAuditSink persists.
+ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit")
 
 
 def imports(path: Path) -> list[str]:
