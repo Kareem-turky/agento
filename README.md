@@ -209,8 +209,10 @@ Authorization header (exactly one; scheme "Bearer", any case; one token)
 
 - **Two separate credentials.** The Product API key authenticates Product routes only;
   `OS_SECURITY_KEY` authenticates AgentOS routes only. Neither opens the other surface,
-  and they are never compared or synchronized. The Product paths are exempted from the
-  AgentOS layer by exact path; that does not make them public.
+  and they must differ: the app refuses to start if a configured Product key is the
+  `OS_SECURITY_KEY` (its hash is checked against every configured key hash in constant
+  time; the error names no key). The Product paths are exempted from the AgentOS layer by
+  exact path; that does not make them public.
 - **One company per deployment.** `APP_COMPANY_ID` is the only company; every configured
   principal belongs to it (a key has no company of its own). No tenants.
 - **Configuration holds hashes only.** `APP_PRODUCT_API_KEYS` is a JSON array of

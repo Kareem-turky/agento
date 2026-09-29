@@ -14,7 +14,7 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app import __version__
-from app.auth import build_actor_resolver
+from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
@@ -54,7 +54,14 @@ def create_app(
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # An explicitly injected resolver is used exactly; otherwise Product authentication
     # comes from settings (API keys), and staging/production refuse to start without it.
-    resolver = actor_resolver if actor_resolver is not None else build_actor_resolver(settings)
+    if actor_resolver is not None:
+        resolver = actor_resolver
+    else:
+        resolver = build_actor_resolver(settings)
+        if settings.product_auth_mode == "api_key":
+            # One credential must never open both surfaces: refuse a Product key that is
+            # the AgentOS key. Only the OS key string crosses into the auth module.
+            validate_credential_separation(settings, runtime_settings.os_security_key)
     # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
     # base_app the docs routes come from this constructor, so use the same setting here.
     docs_enabled = runtime_settings.docs_enabled

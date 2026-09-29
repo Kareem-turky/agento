@@ -10,6 +10,7 @@ from app.auth.api_keys import (
     ProductAuthConfigurationError,
     bearer_token,
     build_actor_resolver,
+    validate_credential_separation,
 )
 from app.auth.keys import (
     MAX_API_KEY_LENGTH,
@@ -29,4 +30,5 @@ __all__ = [
     "build_actor_resolver",
     "hash_api_key",
     "is_well_formed_api_key",
+    "validate_credential_separation",
 ]

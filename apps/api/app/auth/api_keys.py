@@ -12,7 +12,8 @@ The raw key never leaves ``resolve``: it is not stored, logged, raised, attached
 the request or passed on. Only ``ActorContext`` flows downstream. The resolver never
 decides authorization: permissions, policy and store scope stay authoritative
 elsewhere. This is Product authentication only; the AgentOS ``OS_SECURITY_KEY`` is a
-separate credential for a separate surface.
+separate credential for a separate surface, and ``validate_credential_separation``
+refuses a deployment where a configured Product key equals it.
 """
 
 import hashlib
@@ -23,7 +24,7 @@ from collections.abc import Iterable
 from starlette.datastructures import Headers
 from starlette.requests import Request
 
-from app.auth.keys import is_well_formed_api_key
+from app.auth.keys import hash_api_key, is_well_formed_api_key
 from app.config import ProductApiKeyPrincipalConfig, Settings
 from app.context.models import ActorContext
 from app.context.resolver import ActorResolver, NoActorResolver
@@ -93,6 +94,29 @@ class ProductApiKeyActorResolver:
             permissions=matched.permissions,
             store_ids=matched.store_ids,
         )
+
+
+CREDENTIAL_COLLISION_MESSAGE = "Product API credentials must be distinct from OS_SECURITY_KEY"
+
+
+def validate_credential_separation(settings: Settings, os_security_key: str | None) -> None:
+    """Refuse a configured Product API key that IS the AgentOS ``OS_SECURITY_KEY``.
+
+    Otherwise one Bearer credential would open both the Product routes and AgentOS.
+    Pure and runtime-independent: the caller passes only the OS key string. An OS key
+    that could never be a Product key (format) cannot collide and is not rejected.
+    The error is fixed text: no key, hash, key_id or actor_id is ever included.
+    """
+    if not os_security_key or not settings.product_api_keys:
+        return
+    candidates = {os_security_key, os_security_key.strip()}
+    digests = [hash_api_key(c) for c in candidates if is_well_formed_api_key(c)]
+    collision = False
+    for digest in digests:
+        for principal in settings.product_api_keys:  # every hash compared, constant time
+            collision |= hmac.compare_digest(digest, principal.key_sha256)
+    if collision:
+        raise ProductAuthConfigurationError(CREDENTIAL_COLLISION_MESSAGE)
 
 
 def build_actor_resolver(settings: Settings) -> ActorResolver:
