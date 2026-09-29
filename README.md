@@ -965,6 +965,60 @@ HTTP request
   `WriteCommandTicketQueryService(<WriteCommandReader>)` from the caller (e.g. the
   `PostgresWriteCommandStore`); no approval, cancellation, listing or recovery exists.
 
+### Daily operations report: `GET /api/v1/operations/reports/daily` (deterministic Workflow)
+
+"Analyze operations today" is deterministic, so it is a **Workflow, not an Agent**:
+backend code computes every number and finding; no model is called, and the LLM
+never calculates metrics or discovers anomalies.
+
+```
+Product request -> Product auth -> exact store grant -> DailyOperationsReportService
+  -> DailyOperationsWorkflow
+       governance preflight: operations.store.read (stores.read),
+         operations.orders.list (orders.read), operations.shipments.list
+         (shipments.read) must ALL be allowed, else 403 before anything is read
+       CommerceIntegration.get_store -> exact store + company, store.timezone (IANA)
+       business day = [local midnight, next local midnight)   (DST-correct: 23/25 h)
+       list_orders(store, created in the day) + list_shipments(store, shipped in the day)
+       every record validated (store, window, parent order) -> any violation: 503
+       canonical status counts + rule-based findings
+  -> {request_id, report}
+```
+
+Query: `store_id` (UUID, required) and `business_date` (`YYYY-MM-DD`, optional; default:
+"today" in the **store's** timezone). Nothing else is accepted (422): the caller never
+supplies company, identity, timezone, permissions or report content.
+
+- **Coverage** (machine-readable in every report): `orders: created_in_business_day`,
+  `shipments: shipped_in_business_day`, `inventory: not_included` with
+  `inventory_reason: store_scoped_inventory_query_unavailable` (the canonical contract
+  has no safe store-to-inventory scoping yet, so inventory is NOT analyzed). It is not
+  a history of every state change during the day: canonical models carry no event
+  history.
+- **Metrics** (over the complete result set): `orders_created`,
+  `order_status_counts`, `shipments_shipped`, `shipment_status_counts` (every
+  canonical status, zeros included) and `affected_orders` (distinct orders with a
+  finding).
+- **Findings** (exactly four rules; no SLA, "late", forecast or provider rule):
+  order `unknown` -> `order_status_unknown` (warning, `review_status_mapping`);
+  shipment `failed` -> `shipment_failed` (critical, `review_failed_shipment`);
+  shipment `returned` -> `shipment_returned` (warning, `review_returned_shipment`);
+  shipment `unknown` -> `shipment_status_unknown` (warning, `review_status_mapping`).
+  Sorted by severity (critical first), code, order_id, entity_id; at most
+  `MAX_DAILY_FINDINGS = 100` returned, with `findings_total` and `findings_truncated`.
+- **Data minimization:** canonical store/order/shipment UUIDs and canonical statuses
+  only; never provider statuses, external references, customer data, tracking
+  numbers, company or actor identity.
+- **Read-only:** no WriteCommand, ticket, ActionRun, audit lifecycle or agent run.
+  `ShipmentQuery.store_id` (new) scopes shipments by their parent order's store; the
+  adapter enforces it, and an unknown store returns no shipments.
+- **Errors:** 401 without Product auth (the AgentOS key does not authenticate it),
+  403 for an ungranted store or a missing report permission, 503 (fixed message) when
+  the service is not composed or the integration, data or store timezone is unusable.
+- **Composition:** with `APP_BUSINESS_BACKEND=mock` the workflow reads through the
+  same `MockCommerceAdapter` and `GovernanceGate` as the Operations Agent; with
+  `disabled` the route answers 503. It is not an Operations Agent tool (yet).
+
 ### Deployment composition: `app.bootstrap` and `APP_BUSINESS_BACKEND`
 
 Two application factories, on purpose:
@@ -982,6 +1036,7 @@ Operator -> create_deployment_app() -> Settings -> deployment composition
      -> WriteCommandCoordinator -> ticket create + status services
      one MockCommerceSystem -> MockCommerceAdapter (reads) + MockTicketingAdapter (writes)
      Operations Agent -> OperationsAgentRunner (read-only Product boundary)
+     DailyOperationsWorkflow (same adapter + gate) -> daily report service
   -> create_app(...) -> FastAPI + AgentOS (Product auth inside)
 ```
 

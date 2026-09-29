@@ -42,6 +42,7 @@ def create_deployment_app(
             operations_service=composition.operations_service,
             operations_ticket_service=composition.operations_ticket_service,
             operations_ticket_query_service=composition.operations_ticket_query_service,
+            daily_operations_service=composition.daily_operations_service,
             shutdown_callback=composition.close,
         )
     except BaseException:

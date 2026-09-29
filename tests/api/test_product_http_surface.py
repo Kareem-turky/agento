@@ -57,6 +57,7 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),
+        ("GET", "/api/v1/operations/reports/daily"),
         ("POST", "/api/v1/operations/tickets"),
         ("GET", "/api/v1/operations/tickets/commands"),
     }

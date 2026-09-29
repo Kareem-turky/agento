@@ -141,7 +141,17 @@ class MockCommerceAdapter:
                 )
                 if order_key is None:
                     return ()  # an unknown order simply has no shipments
-            shipments = [self._map_shipment(r) for r in self._system.search_shipments(order_key)]
+            records = self._system.search_shipments(order_key)
+            if query.store_id is not None:
+                shop_key = self._resolve_optional(
+                    EntityType.STORE, query.store_id, self._system.list_shop_keys()
+                )
+                if shop_key is None:
+                    return ()  # an unknown store simply has no shipments
+                # Store scope comes from the PARENT order's shop, enforced here.
+                store_orders = {o.order_key for o in self._system.search_orders(shop_key)}
+                records = tuple(r for r in records if r.order_key in store_orders)
+            shipments = [self._map_shipment(r) for r in records]
             matching = [
                 s
                 for s in shipments

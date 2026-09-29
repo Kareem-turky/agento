@@ -133,7 +133,11 @@ def test_operations_are_reached_only_by_the_operations_agent() -> None:
     adapters = {TICKET_COMMAND_ADAPTER, TICKET_QUERY_ADAPTER}
     # The local/test deployment composition root builds the ticket handler registry.
     composer = "composition/local_mock.py"
-    assert importers <= OPERATIONS_AGENT_MODULES | adapters | {composer}
+    # The deterministic daily report workflow uses only the READ action definitions.
+    workflow = "workflows/operations_daily.py"
+    assert importers <= OPERATIONS_AGENT_MODULES | adapters | {composer, workflow}
+    workflow_imports = [m for m in imports(APP_DIR / workflow) if m.startswith("app.operations")]
+    assert workflow_imports == ["app.operations.actions"]
     for adapter in adapters:
         adapter_imports = [m for m in imports(APP_DIR / adapter) if m.startswith("app.operations")]
         assert adapter_imports == ["app.operations.actions"], adapter

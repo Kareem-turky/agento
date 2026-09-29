@@ -20,6 +20,7 @@ from agno.models.base import Model
 
 from app.config import DEVELOPMENT_ENVIRONMENTS, Settings
 from app.services.operations import OperationsRunService
+from app.services.operations_reports import DailyOperationsReportService
 from app.services.operations_tickets import (
     OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
@@ -59,6 +60,7 @@ class DeploymentComposition:
     operations_service: OperationsRunService | None = None
     operations_ticket_service: OperationsTicketCommandService | None = None
     operations_ticket_query_service: OperationsTicketCommandQueryService | None = None
+    daily_operations_service: DailyOperationsReportService | None = None
     close: Callable[[], Awaitable[None]] = _nothing_to_close
     discard: Callable[[], None] = _nothing_to_discard
 
