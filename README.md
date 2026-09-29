@@ -148,9 +148,10 @@ directly on AgentOS APIs. Product-facing APIs will sit above the runtime where a
 ```
 Client
   ↓
-Future authentication        (not implemented yet)
+Authorization: Bearer <Product API key>
   ↓
-ActorResolver                (default: NoActorResolver → no actor)
+ActorResolver                (ProductApiKeyActorResolver when APP_PRODUCT_AUTH_MODE=api_key;
+                              NoActorResolver when auth is disabled, local/test only)
   ↓
 ActorContext                 (trusted identity + granted scope)
   ↓
@@ -176,9 +177,10 @@ Permissions / Policy / Tools (later)
   parameters or arbitrary client headers — `X-Actor-Id`, `X-Company-Id`, `X-Role(s)`,
   `X-Permissions`, `X-Store-Ids` and similar are ignored. The LLM is not an identity or
   authorization authority.
-- **Fail closed.** Real authentication comes later; until then the production default
-  `NoActorResolver` resolves no actor. `create_app(..., actor_resolver=...)` accepts another
-  resolver (tests inject a deterministic one from `tests/support/`).
+- **Fail closed.** Product authentication is the configured API-key resolver (see
+  "Product authentication" below). With auth disabled (local/test only) `NoActorResolver`
+  resolves no actor. `create_app(..., actor_resolver=...)` uses an injected resolver
+  exactly (tests inject a deterministic one from `tests/support/`).
 - **Per request, never global.** `RequestContextMiddleware` creates the context for each HTTP
   request and returns the server-generated ID in `X-Request-ID`. An incoming
   `X-Request-ID` is never used as the internal request ID.
@@ -191,6 +193,50 @@ Permissions / Policy / Tools (later)
 - **Not multi-tenant.** Each installation is physically isolated; `company_id` identifies
   the business entity inside that installation. Nothing is persisted: there are no user,
   role, permission, company or session tables for this.
+
+### Product authentication: API keys (single company)
+
+Product routes authenticate with `Authorization: Bearer <Product API key>`:
+
+```
+Authorization header (exactly one; scheme "Bearer", any case; one token)
+  → raw key well formed (32–256 printable ASCII, no whitespace; case-sensitive)
+  → SHA-256 → hmac.compare_digest against every configured hash (no early exit)
+  → exactly one match → ActorContext(actor_type="api_client", company_id=APP_COMPANY_ID,
+                                      actor_id / role_ids / permissions / store_ids of that key)
+  → otherwise no actor → the usual 401 "Not authenticated" (the reason is never revealed)
+```
+
+- **Two separate credentials.** The Product API key authenticates Product routes only;
+  `OS_SECURITY_KEY` authenticates AgentOS routes only. Neither opens the other surface,
+  and they are never compared or synchronized. The Product paths are exempted from the
+  AgentOS layer by exact path; that does not make them public.
+- **One company per deployment.** `APP_COMPANY_ID` is the only company; every configured
+  principal belongs to it (a key has no company of its own). No tenants.
+- **Configuration holds hashes only.** `APP_PRODUCT_API_KEYS` is a JSON array of
+  principals: `key_id` (operator metadata, never exposed), `key_sha256` (64 lowercase hex),
+  `actor_id`, `role_ids`, `permissions`, `store_ids`. The raw key never enters settings,
+  logs, contexts, audit events or any response; it never leaves the resolver. Unknown
+  fields, malformed hashes and duplicate hashes or `key_id`s are refused at startup.
+- **Fail closed.** `APP_PRODUCT_AUTH_MODE=api_key` requires `APP_COMPANY_ID` and at least
+  one principal. Staging and production refuse to start with Product auth `disabled`;
+  `disabled` (`NoActorResolver`) is for local/test only.
+- **Authentication is not authorization.** A valid key supplies identity and grants only;
+  the exact store check still applies (403) and Governance still decides every action
+  (a key without `tickets.create` gets a durable `denied`). The resolver decides nothing.
+- **Health stays public** and reveals nothing about keys, actors or grants.
+- **Creating a key.** Generate a random key (32–256 printable ASCII characters) and
+  compute its hash without putting it on the command line:
+
+  ```bash
+  uv run python apps/api/scripts/hash_product_api_key.py   # prompts; input is hidden
+  ```
+
+  It reads the key from stdin and prints only the lowercase SHA-256. Put that hash in
+  `APP_PRODUCT_API_KEYS`; give the raw key to the client only.
+- **Rotation** is a configuration change: add the new principal, deploy/restart, move the
+  client, then remove the old one. There is no key database, key-management API, JWT,
+  OAuth or session.
 
 ### Agno telemetry policy
 
@@ -698,12 +744,11 @@ Response: `{"request_id": "<uuid>", "message": "<text>"}`. `request_id` equals t
 server-generated `X-Request-ID`; an incoming `X-Request-ID` is ignored.
 
 - **Product API auth is not `OS_SECURITY_KEY`.** The route is authenticated by the
-  product `ActorResolver` only. With the default `NoActorResolver` it returns 401,
-  even with a valid AgentOS key. With a trusted resolver it needs no AgentOS key.
-  Its exact path is exempted from the AgentOS auth layer (Agno's
+  product `ActorResolver` only (a Product API key; see "Product authentication"). Without
+  a Product actor it returns 401, even with a valid AgentOS key, and it needs no AgentOS
+  key. Its exact path is exempted from the AgentOS auth layer (Agno's
   `AuthorizationConfig.excluded_route_paths`; exact paths only, no wildcards), and
-  every AgentOS route still requires the key. No credential provider is added here:
-  a concrete deployment authentication adapter plugs into `ActorResolver` later.
+  every AgentOS route still requires the key.
 - **Store and company.** `store_id` is a client-selected target. It becomes trusted
   scope only after an exact membership check against `actor.store_ids` (no
   wildcards: `*`, `all` or an empty set grant nothing). A store not granted,
@@ -825,7 +870,7 @@ HTTP request
   → {request_id, command_id, status, reason, ticket_id, replayed, persistence_complete}
 ```
 
-- **Authentication.** Product `ActorResolver` only (default `NoActorResolver` → 401).
+- **Authentication.** Product `ActorResolver` only (a Product API key; none → 401).
   `OS_SECURITY_KEY` is not Product authentication: it neither authenticates nor is
   needed here. The exact path is exempted from the AgentOS auth layer (no
   wildcard); every AgentOS route still requires the key.
@@ -968,6 +1013,9 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `APP_DATABASE_URL` | API | **Required.** PostgreSQL DSN (`postgresql+psycopg://...`) |
 | `APP_AGNO_DB_SCHEMA` | API | Schema for Agno runtime tables (default `agno_runtime`) |
 | `APP_REDIS_URL` | API | Optional Redis DSN (not used yet) |
+| `APP_PRODUCT_AUTH_MODE` | API | `disabled` (local/test only) \| `api_key`. Staging/production require `api_key` |
+| `APP_COMPANY_ID` | API | The single company of this deployment (required with `api_key`) |
+| `APP_PRODUCT_API_KEYS` | API | JSON array of principals holding key SHA-256 hashes only (never raw keys) |
 | `OS_SECURITY_KEY` | Agno | **Required**, ≥ 32 chars. Bearer key for AgentOS routes (read by Agno) |
 | `DOCS_ENABLED` | Agno | Optional (default `true`). Always off in `staging`/`production` |
 | `APP_DEFAULT_MODEL_PROVIDER` | API | `disabled` (default) \| `openai` \| `anthropic` |

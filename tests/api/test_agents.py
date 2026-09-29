@@ -9,6 +9,7 @@ from app.agents.generic_reasoning import GENERIC_REASONING_AGENT_ID, build_gener
 from app.main import create_app
 from app.runtime import SMOKE_TEST_AGENT_ID, ModelConfigurationError
 from tests.support.deterministic_model import DeterministicModel
+from tests.support.product_auth import deployment_settings
 
 DUMMY_KEY = "dummy-test-value-not-a-real-key"  # noqa: S105 - test fixture
 
@@ -73,7 +74,7 @@ def test_development_with_model_registers_smoke_and_generic_agents(
 def test_deployment_without_model_registers_no_agents(
     settings, runtime_settings, environment
 ) -> None:
-    app = create_app(settings.model_copy(update={"environment": environment}), runtime_settings)
+    app = create_app(deployment_settings(settings, environment), runtime_settings)
 
     assert agent_ids(app) == []
 
@@ -83,7 +84,7 @@ def test_deployment_with_model_registers_only_generic_agent(
     settings, runtime_settings, environment
 ) -> None:
     app = create_app(
-        settings.model_copy(update={"environment": environment}),
+        deployment_settings(settings, environment),
         runtime_settings,
         default_model=DeterministicModel(),
     )
@@ -99,12 +100,11 @@ def test_configured_provider_registers_generic_agent_with_native_model(
     monkeypatch: pytest.MonkeyPatch, settings, runtime_settings, provider, variable, model_class
 ) -> None:
     monkeypatch.setenv(variable, DUMMY_KEY)
-    configured = settings.model_copy(
-        update={
-            "environment": "production",
-            "default_model_provider": provider,
-            "default_model_id": "example-model-id",
-        }
+    configured = deployment_settings(
+        settings,
+        "production",
+        default_model_provider=provider,
+        default_model_id="example-model-id",
     )
 
     app = create_app(configured, runtime_settings)
