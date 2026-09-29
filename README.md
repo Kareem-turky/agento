@@ -438,6 +438,43 @@ Application · (later) Tools → Permission/Policy → CommerceIntegration
   The only write is the separate `TicketingIntegration` contract, reached through
   the governed `operations.ticket.create` action (see below).
 
+#### Commerce integration conformance harness (every adapter must pass it)
+
+`CommerceIntegration` is the provider-independent boundary: the Product contract is
+authoritative, and a provider adapter adapts itself to it (never the reverse). The
+reusable, offline, test-only harness in `tests/commerce_conformance/` checks any
+adapter through the contract alone (it imports no concrete adapter):
+
+- **canonical identity:** exact canonical ids, valid stores/orders/shipments/levels,
+  aware timestamps, provider ids never in canonical fields, relationships resolvable
+  (order -> store, shipment -> order);
+- **query semantics:** store/order/status/time filters combined with AND, checked
+  against a reference computed from the adapter's own unfiltered results;
+- **deterministic sorting** (orders by created_at then id; shipments by shipped_at,
+  unshipped last, then id; inventory by warehouse) and **limit after filter + sort**;
+- **half-open time windows** (`from <= t < to`; unshipped never matches a time bound);
+- **store isolation:** store-scoped orders and shipments (via the parent order) never
+  leak another store's data; unknown ids in list queries give an empty tuple;
+- **error translation:** unknown entity -> `IntegrationNotFoundError`, unreachable ->
+  `IntegrationUnavailableError`, unmappable data -> `IntegrationDataError`; no provider
+  or transport exception escapes;
+- **data minimization:** credentials, URLs, auth headers and raw payloads planted in
+  the provider never appear in a Product-level error;
+- **read-only capabilities** and deterministic repeated reads.
+
+Negative self-tests prove the harness catches wrong sorting, cross-store leaks,
+end-inclusive windows, list-instead-of-tuple and escaping provider exceptions.
+
+**Adding a commerce adapter:** (1) implement `CommerceIntegration`; (2) return
+canonical domain models only; (3) write a provider-specific
+`CommerceConformanceFixture` (see `tests/integrations/mock_conformance.py`); (4) pass
+the generic harness (`CONFORMANCE_CHECKS`, one parametrized test); (5) pass
+provider-specific mapping and security tests; (6) only then add it to the deployment
+composition. Passing conformance is necessary but NOT sufficient for production:
+provider authentication, rate limits, retries, pagination, idempotency and
+operational security still require provider-specific review. No real provider
+adapter exists yet; none is added without its authoritative API contract.
+
 ### Governance: actions, permissions and baseline policy (decision only)
 
 `app/governance/` decides whether a trusted actor may take an action, and on what
