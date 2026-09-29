@@ -100,7 +100,7 @@ def test_production_mock_composition_never_loads_the_mock_package() -> None:
     )  # fmt: skip
     lines = result.stdout.strip().splitlines()
     assert lines[0] == (
-        "DeploymentCompositionError the mock business backend is for local/test environments only"
+        "DeploymentCompositionError selected business backend is not allowed in this environment"
     )
     assert lines[1] == "[]"
 
@@ -135,9 +135,10 @@ def test_no_module_global_engine_or_session() -> None:
 
 
 def test_no_real_provider_backend_was_invented() -> None:
-    # Exactly the two local/test values: no real-provider backend value exists yet.
-    config = (APP_DIR / "config.py").read_text()
-    assert 'BusinessBackend = Literal["disabled", "mock"]' in config
+    # Task 022: the allowlist holds exactly the mock plugin; no real backend exists yet.
+    from app.composition import build_default_backend_registry
+
+    assert build_default_backend_registry().backend_ids == frozenset({"mock"})
     assert sorted(p.name for p in (APP_DIR / "integrations" / "commerce").iterdir()
                   if p.is_dir() and p.name != "__pycache__") == ["mock"]  # fmt: skip
 

@@ -1104,7 +1104,16 @@ Operator -> create_deployment_app() -> Settings -> deployment composition
   -> create_app(...) -> FastAPI + AgentOS (Product auth inside)
 ```
 
-`APP_BUSINESS_BACKEND` (default `disabled`) chooses the business backend:
+`APP_BUSINESS_BACKEND` (default `disabled`) is a stable, Product-owned **backend plugin
+id** (`^[a-z0-9][a-z0-9._-]{0,63}$`). It is an identifier only: never a Python module,
+class or import path, URL or code, and nothing is imported because of it. Settings
+check its syntax without normalizing it; the immutable Product-owned allowlist
+(`app/composition/registry.py`) decides whether it is installed and in which
+environments it may run. Deployment selection is generic: `disabled` sentinel, else
+`registry.resolve(id)` (unknown: `unsupported business backend`), else the
+registration's allowed environments (otherwise `selected business backend is not
+allowed in this environment`), else its Product-owned builder. Nothing is built,
+imported or asked of a model before that. The built-in choices today:
 
 - **`disabled`**: local/test only. No Product business services are composed:
   `/operations/runs`, `/operations/tickets` and the status route answer 503. Useful for
@@ -1116,8 +1125,15 @@ Operator -> create_deployment_app() -> Settings -> deployment composition
   fails (`Operations model is required for mock business composition`) instead of
   serving a permanently broken `/operations/runs`. Tests pass a deterministic scripted
   model explicitly; it is the only override `create_deployment_app` accepts.
+- **Future real backends** (external commerce systems) must pass the
+  `CommerceIntegration` conformance harness, undergo provider-specific review
+  (authentication, rate limits, retries, pagination, idempotency, security), get a
+  backend-specific composition builder, and only then be added as ONE reviewed
+  registration to the allowlist. Passing conformance never registers anything, and
+  there is no plugin discovery, dynamic loading or management API. Backend selection
+  is deployment configuration, never authorization: Governance stays authoritative.
 - **staging/production**: the deployment factory REFUSES to start
-  (`DeploymentCompositionError`) with either value. No authoritative real commerce
+  (`DeploymentCompositionError`) with either built-in value. No authoritative real commerce
   backend exists yet, so there is no allowed backend; the mock is never constructed
   there, and there is no mock, dummy or in-memory fallback. This is intentional
   fail-closed behaviour; never use `mock` for a deployment.
