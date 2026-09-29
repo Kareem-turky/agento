@@ -799,9 +799,10 @@ trusted caller (RequestContext + ActionScope), untrusted intent + parameters, ca
   `uv run alembic upgrade head` explicitly. The downgrade drops only
   `product.write_commands` (never the schema, never CASCADE).
 - **HTTP exposure.** Exactly one HTTP write uses it: `POST /api/v1/operations/tickets`
-  (below). There is no generic command/action endpoint and no command status
-  endpoint; `POST /api/v1/operations/runs` stays read-only, and the Operations Agent
-  is still not registered with AgentOS.
+  (below), plus its read-only status read `GET /api/v1/operations/tickets/commands`.
+  There is no generic command/action endpoint and no command listing;
+  `POST /api/v1/operations/runs` stays read-only, and the Operations Agent is still not
+  registered with AgentOS.
 
 ### Product ticket write: `POST /api/v1/operations/tickets` (durable, idempotent)
 
@@ -849,11 +850,56 @@ HTTP request
   parameters, SQL or provider data is ever returned, and every response carries
   `X-Request-ID` (which equals `request_id`).
 - **No automatic recovery.** An `in_progress` command left by an interrupted process
-  is safe but unresolved: retries replay it and never re-execute. There is no status
-  endpoint yet; repeating the same POST with the same key shows the stored state.
+  is safe but unresolved: retries replay it and never re-execute. Its durable state
+  can be read with the status endpoint below (or by repeating the same POST).
 - **Composition.** `create_app(..., operations_ticket_service=...)` takes the service
   from the caller (`WriteCommandTicketService(WriteCommandCoordinator(...))`); the app
   builds no store, coordinator, handler or integration and has no mock fallback.
+
+### Ticket command status: `GET /api/v1/operations/tickets/commands?command_id=…` (read-only)
+
+Reads the DURABLE state of one ticket command, by the `command_id` a POST returned,
+without the original `Idempotency-Key`, without resubmitting anything, and without
+ever executing, retrying or recovering anything.
+
+```
+HTTP request
+  → RequestContextMiddleware (server request id) → ActorResolver
+  → trusted ActorContext                          (none → 401)
+  → command_id query parameter (UUID)             (malformed/missing → 422)
+  → OperationsTicketCommandQueryService           (app.application adapter; none → 503)
+  → WriteCommandReader.get_for_actor(command_id, actor.company_id, actor.actor_id)
+      one SQL query scoped by command_id AND company_id AND actor_id
+  → not found, another action, or store not CURRENTLY granted (exact) → 404
+  → {request_id, command_id, status, reason, ticket_id, created_at, updated_at}
+```
+
+- **Fixed path.** The id is a query parameter, so the AgentOS auth exemption stays an
+  exact path. The Product-authenticated paths are exactly `/api/v1/operations/runs`,
+  `/api/v1/operations/tickets` and `/api/v1/operations/tickets/commands`;
+  `OS_SECURITY_KEY` is not Product authentication, and AgentOS routes still require it.
+- **Ownership in SQL.** The lookup is scoped to the original company and actor inside
+  the query, so another principal's command is never even loaded. The actor's current
+  store grant is then rechecked: a revoked store (or `*`, `all`, `stores.*`) hides the
+  command. Unknown, another actor's, another company's, another action's and
+  no-longer-granted commands all return the same `404 Ticket command not found`.
+- **No write permission needed.** Reading the status of one's own command in a
+  currently granted store performs no write, so `tickets.create` is not required.
+- **What it returns.** `ticket_id` only for `verified`; `created_at`/`updated_at` are
+  timezone-aware; `request_id` is this GET's id (equal to `X-Request-ID`), not the
+  POST's. There is no `replayed` (a read is not a submission) and no
+  `persistence_complete`: it is the stored truth.
+- **Durable vs transient.** If a POST's terminal write failed, the POST answered
+  `requires_human` / `command_persistence_incomplete` (`persistence_complete=false`)
+  while the durable row stayed `in_progress`. A later GET reports `in_progress` with
+  `reason: null`. This is intentional: the transient POST outcome is never
+  reconstructed, and `command_persistence_incomplete` is never a durable state.
+- **Errors.** 401 no actor, 404 not visible, 422 bad `command_id`, 503 query service
+  unconfigured, failing or returning an invalid result; fixed messages only. An
+  `Idempotency-Key` sent with a GET is ignored.
+- **Composition.** `create_app(..., operations_ticket_query_service=...)` takes
+  `WriteCommandTicketQueryService(<WriteCommandReader>)` from the caller (e.g. the
+  `PostgresWriteCommandStore`); no approval, cancellation, listing or recovery exists.
 
 ## 3. Technology stack
 

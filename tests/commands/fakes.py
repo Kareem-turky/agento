@@ -60,6 +60,14 @@ class InMemoryWriteCommandStore:
         row = self.rows.get(command_id)
         return None if row is None else self._record(row)
 
+    async def get_for_actor(
+        self, command_id: UUID, company_id: str, actor_id: str
+    ) -> WriteCommandRecord | None:
+        row = self.rows.get(command_id)
+        if row is None or (row["company_id"], row["actor_id"]) != (company_id, actor_id):
+            return None
+        return self._record(row)
+
     async def complete(self, command_id: UUID, outcome: WriteCommandOutcome) -> WriteCommandRecord:
         self.completions.append(outcome)
         if self.fail_complete:

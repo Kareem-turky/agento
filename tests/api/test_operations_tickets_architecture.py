@@ -133,3 +133,42 @@ def test_main_composes_nothing_and_registers_no_operations_agent() -> None:
     )  # fmt: skip
     for forbidden in forbidden_names:
         assert forbidden not in used
+
+
+QUERY_ADAPTER = APP_DIR / "application" / "operations_ticket_queries.py"
+
+
+def test_query_adapter_dependencies() -> None:
+    allowed_roots = {"uuid", "typing", "pydantic"}
+    allowed_app = ("app.commands", "app.context.models", "app.operations.actions",
+                   "app.services.operations_tickets")  # fmt: skip
+    bad = [m for m in imports(QUERY_ADAPTER) if m.split(".")[0] not in allowed_roots
+           and not m.startswith(allowed_app)]  # fmt: skip
+    assert bad == []
+    used = names(QUERY_ADAPTER)
+    for forbidden in (
+        "WriteCommandCoordinator", "WriteCommandStore", "ExecutionCoordinator",
+        "GovernanceGate", "CreateOperationalTicketHandler", "TicketingIntegration",
+        "PostgresWriteCommandStore", "claim", "complete", "submit", "Mock",
+    ):  # fmt: skip
+        assert forbidden not in used, forbidden
+
+
+def test_query_adapter_loads_no_persistence_web_or_agent_runtime() -> None:
+    loaded = loaded_after_import("app.application.operations_ticket_queries")
+    roots = {m.split(".")[0] for m in loaded}
+    assert not roots & {"agno", "sqlalchemy", "psycopg", "redis", "alembic"}
+    assert not [m for m in loaded if m.startswith(("app.persistence", "app.agents",
+                                                   "app.runtime", "app.routes"))]  # fmt: skip
+
+
+def test_get_route_reaches_only_the_query_contract() -> None:
+    tree = ast.parse(ROUTE.read_text())
+    (func,) = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
+               and n.name == "get_operations_ticket_command"]  # fmt: skip
+    calls = {n.func.attr for n in ast.walk(func)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}  # fmt: skip
+    assert "get_command" in calls
+    assert not calls & {"create_ticket", "submit", "run", "claim", "complete", "get_for_actor"}
+    used = {n.id for n in ast.walk(func) if isinstance(n, ast.Name)}
+    assert not used & {"ActionScope", "IDEMPOTENCY_KEY_HEADER", "body"}
