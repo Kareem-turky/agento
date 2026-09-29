@@ -3,6 +3,7 @@
 import hashlib
 import subprocess
 import sys
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import pytest
@@ -14,6 +15,7 @@ from app.commands import (
     canonical_json,
     hash_idempotency_key,
     request_fingerprint,
+    snapshot_parameters,
 )
 
 KEY = TypeAdapter(IdempotencyKey)
@@ -174,3 +176,103 @@ def test_valid_keys_are_accepted_unchanged(key) -> None:
 def test_invalid_keys_are_rejected(key) -> None:
     with pytest.raises(ValidationError):
         KEY.validate_python(key)
+
+
+# --- snapshot_parameters: one validated, deep, detached plain-JSON copy -------------
+
+
+def test_snapshot_is_a_deep_detached_copy() -> None:
+    original = {"payload": {"items": [{"value": "ORIGINAL"}], "tags": ["urgent"]}, "n": 1}
+    snap = snapshot_parameters(original)
+    assert snap == original
+    assert snap is not original
+    assert snap["payload"] is not original["payload"]
+    assert snap["payload"]["items"] is not original["payload"]["items"]
+    assert snap["payload"]["items"][0] is not original["payload"]["items"][0]
+    assert snap["payload"]["tags"] is not original["payload"]["tags"]
+    original["payload"]["items"][0]["value"] = "MUTATED"
+    original["payload"]["tags"].append("more")
+    original["payload"]["new"] = True
+    original["n"] = 2
+    assert snap == {"payload": {"items": [{"value": "ORIGINAL"}], "tags": ["urgent"]}, "n": 1}
+
+
+def test_snapshot_types_are_exact_builtins() -> None:
+    class S(str):
+        def __str__(self) -> str:
+            return "EVIL"
+
+    class I(int):  # noqa: E742
+        def __int__(self) -> int:
+            return 999
+
+    class F(float):
+        def __float__(self) -> float:
+            return 999.0
+
+    class L(list):
+        pass
+
+    snap = snapshot_parameters({S("k"): [S("v"), I(3), F(1.5), L([S("x")])]})
+    assert snap == {"k": ["v", 3, 1.5, ["x"]]}
+    (key,) = snap
+    values = snap["k"]
+    assert [type(key), *map(type, values), type(values[3][0])] == [str, str, int, float, list, str]
+
+
+def test_snapshot_fingerprint_equals_original_fingerprint() -> None:
+    params = {"b": [1, {"y": None, "x": 2.5}], "a": "é"}
+    assert fp(parameters=snapshot_parameters(params)) == fp(parameters=params)
+
+
+def test_snapshot_reads_a_hostile_mapping_once_and_rejects_repeated_keys() -> None:
+    class Shifting(Mapping):
+        reads = 0
+
+        def __getitem__(self, key):
+            if key != "k":
+                raise KeyError(key)
+            Shifting.reads += 1
+            return f"v{Shifting.reads}"
+
+        def __iter__(self):
+            return iter(["k"])
+
+        def __len__(self) -> int:
+            return 1
+
+    snap = snapshot_parameters(Shifting())
+    assert snap == {"k": "v1"} and Shifting.reads == 1
+
+    class Repeating(Mapping):
+        def __getitem__(self, key):
+            return "v"
+
+        def __iter__(self):
+            return iter(["k", "k"])
+
+        def __len__(self) -> int:
+            return 2
+
+    with pytest.raises(InvalidCommandParametersError):
+        snapshot_parameters(Repeating())
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"v": float("nan")}, {"v": float("-inf")}, {"v": (1,)}, {"v": {1}}, {"v": b"b"},
+        {"v": object()}, {1: "k"}, {"v": {2: "k"}}, [("k", "v")], "not a mapping",
+    ],
+)  # fmt: skip
+def test_snapshot_rejects_non_json(bad) -> None:
+    with pytest.raises(InvalidCommandParametersError):
+        snapshot_parameters(bad)
+
+
+def test_snapshot_enforces_the_depth_limit() -> None:
+    value: dict = {}
+    for _ in range(50):
+        value = {"n": value}
+    with pytest.raises(InvalidCommandParametersError):
+        snapshot_parameters(value)

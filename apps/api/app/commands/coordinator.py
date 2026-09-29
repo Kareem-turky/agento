@@ -5,7 +5,8 @@
     -> invalid key?                   InvalidIdempotencyKeyError   (no claim)
     -> unknown action?                UnknownWriteActionError      (no claim)
     -> READ action?                   ReadActionNotAllowedError    (no claim)
-    -> key hash + request fingerprint (non-JSON parameters: InvalidCommandParametersError)
+    -> ONE detached plain-JSON snapshot of the parameters (else InvalidCommandParametersError)
+    -> key hash + request fingerprint OF THE SNAPSHOT
     -> store.claim  (atomic; NEW is COMMITTED IN_PROGRESS before it returns)
        CONFLICT -> IdempotencyConflictError           nothing runs
        REPLAY   -> the stored command, replayed=True  nothing runs (IN_PROGRESS too)
@@ -14,6 +15,9 @@
                    fails -> REQUIRES_HUMAN / command_persistence_incomplete,
                             persistence_complete=False; the row stays IN_PROGRESS,
                             so a retry replays IN_PROGRESS and never re-executes.
+
+The caller's parameter mapping is read once, into the snapshot, and never again: the
+request that executes is exactly the request that was fingerprinted and claimed.
 
 The namespace is the trusted actor's ``(company_id, actor_id)``; the fingerprint covers
 the action and the trusted scope (company and store) plus the canonical parameters.
@@ -38,7 +42,11 @@ from app.commands.errors import (
     UnknownWriteActionError,
     WriteCommandStoreError,
 )
-from app.commands.fingerprint import hash_idempotency_key, request_fingerprint
+from app.commands.fingerprint import (
+    hash_idempotency_key,
+    request_fingerprint,
+    snapshot_parameters,
+)
 from app.commands.models import (
     ACTION_RUN_STATUS_TO_COMMAND,
     ClaimOutcome,
@@ -130,6 +138,8 @@ class WriteCommandCoordinator:
         if definition.risk is ActionRisk.READ:
             raise ReadActionNotAllowedError()
 
+        # The only read of the caller's parameters. Everything below uses the snapshot.
+        snapshot = snapshot_parameters(parameters)
         claim = WriteCommandClaim(
             command_id=self._new_id(),
             company_id=actor.company_id,
@@ -141,7 +151,7 @@ class WriteCommandCoordinator:
                 action_name=definition.name,
                 company_id=scope.company_id,
                 store_id=scope.store_id,
-                parameters=parameters,
+                parameters=snapshot,
             ),
         )
         claimed = await self._claim(claim)
@@ -157,7 +167,7 @@ class WriteCommandCoordinator:
             raise WriteCommandStoreError()  # a NEW claim must be the one just made
 
         # The IN_PROGRESS claim is committed: only now may a side effect happen.
-        outcome = await self._execute(request, scope, definition.name, parameters)
+        outcome = await self._execute(request, scope, definition.name, snapshot)
         return await self._complete(record, outcome)
 
     async def _claim(self, claim: WriteCommandClaim) -> ClaimResult:
@@ -176,13 +186,12 @@ class WriteCommandCoordinator:
         request: RequestContext,
         scope: ActionScope,
         action_name: str,
-        parameters: Mapping[str, Any],
+        snapshot: dict[str, Any],
     ) -> WriteCommandOutcome:
-        """Exactly one ExecutionCoordinator call. Never retried, whatever happens."""
+        """Exactly one ExecutionCoordinator call, on the fingerprinted snapshot. Never
+        retried, whatever happens."""
         try:
-            run = await self._executor.run(
-                request, ActionIntent(name=action_name), scope, parameters
-            )
+            run = await self._executor.run(request, ActionIntent(name=action_name), scope, snapshot)
             if not isinstance(run, ActionRun):
                 raise TypeError("invalid action run")
             return _outcome_from_run(run)

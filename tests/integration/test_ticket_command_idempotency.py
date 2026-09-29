@@ -23,6 +23,7 @@ from app.commands import (
     WriteCommandCoordinator,
     WriteCommandResult,
     hash_idempotency_key,
+    request_fingerprint,
 )
 from app.context.models import RequestContext
 from app.execution import ActionHandlerRegistry
@@ -439,3 +440,53 @@ def test_write_commands_store_no_raw_key_parameters_or_payloads(migrated, engine
         ).scalar_one()
     for marker in (key, TITLE_MARKER, DESCRIPTION_MARKER):
         assert marker not in table_dump
+
+
+class MutatingClaimStore:
+    """Real Postgres claim; the caller's parameters are mutated while it is awaited."""
+
+    def __init__(self, inner: PostgresWriteCommandStore, mutate) -> None:
+        self.inner, self.mutate = inner, mutate
+        self.claims = []
+
+    async def claim(self, claim):
+        self.claims.append(claim)
+        self.mutate()
+        return await self.inner.claim(claim)
+
+    async def get(self, command_id):
+        return await self.inner.get(command_id)
+
+    async def complete(self, command_id, outcome):
+        return await self.inner.complete(command_id, outcome)
+
+
+def test_parameters_mutated_during_the_claim_are_never_executed(migrated, engine) -> None:
+    key, system = new_key(), TicketSystem.build()
+    original = {"title": "Ticket ORIGINAL", "description": "ORIGINAL description"}
+    expected_fingerprint = request_fingerprint(
+        action_name=ACTION, company_id=COMPANY, store_id=STORE, parameters=dict(original)
+    )
+
+    def mutate() -> None:
+        original.update(title="Ticket MUTATED", description="MUTATED description")
+
+    async def scenario():
+        async with product_store(migrated) as store:
+            racing = MutatingClaimStore(store, mutate)
+            app = Instance.build(racing, system)
+            return racing, await app.submit(key, original)
+
+    racing, result = asyncio.run(scenario())
+    assert original["title"] == "Ticket MUTATED"  # the caller really mutated
+    assert result.status is S.VERIFIED
+    (call,) = system.spy.creates
+    assert (call["title"], call["description"]) == ("Ticket ORIGINAL", "ORIGINAL description")
+    ticket = asyncio.run(system.spy.get_ticket(UUID(result.execution_reference_id)))
+    assert (ticket.title, ticket.description) == ("Ticket ORIGINAL", "ORIGINAL description")
+    (claim,) = racing.claims
+    assert claim.request_fingerprint == expected_fingerprint
+    (row,) = rows_for_key(engine, key)
+    assert row["request_fingerprint"] == expected_fingerprint
+    assert "MUTATED" not in json.dumps(row, default=str)
+    assert "ORIGINAL" not in json.dumps(row, default=str)

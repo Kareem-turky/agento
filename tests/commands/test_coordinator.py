@@ -4,6 +4,7 @@ The in-memory store is a test fake; durability and concurrency are proven agains
 PostgreSQL in tests/integration.
 """
 
+from collections.abc import Mapping
 from uuid import UUID
 
 import pytest
@@ -20,6 +21,7 @@ from app.commands import (
     WriteCommandCoordinator,
     WriteCommandStoreError,
     hash_idempotency_key,
+    request_fingerprint,
 )
 from app.context.models import RequestContext
 from app.execution import ActionHandlerRegistry
@@ -279,3 +281,102 @@ def test_a_new_claim_must_be_the_command_just_created() -> None:
     with pytest.raises(WriteCommandStoreError):
         env.submit()
     assert env.executor.calls == 0
+
+
+# --- The fingerprinted request must be the exact request executed (TOCTOU) ---------
+
+
+class MutatingClaimStore(InMemoryWriteCommandStore):
+    """Mutates the CALLER's parameters while the claim is awaited (the race)."""
+
+    def __init__(self, mutate) -> None:
+        super().__init__()
+        self.mutate = mutate
+
+    async def claim(self, claim):
+        self.mutate()
+        return await super().claim(claim)
+
+
+def executed_fingerprint(handler: FakeHandler, params: dict) -> str:
+    return request_fingerprint(
+        action_name="notes.add", company_id="company-1", store_id="store-a", parameters=params
+    )
+
+
+def test_caller_mutation_during_the_claim_never_reaches_execution() -> None:
+    original = {"order_ref": "ord-1", "text": "ORIGINAL"}
+    expected = executed_fingerprint(FakeHandler(), dict(original))
+    store = MutatingClaimStore(lambda: original.update(text="MUTATED"))
+    env = Env(store)
+    result = env.submit(params=original)
+
+    assert original["text"] == "MUTATED"  # the caller really mutated its dict
+    assert result.status is S.VERIFIED and env.executor.calls == 1
+    (validated,) = env.handler.execute_calls
+    assert validated.text == "ORIGINAL"
+    (raw,) = env.handler.validate_calls
+    assert dict(raw) == {"order_ref": "ord-1", "text": "ORIGINAL"}
+    (claim,) = store.claims
+    assert claim.request_fingerprint == expected
+    # The executed parameters are provably the fingerprinted ones.
+    assert executed_fingerprint(env.handler, dict(raw)) == claim.request_fingerprint
+
+
+def test_executed_parameters_are_detached_from_the_caller() -> None:
+    original = {"order_ref": "ord-1", "text": "ORIGINAL"}
+    env = Env()
+    env.submit(params=original)
+    (raw,) = env.handler.validate_calls
+    original["text"] = "LATER"
+    assert raw["text"] == "ORIGINAL"
+
+
+class ShiftingMapping(Mapping):
+    """Hostile Mapping: every value read returns a new version."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __getitem__(self, key):
+        if key not in ("order_ref", "text"):
+            raise KeyError(key)
+        self.reads += 1
+        return f"{key}-v{self.reads}"
+
+    def __iter__(self):
+        return iter(("order_ref", "text"))
+
+    def __len__(self) -> int:
+        return 2
+
+
+def test_hostile_mapping_is_materialized_once_for_fingerprint_and_execution() -> None:
+    hostile = ShiftingMapping()
+    env = Env()
+    env.submit(params=hostile)
+    reads_at_end = hostile.reads
+    (claim,) = env.store.claims
+    (raw,) = env.handler.validate_calls
+    executed = dict(raw)
+    assert executed_fingerprint(env.handler, executed) == claim.request_fingerprint
+    assert reads_at_end == 2  # each value read exactly once: one snapshot
+    (validated,) = env.handler.execute_calls
+    assert (validated.order_ref, validated.text) == (executed["order_ref"], executed["text"])
+
+
+def test_nested_caller_mutation_during_the_claim_never_reaches_execution() -> None:
+    original = {
+        "order_ref": "ord-1",
+        "text": "t",
+        "payload": {"items": [{"value": "ORIGINAL"}]},
+    }
+    store = MutatingClaimStore(
+        lambda: original["payload"]["items"][0].update(value="MUTATED")  # type: ignore[index]
+    )
+    env = Env(store)
+    env.submit(params=original)  # NoteInput rejects "payload": FAILED input_invalid
+    (raw,) = env.handler.validate_calls
+    assert raw["payload"]["items"][0]["value"] == "ORIGINAL"
+    (claim,) = store.claims
+    assert executed_fingerprint(env.handler, dict(raw)) == claim.request_fingerprint

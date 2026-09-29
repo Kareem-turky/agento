@@ -17,7 +17,12 @@ from app.commands.errors import (
     WriteCommandError,
     WriteCommandStoreError,
 )
-from app.commands.fingerprint import canonical_json, hash_idempotency_key, request_fingerprint
+from app.commands.fingerprint import (
+    canonical_json,
+    hash_idempotency_key,
+    request_fingerprint,
+    snapshot_parameters,
+)
 from app.commands.models import (
     ACTION_RUN_STATUS_TO_COMMAND,
     IDEMPOTENCY_KEY_PATTERN,
@@ -60,4 +65,5 @@ __all__ = [
     "canonical_json",
     "hash_idempotency_key",
     "request_fingerprint",
+    "snapshot_parameters",
 ]

@@ -738,12 +738,14 @@ timeouts, restarts, concurrent duplicates or several API processes. The
 trusted caller (RequestContext + ActionScope), untrusted intent + parameters, caller's key
   → reject before any claim: no actor · invalid key · unknown action · READ action ·
     parameters that are not plain JSON
-  → SHA-256(key) + SHA-256(canonical {action_name, company_id, store_id, parameters})
+  → ONE detached, validated plain-JSON snapshot of the parameters (the caller's mapping
+    is never read again)
+  → SHA-256(key) + SHA-256(canonical {action_name, company_id, store_id, snapshot})
   → WriteCommandStore.claim  (PostgreSQL, atomic; commits IN_PROGRESS before returning)
       same key, same fingerprint  → REPLAY: the stored command, replayed=true, never executed
       same key, other fingerprint → IdempotencyConflictError, never executed
       new key                     → NEW
-  → ExecutionCoordinator.run (govern → validate → execute → verify → audit), exactly once
+  → ExecutionCoordinator.run(snapshot) (govern → validate → execute → verify → audit), once
   → WriteCommandStore.complete (terminal status, reason, action_run_id, reference, audit)
   → WriteCommandResult
 ```
@@ -754,6 +756,11 @@ trusted caller (RequestContext + ActionScope), untrusted intent + parameters, ca
   existing row; concurrent claims yield exactly one NEW. Nothing is cached in
   memory or in Redis. The claim transaction is short and is committed before
   execution starts; no transaction stays open while the action runs.
+- **What executes is what was fingerprinted.** The parameters are copied once into a
+  new, recursively detached plain-JSON tree before the claim; that same snapshot is
+  fingerprinted and executed. Mutating the caller's mapping (at any depth) while the
+  claim is awaited, or a mapping whose values change between reads, cannot make the
+  executed request differ from the claimed one. The snapshot is never persisted.
 - **Namespace and fingerprint.** A key identifies one logical command of one actor
   in one company. Store, action and parameters are in the request fingerprint,
   not the key, so reusing a key for another store, action or parameters is a
