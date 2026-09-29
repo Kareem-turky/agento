@@ -17,8 +17,11 @@ PRODUCTION_FILES = sorted(APP_DIR.rglob("*.py")) + sorted(
     (ROOT / "apps" / "api" / "migrations").rglob("*.py")
 )
 
-ALLOWED_ROOTS = {"__future__", "hmac", "typing", "uuid", "pydantic", "sqlalchemy"}
-ALLOWED_APP = ("app.persistence", "app.commands")
+ALLOWED_ROOTS = {"__future__", "collections", "hmac", "typing", "uuid", "pydantic", "sqlalchemy"}
+# The command store contracts, the audit event contract PostgresAuditSink persists, and
+# the contract vocabularies its CHECK constraints are derived from (pure models/enums).
+ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
+               "app.execution.models", "app.governance.policy", "app.context.models")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
