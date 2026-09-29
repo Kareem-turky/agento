@@ -117,10 +117,12 @@ OPERATIONS_AGENT_MODULES = {
 # The durable ticket command adapter (Task 014) names the action it submits; it takes
 # only the trusted action definition, never a handler.
 TICKET_COMMAND_ADAPTER = "application/operations_tickets.py"
+# The read-only ticket status adapter (Task 015) names the action it may show.
+TICKET_QUERY_ADAPTER = "application/operations_ticket_queries.py"
 
 
 def test_operations_are_reached_only_by_the_operations_agent() -> None:
-    """Only the Operations Agent and the ticket command adapter import app.operations:
+    """Only the Operations Agent and the ticket command/query adapters import app.operations:
     no HTTP endpoint, runtime hook or other agent reaches the ticket write directly."""
     importers = {
         str(p.relative_to(APP_DIR))
@@ -128,11 +130,11 @@ def test_operations_are_reached_only_by_the_operations_agent() -> None:
         if OPERATIONS_DIR not in p.parents
         and any(m.startswith("app.operations") for m in imports(p))
     }
-    assert importers <= OPERATIONS_AGENT_MODULES | {TICKET_COMMAND_ADAPTER}
-    adapter_imports = [
-        m for m in imports(APP_DIR / TICKET_COMMAND_ADAPTER) if m.startswith("app.operations")
-    ]
-    assert adapter_imports == ["app.operations.actions"]
+    adapters = {TICKET_COMMAND_ADAPTER, TICKET_QUERY_ADAPTER}
+    assert importers <= OPERATIONS_AGENT_MODULES | adapters
+    for adapter in adapters:
+        adapter_imports = [m for m in imports(APP_DIR / adapter) if m.startswith("app.operations")]
+        assert adapter_imports == ["app.operations.actions"], adapter
 
 
 def test_runtime_and_http_do_not_wire_the_operations_agent() -> None:

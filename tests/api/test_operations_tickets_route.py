@@ -159,7 +159,11 @@ def test_trusted_actor_needs_no_agentos_key_and_agentos_stays_protected(
 def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     app = build(settings, runtime_settings, FakeTicketService())
     excluded = app.state.agent_os.authorization_config.excluded_route_paths
-    assert sorted(excluded) == ["/api/v1/operations/runs", "/api/v1/operations/tickets"]
+    assert sorted(excluded) == [
+        "/api/v1/operations/runs",
+        "/api/v1/operations/tickets",
+        "/api/v1/operations/tickets/commands",
+    ]
     assert OPERATIONS_TICKETS_PATH == PATH
 
 

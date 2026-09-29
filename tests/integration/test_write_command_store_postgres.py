@@ -213,3 +213,107 @@ def test_database_constraints_reject_invalid_state(migrated, engine, company) ->
             base,
         )
     assert command_rows(engine, company) == []
+
+
+# ----- WriteCommandReader.get_for_actor: principal scope applied in SQL -------------------
+
+
+def test_postgres_store_is_a_scoped_reader() -> None:
+    from app.commands import WriteCommandReader
+    from app.persistence import PostgresWriteCommandStore
+
+    assert isinstance(PostgresWriteCommandStore(None), WriteCommandReader)  # type: ignore[arg-type]
+
+
+def test_get_for_actor_returns_only_the_owners_command(migrated, company) -> None:
+    async def scenario():
+        async with product_store(migrated) as store:
+            mine = (await store.claim(claim(company))).record
+            done = await store.complete(mine.command_id, VERIFIED)
+            found = await store.get_for_actor(mine.command_id, company, "actor-1")
+            misses = [
+                await store.get_for_actor(mine.command_id, company, "actor-2"),
+                await store.get_for_actor(mine.command_id, f"{company}-other", "actor-1"),
+                await store.get_for_actor(mine.command_id, f"{company}-other", "actor-2"),
+                await store.get_for_actor(mine.command_id, company.upper(), "actor-1"),
+                await store.get_for_actor(mine.command_id, company, "ACTOR-1"),
+                await store.get_for_actor(uuid4(), company, "actor-1"),
+            ]
+            return done, found, misses
+
+    done, found, misses = asyncio.run(scenario())
+    assert found == done and found.created_at.tzinfo is not None
+    assert misses == [None] * len(misses)
+
+
+def test_get_for_actor_scopes_in_a_single_sql_statement(migrated, company) -> None:
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    statements: list[tuple[str, object]] = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append((statement, parameters))
+
+    async def scenario():
+        async with product_store(migrated) as store:
+            command_id = (await store.claim(claim(company))).record.command_id
+            statements.clear()
+            event.listen(Engine, "before_cursor_execute", capture)
+            try:
+                result = await store.get_for_actor(command_id, company, "intruder")
+            finally:
+                event.remove(Engine, "before_cursor_execute", capture)
+            return command_id, result
+
+    command_id, result = asyncio.run(scenario())
+    assert result is None
+    queries = [(s, p) for s, p in statements if "write_commands" in s]
+    assert len(queries) == 1  # one query: never fetch-by-id-then-compare
+    ((sql, params),) = queries
+    where = sql.split("WHERE", 1)[1]
+    for column in ("command_id", "company_id", "actor_id"):
+        assert f"write_commands.{column} =" in where, column
+    assert where.count(" AND ") >= 2
+    values = set(params.values()) if isinstance(params, dict) else set(params)
+    assert {company, "intruder"} <= {str(v) for v in values}
+    assert str(command_id) in {str(v) for v in values}
+    select = sql.split("FROM", 1)[0]
+    assert "idempotency_key_hash" not in select and "request_fingerprint" not in select
+    assert sql.lstrip().upper().startswith("SELECT")
+
+
+def test_get_for_actor_is_read_only(migrated, engine, company) -> None:
+    async def scenario():
+        async with product_store(migrated) as store:
+            command_id = (await store.claim(claim(company))).record.command_id
+            before = command_rows(engine, company)
+            for _ in range(5):
+                await store.get_for_actor(command_id, company, "actor-1")
+            return before, command_rows(engine, company)
+
+    before, after = asyncio.run(scenario())
+    assert before == after and len(after) == 1
+
+
+def test_get_for_actor_fails_closed_on_corrupt_rows(migrated, engine, company) -> None:
+    async def claim_one():
+        async with product_store(migrated) as store:
+            return (await store.claim(claim(company))).record.command_id
+
+    command_id = asyncio.run(claim_one())
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE product.write_commands SET status = 'failed', reason = 'mystery_reason'"
+                " WHERE command_id = :i"
+            ),
+            {"i": command_id},
+        )
+
+    async def read():
+        async with product_store(migrated) as store:
+            with pytest.raises(WriteCommandStoreError):
+                await store.get_for_actor(command_id, company, "actor-1")
+
+    asyncio.run(read())

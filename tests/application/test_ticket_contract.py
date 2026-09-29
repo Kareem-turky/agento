@@ -91,3 +91,76 @@ def test_protocol_shape() -> None:
 
     assert isinstance(Impl(), OperationsTicketCommandService)
     assert not isinstance(object(), OperationsTicketCommandService)
+
+
+# ----- ProductTicketCommandStatusResult (durable status read) -------------------------------
+
+from datetime import UTC, datetime  # noqa: E402
+
+from app.services.operations_tickets import (  # noqa: E402
+    OperationsTicketCommandQueryService,
+    ProductTicketCommandStatusResult,
+)
+
+T0 = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+
+
+def status_result(**overrides) -> ProductTicketCommandStatusResult:
+    data = {"command_id": uuid4(), "status": S.VERIFIED, "reason": R.VERIFIED,
+            "ticket_id": TICKET, "created_at": T0, "updated_at": T0}  # fmt: skip
+    return ProductTicketCommandStatusResult(**(data | overrides))
+
+
+def test_status_result_fields_carry_nothing_transient_or_internal() -> None:
+    assert set(ProductTicketCommandStatusResult.model_fields) == {
+        "command_id", "status", "reason", "ticket_id", "created_at", "updated_at",
+    }  # fmt: skip
+    config = ProductTicketCommandStatusResult.model_config
+    assert config["frozen"] and config["extra"] == "forbid"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"status": S.IN_PROGRESS, "reason": None, "ticket_id": None},
+        {"status": S.DENIED, "reason": R.POLICY_DENIED, "ticket_id": None},
+        {"status": S.AWAITING_APPROVAL, "reason": R.APPROVAL_REQUIRED, "ticket_id": None},
+        {"status": S.FAILED, "reason": R.INPUT_INVALID, "ticket_id": None},
+        {"status": S.REQUIRES_HUMAN, "reason": R.EXECUTION_OUTCOME_UNCERTAIN, "ticket_id": None},
+        {"status": S.REQUIRES_HUMAN, "reason": R.COMMAND_EXECUTION_ERROR, "ticket_id": None},
+    ],
+)  # fmt: skip
+def test_consistent_status_results(fields) -> None:
+    status_result(**fields)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"ticket_id": None},
+        {"status": S.REQUIRES_HUMAN, "reason": R.VERIFICATION_FAILED},  # ticket, not verified
+        {"status": S.IN_PROGRESS, "reason": R.POLICY_DENIED, "ticket_id": None},
+        {"status": S.DENIED, "reason": None, "ticket_id": None},
+        {"status": S.VERIFIED, "reason": R.AUDIT_INCOMPLETE},
+        # The transient POST outcome is never a durable state.
+        {"status": S.REQUIRES_HUMAN, "reason": R.COMMAND_PERSISTENCE_INCOMPLETE,
+         "ticket_id": None},
+        {"created_at": T0.replace(tzinfo=None)},
+        {"updated_at": "yesterday"},
+        {"replayed": False},
+        {"persistence_complete": True},
+        {"store_id": "store-a"},
+    ],
+)  # fmt: skip
+def test_inconsistent_or_transient_status_results_are_rejected(fields) -> None:
+    with pytest.raises(ValidationError):
+        status_result(**fields)
+
+
+def test_query_protocol_shape() -> None:
+    class Impl:
+        async def get_command(self, request, command_id):
+            raise NotImplementedError
+
+    assert isinstance(Impl(), OperationsTicketCommandQueryService)

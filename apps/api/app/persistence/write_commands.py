@@ -12,7 +12,9 @@ PostgreSQL's unique index makes concurrent claims safe: a racing INSERT waits fo
 first transaction and then does nothing, and the following SELECT (a new statement
 under READ COMMITTED) sees the committed row.
 
-``complete`` updates by ``command_id`` only while the row is IN_PROGRESS. Rows are
+``complete`` updates by ``command_id`` only while the row is IN_PROGRESS.
+``get_for_actor`` (``WriteCommandReader``) selects by command_id AND company_id AND
+actor_id in a single query. Rows are
 mapped strictly: an unknown status/reason or inconsistent fields raise
 ``WriteCommandStoreError`` (fail closed). Only hashes are stored: never the raw
 idempotency key or request parameters.
@@ -131,6 +133,20 @@ class PostgresWriteCommandStore:
 
     async def get(self, command_id: UUID) -> WriteCommandRecord | None:
         query = sa.select(*_RECORD_COLUMNS).where(_c.command_id == command_id)
+        async with self._sessions() as session:
+            row = (await session.execute(query)).mappings().first()
+        return None if row is None else _record(row)
+
+    async def get_for_actor(
+        self, command_id: UUID, company_id: str, actor_id: str
+    ) -> WriteCommandRecord | None:
+        """``WriteCommandReader``: one query scoped by command, company AND actor, so
+        another principal's row is never read. Read-only; hashes are never selected."""
+        query = sa.select(*_RECORD_COLUMNS).where(
+            _c.command_id == command_id,
+            _c.company_id == company_id,
+            _c.actor_id == actor_id,
+        )
         async with self._sessions() as session:
             row = (await session.execute(query)).mappings().first()
         return None if row is None else _record(row)

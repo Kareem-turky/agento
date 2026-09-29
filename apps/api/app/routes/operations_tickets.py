@@ -1,4 +1,5 @@
-"""``POST /api/v1/operations/tickets``: the deterministic, durable ticket write.
+"""``POST /api/v1/operations/tickets``: the deterministic, durable ticket write, and
+``GET /api/v1/operations/tickets/commands?command_id=``: its read-only status.
 
     HTTP -> RequestContextMiddleware -> ActorResolver -> trusted ActorContext (401 if none)
          -> strict body {store_id, title, description}                 (422 otherwise)
@@ -17,27 +18,46 @@ command layer validates it), never logged, stored in plaintext or returned.
 
 The HTTP status reports how the durable command was processed; ``status`` in the
 body is the business outcome, and only ``verified`` means the ticket was created.
+
+The status GET is a pure read of the DURABLE command state:
+
+    HTTP -> RequestContextMiddleware -> ActorResolver -> trusted ActorContext (401)
+         -> command_id query parameter (UUID, 422 otherwise)
+         -> OperationsTicketCommandQueryService.get_command (none: 503)
+         -> 404 "Ticket command not found" for unknown, another principal's, another
+            action or a store the actor is not currently granted (indistinguishable)
+         -> {request_id, command_id, status, reason, ticket_id, created_at, updated_at}
+
+It never submits, retries or executes anything, needs no Idempotency-Key (one sent is
+ignored), and takes no store, action or identity from the client.
 """
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from pydantic import AwareDatetime, BaseModel, ConfigDict, StringConstraints
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
 from app.services.operations_tickets import (
     IdempotencyConflictError,
     InvalidIdempotencyKeyError,
+    OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
     ProductTicketCommandResult,
+    ProductTicketCommandStatusResult,
+    TicketCommandNotFoundError,
     TicketCommandReason,
     TicketCommandStatus,
 )
 
 OPERATIONS_TICKET_SERVICE_STATE_KEY = "operations_ticket_service"
 OPERATIONS_TICKETS_PATH = "/api/v1/operations/tickets"
+OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY = "operations_ticket_query_service"
+# A FIXED path (the id is a query parameter), so the AgentOS auth exemption stays an
+# exact path rather than a prefix or pattern.
+OPERATIONS_TICKET_COMMANDS_PATH = "/api/v1/operations/tickets/commands"
 IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
 
 router = APIRouter(tags=["operations"])
@@ -148,3 +168,62 @@ async def create_operations_ticket(
         raise _unavailable() from None
     response.status_code = code
     return payload
+
+
+# ----- GET: durable ticket command status (read-only) ---------------------------------------
+
+
+class OperationsTicketCommandStatusResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    request_id: UUID  # this GET's request id, never the original POST's
+    command_id: UUID
+    status: TicketCommandStatus
+    reason: TicketCommandReason | None
+    ticket_id: UUID | None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+def _query_service(request: Request) -> OperationsTicketCommandQueryService | None:
+    service = getattr(request.app.state, OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY, None)
+    return service if isinstance(service, OperationsTicketCommandQueryService) else None
+
+
+def _query_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Operations ticket query service unavailable",
+    )
+
+
+@router.get(OPERATIONS_TICKET_COMMANDS_PATH, response_model=OperationsTicketCommandStatusResponse)
+async def get_operations_ticket_command(
+    command_id: Annotated[UUID, Query()],
+    context: CurrentRequestContext,
+    actor: CurrentActor,  # authentication only; the service scopes by the trusted actor
+    request: Request,
+) -> OperationsTicketCommandStatusResponse:
+    service = _query_service(request)
+    if service is None:
+        raise _query_unavailable()
+    try:
+        result = await service.get_command(context, command_id)
+        if not isinstance(result, ProductTicketCommandStatusResult):
+            raise TypeError("invalid ticket query result")
+        response = OperationsTicketCommandStatusResponse(
+            request_id=context.request_id,
+            command_id=result.command_id,
+            status=result.status,
+            reason=result.reason,
+            ticket_id=result.ticket_id,
+            created_at=result.created_at,
+            updated_at=result.updated_at,
+        )
+    except TicketCommandNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ticket command not found"
+        ) from None
+    except Exception:  # noqa: BLE001 - never leak internals; the request id correlates logs
+        raise _query_unavailable() from None
+    return response

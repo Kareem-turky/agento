@@ -19,13 +19,18 @@ from app.context import ActorResolver, NoActorResolver, RequestContextMiddleware
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
 from app.routes.operations_tickets import (
+    OPERATIONS_TICKET_COMMANDS_PATH,
+    OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY,
     OPERATIONS_TICKET_SERVICE_STATE_KEY,
     OPERATIONS_TICKETS_PATH,
 )
 from app.routes.operations_tickets import router as operations_tickets_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 from app.services.operations import OperationsRunService
-from app.services.operations_tickets import OperationsTicketCommandService
+from app.services.operations_tickets import (
+    OperationsTicketCommandQueryService,
+    OperationsTicketCommandService,
+)
 
 
 def create_app(
@@ -35,10 +40,12 @@ def create_app(
     actor_resolver: ActorResolver | None = None,
     operations_service: OperationsRunService | None = None,
     operations_ticket_service: OperationsTicketCommandService | None = None,
+    operations_ticket_query_service: OperationsTicketCommandQueryService | None = None,
 ) -> FastAPI:
-    """``operations_service`` and ``operations_ticket_service`` are composed by the
-    caller (no defaults: without one the matching route answers 503; nothing falls
-    back to mock data, and no store, coordinator or integration is built here)."""
+    """``operations_service``, ``operations_ticket_service`` and
+    ``operations_ticket_query_service`` are composed by the caller (no defaults: without
+    one the matching route answers 503; nothing falls back to mock data, and no store,
+    reader, coordinator or integration is built here)."""
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
@@ -64,6 +71,7 @@ def create_app(
     app.state.runtime_started = False
     setattr(app.state, OPERATIONS_SERVICE_STATE_KEY, operations_service)
     setattr(app.state, OPERATIONS_TICKET_SERVICE_STATE_KEY, operations_ticket_service)
+    setattr(app.state, OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY, operations_ticket_query_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -87,7 +95,11 @@ def create_app(
         runtime_settings,
         default_model,
         # Product-authenticated (ActorResolver), not AgentOS-key-authenticated.
-        product_route_paths=(OPERATIONS_RUNS_PATH, OPERATIONS_TICKETS_PATH),
+        product_route_paths=(
+            OPERATIONS_RUNS_PATH,
+            OPERATIONS_TICKETS_PATH,
+            OPERATIONS_TICKET_COMMANDS_PATH,
+        ),
     )
     # Added after AgentOS so it is the outermost middleware: every response, including
     # AgentOS auth rejections, carries the server-generated X-Request-ID.

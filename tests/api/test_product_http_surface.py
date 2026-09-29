@@ -3,9 +3,10 @@
 - GET  /health
 - POST /api/v1/operations/runs     Operations Agent, READ-ONLY
 - POST /api/v1/operations/tickets  deterministic durable ticket command (the ONLY write)
+- GET  /api/v1/operations/tickets/commands  read-only status of one ticket command
 
-No generic command/action endpoint, no command status endpoint, and no route reaches
-the command layer or persistence directly.
+No generic command/action endpoint, no command listing, and no route reaches the
+command layer or persistence directly.
 """
 
 import ast
@@ -57,13 +58,28 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),
         ("POST", "/api/v1/operations/tickets"),
+        ("GET", "/api/v1/operations/tickets/commands"),
     }
 
 
-def test_no_generic_command_action_or_status_endpoint(client) -> None:
-    paths = {path for _, path in effective_api_routes(client.app.routes)}
-    for word in ("command", "/actions", "/execute", "idempot"):
-        assert not [p for p in paths if word in p.lower()], word
+def test_no_generic_command_action_or_listing_endpoint(client) -> None:
+    routes = effective_api_routes(client.app.routes)
+    paths = {path for _, path in routes}
+    # The only command path is the fixed, domain-specific ticket status read.
+    assert [p for p in paths if "command" in p.lower()] == ["/api/v1/operations/tickets/commands"]
+    assert [m for m, p in routes if p == "/api/v1/operations/tickets/commands"] == ["GET"]
+    for word in ("/actions", "/execute", "idempot", "{"):
+        assert not [p for p in paths if word in p.lower() and p.startswith("/api/")], word
+
+
+def test_the_only_product_write_is_post_tickets(client) -> None:
+    writes = {
+        (method, path)
+        for method, path in effective_api_routes(client.app.routes)
+        if path.startswith("/api/") and method not in ("GET", "HEAD", "OPTIONS")
+    }
+    # /runs is a POST but read-only (asserted separately); tickets is the only write.
+    assert writes == {("POST", "/api/v1/operations/runs"), ("POST", "/api/v1/operations/tickets")}
 
 
 def test_http_layer_never_reaches_commands_persistence_or_execution() -> None:

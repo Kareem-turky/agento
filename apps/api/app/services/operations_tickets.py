@@ -13,6 +13,10 @@ The result is a safe, self-consistent projection of a durable command:
 - ``persistence_complete`` is False only for REQUIRES_HUMAN /
   command_persistence_incomplete (the durable command then stays IN_PROGRESS).
 
+``OperationsTicketCommandQueryService`` is the separate, read-only status contract:
+``ProductTicketCommandStatusResult`` is the durable state of one command of the
+trusted actor (see the class for why it has no ``replayed``/``persistence_complete``).
+
 Nothing here carries the idempotency key or its hash, the request fingerprint, raw
 parameters, action runs, audit data, policy decisions or provider identifiers.
 """
@@ -21,7 +25,7 @@ from enum import StrEnum
 from typing import Protocol, Self, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StrictBool, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, StrictBool, model_validator
 
 from app.context.models import RequestContext
 from app.governance import ActionScope
@@ -122,5 +126,66 @@ class OperationsTicketCommandService(Protocol):
 
         ``request`` and ``scope`` are trusted; ``title``, ``description`` and the key
         are untrusted. Raises only ``OperationsTicketCommandError`` subclasses.
+        """
+        ...
+
+
+# ----- Ticket command status query (read-only) -------------------------------------------
+
+
+class ProductTicketCommandStatusResult(BaseModel):
+    """The DURABLE state of one ticket command, as stored.
+
+    Unlike ``ProductTicketCommandResult`` it has no ``replayed`` (a read is not a
+    submission) and no ``persistence_complete``: it is the persisted truth. A POST that
+    returned requires_human / command_persistence_incomplete left the command
+    IN_PROGRESS, and that is what a later read reports; the transient POST outcome is
+    never reconstructed, so ``command_persistence_incomplete`` is never a durable reason.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    command_id: UUID
+    status: TicketCommandStatus
+    reason: TicketCommandReason | None
+    ticket_id: UUID | None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        S, R = TicketCommandStatus, TicketCommandReason
+        verified = self.status is S.VERIFIED
+        if verified != (self.ticket_id is not None):
+            raise ValueError("ticket_id is present if and only if the command is verified")
+        if verified != (self.reason is R.VERIFIED):
+            raise ValueError("reason 'verified' belongs to a verified command only")
+        if (self.status is S.IN_PROGRESS) != (self.reason is None):
+            raise ValueError("only an in-progress command has no reason")
+        if self.reason is R.COMMAND_PERSISTENCE_INCOMPLETE:
+            raise ValueError("incomplete persistence is never a durable state")
+        return self
+
+
+class TicketCommandNotFoundError(OperationsTicketCommandError):
+    """No ticket command visible to this caller: unknown, another principal's, another
+    action, or a store the caller is not currently granted. Deliberately one case."""
+
+    code = "ticket_command_not_found"
+
+
+class TicketCommandQueryUnavailableError(OperationsTicketCommandError):
+    code = "ticket_command_query_unavailable"
+
+
+@runtime_checkable
+class OperationsTicketCommandQueryService(Protocol):
+    async def get_command(
+        self, request: RequestContext, command_id: UUID
+    ) -> ProductTicketCommandStatusResult:
+        """Read one ticket command of the trusted actor. Never executes anything.
+
+        Raises only ``TicketCommandNotFoundError`` or
+        ``TicketCommandQueryUnavailableError``.
         """
         ...
