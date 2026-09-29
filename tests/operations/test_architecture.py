@@ -114,16 +114,25 @@ OPERATIONS_AGENT_MODULES = {
 }  # fmt: skip
 
 
+# The durable ticket command adapter (Task 014) names the action it submits; it takes
+# only the trusted action definition, never a handler.
+TICKET_COMMAND_ADAPTER = "application/operations_tickets.py"
+
+
 def test_operations_are_reached_only_by_the_operations_agent() -> None:
-    """Nothing but the Operations Agent imports app.operations: no HTTP endpoint,
-    runtime hook or other agent reaches the ticket write."""
+    """Only the Operations Agent and the ticket command adapter import app.operations:
+    no HTTP endpoint, runtime hook or other agent reaches the ticket write directly."""
     importers = {
         str(p.relative_to(APP_DIR))
         for p in sorted(APP_DIR.rglob("*.py"))
         if OPERATIONS_DIR not in p.parents
         and any(m.startswith("app.operations") for m in imports(p))
     }
-    assert importers <= OPERATIONS_AGENT_MODULES
+    assert importers <= OPERATIONS_AGENT_MODULES | {TICKET_COMMAND_ADAPTER}
+    adapter_imports = [
+        m for m in imports(APP_DIR / TICKET_COMMAND_ADAPTER) if m.startswith("app.operations")
+    ]
+    assert adapter_imports == ["app.operations.actions"]
 
 
 def test_runtime_and_http_do_not_wire_the_operations_agent() -> None:

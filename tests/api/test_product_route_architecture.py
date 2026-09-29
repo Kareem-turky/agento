@@ -147,4 +147,5 @@ def test_agentos_exemption_takes_exact_paths_only(settings, runtime_settings) ->
     with pytest.raises(RuntimeConfigurationError):
         attach_agent_os(FastAPI(), settings, runtime_settings, product_route_paths=("/api/v1/*",))
     source = MAIN.read_text()
-    assert "product_route_paths=(OPERATIONS_RUNS_PATH,)" in source
+    # Exactly the two product-authenticated paths; no pattern, no prefix.
+    assert "product_route_paths=(OPERATIONS_RUNS_PATH, OPERATIONS_TICKETS_PATH)" in source
