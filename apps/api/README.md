@@ -52,7 +52,13 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/integrations/commerce/` — product-owned async `CommerceIntegration` contract
   (read-only), the `TicketingIntegration` write contract, queries, capabilities and
   errors; `mock/` holds a deterministic in-memory mock provider, its adapter and the
-  mock ticket desk and ticketing adapter (development/tests only).
+  mock ticket desk and ticketing adapter (development/tests only). `CommerceIntegration`
+  is the provider-independent boundary: every adapter must pass the offline
+  conformance harness in `tests/commerce_conformance/` (canonical identity, query
+  semantics, deterministic sorting, half-open windows, store isolation, error
+  translation, data minimization, read-only capabilities) before it may be composed;
+  passing is necessary, not sufficient, for production (see the root README, "Adding a
+  commerce adapter").
 - `app/governance/` — action catalog, untrusted action intents, permission evaluation
   and the baseline policy (ALLOW / DENY / REQUIRE_APPROVAL); decisions only, nothing
   is executed.
