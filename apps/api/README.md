@@ -4,11 +4,19 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 
 - `app/config.py` — product settings (`APP_*` environment variables, optional `.env`).
 - `app/main.py` — `create_app()` factory and the Product `GET /health` route; accepts an
-  optional `operations_service` (no default and no mock fallback).
+  optional `operations_service` and `operations_ticket_service` (no defaults and no mock
+  fallback).
 - `app/routes/operations.py` — `POST /api/v1/operations/runs`, the read-only,
-  `ActorResolver`-authenticated Operations Agent route.
+  `ActorResolver`-authenticated Operations Agent route (never writes).
 - `app/services/operations.py` — the runtime-independent `OperationsRunService`
   contract and `ProductOperationsRunResult`.
+- `app/routes/operations_tickets.py` — `POST /api/v1/operations/tickets`, the only
+  Product API write: a deterministic, `ActorResolver`-authenticated, idempotent
+  (`Idempotency-Key`) ticket command. No agent or model involved.
+- `app/services/operations_tickets.py` — the infrastructure-independent
+  `OperationsTicketCommandService` contract, `ProductTicketCommandResult` and safe errors.
+- `app/application/operations_tickets.py` — `WriteCommandTicketService`: implements the
+  ticket contract on an injected `WriteCommandCoordinator` (action fixed server-side).
 - `app/runtime/agentos.py` — attaches `AgentOS(base_app=...)` with a native `PostgresDb`
   (schema `agno_runtime`) and the agents from `components.py`. Requires `APP_DATABASE_URL`
   and `OS_SECURITY_KEY`.
@@ -41,7 +49,8 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   `operations.shipments.read` read actions. Reached only by the Operations Agent.
 - `app/commands/` — durable write commands: `WriteCommandCoordinator` (idempotent,
   above `ExecutionCoordinator`), the `WriteCommandStore` contract, key/fingerprint
-  hashing and command models. No SQLAlchemy, FastAPI or Agno. Not exposed over HTTP.
+  hashing and command models. No SQLAlchemy, FastAPI or Agno. Reached over HTTP only
+  through the ticket service contract.
 - `app/persistence/` — SQLAlchemy 2 async infrastructure: explicit engine/session
   factories and `PostgresWriteCommandStore` (`product.write_commands`).
 - `migrations/` — Alembic migrations for the `product` schema (config: `/alembic.ini`,
@@ -52,4 +61,5 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 
 Run: `uv run uvicorn app.main:create_app --factory --app-dir apps/api --env-file .env`
 
-No business endpoints live here yet.
+Product endpoints: `GET /health`, `POST /api/v1/operations/runs` (read-only agent run) and
+`POST /api/v1/operations/tickets` (the only write).

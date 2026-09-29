@@ -18,8 +18,14 @@ from app.config import Settings, get_settings
 from app.context import ActorResolver, NoActorResolver, RequestContextMiddleware
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
+from app.routes.operations_tickets import (
+    OPERATIONS_TICKET_SERVICE_STATE_KEY,
+    OPERATIONS_TICKETS_PATH,
+)
+from app.routes.operations_tickets import router as operations_tickets_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 from app.services.operations import OperationsRunService
+from app.services.operations_tickets import OperationsTicketCommandService
 
 
 def create_app(
@@ -28,9 +34,11 @@ def create_app(
     default_model: Model | None = None,
     actor_resolver: ActorResolver | None = None,
     operations_service: OperationsRunService | None = None,
+    operations_ticket_service: OperationsTicketCommandService | None = None,
 ) -> FastAPI:
-    """``operations_service`` is composed by the caller (no default: without one the
-    Operations route answers 503; nothing falls back to mock data)."""
+    """``operations_service`` and ``operations_ticket_service`` are composed by the
+    caller (no defaults: without one the matching route answers 503; nothing falls
+    back to mock data, and no store, coordinator or integration is built here)."""
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
@@ -55,6 +63,7 @@ def create_app(
     app.state.settings = settings
     app.state.runtime_started = False
     setattr(app.state, OPERATIONS_SERVICE_STATE_KEY, operations_service)
+    setattr(app.state, OPERATIONS_TICKET_SERVICE_STATE_KEY, operations_ticket_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -70,6 +79,7 @@ def create_app(
 
     # Product routes are registered before AgentOS attaches its own routers.
     app.include_router(operations_router)
+    app.include_router(operations_tickets_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -77,7 +87,7 @@ def create_app(
         runtime_settings,
         default_model,
         # Product-authenticated (ActorResolver), not AgentOS-key-authenticated.
-        product_route_paths=(OPERATIONS_RUNS_PATH,),
+        product_route_paths=(OPERATIONS_RUNS_PATH, OPERATIONS_TICKETS_PATH),
     )
     # Added after AgentOS so it is the outermost middleware: every response, including
     # AgentOS auth rejections, carries the server-generated X-Request-ID.

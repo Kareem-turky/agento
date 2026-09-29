@@ -714,8 +714,8 @@ server-generated `X-Request-ID`; an incoming `X-Request-ID` is ignored.
   ticket write still exists internally (programmatic `OperationsAgentRunner.run`)
   but is not exposed over HTTP: even a model that calls `create_operational_ticket`
   gets `action_not_requested`, and `ExecutionCoordinator` is never entered. The
-  durable write-command layer (below) now exists, but is deliberately not exposed
-  over HTTP; a later task will route product writes through it.
+  only HTTP write is the separate, deterministic ticket endpoint below, which
+  involves no agent or model.
 - **Tool permissions still apply.** Store access only selects the target;
   `orders.read` and `shipments.read` are still enforced by the governed tools.
 - **Safe results and errors.** Only the final assistant text is returned, never the
@@ -725,9 +725,9 @@ server-generated `X-Request-ID`; an incoming `X-Request-ID` is ignored.
   service exception also gives a generic 503 with no internal detail, and every
   response carries `X-Request-ID`.
 - **Not included:** sessions, chat history, streaming, a frontend, an
-  `Idempotency-Key` header or any HTTP write.
+  `Idempotency-Key` header or any write.
 
-### Durable write commands and PostgreSQL idempotency (not exposed over HTTP)
+### Durable write commands and PostgreSQL idempotency
 
 The same logical write must not execute twice because of HTTP or client retries,
 timeouts, restarts, concurrent duplicates or several API processes. The
@@ -798,9 +798,62 @@ trusted caller (RequestContext + ActionScope), untrusted intent + parameters, ca
   `create_all` is never used. API startup does not migrate: deployments run
   `uv run alembic upgrade head` explicitly. The downgrade drops only
   `product.write_commands` (never the schema, never CASCADE).
-- **Not exposed over HTTP.** `POST /api/v1/operations/runs` stays read-only; there
-  is no ticket endpoint, `Idempotency-Key` header or write flag yet, and the
-  Operations Agent is still not registered with AgentOS.
+- **HTTP exposure.** Exactly one HTTP write uses it: `POST /api/v1/operations/tickets`
+  (below). There is no generic command/action endpoint and no command status
+  endpoint; `POST /api/v1/operations/runs` stays read-only, and the Operations Agent
+  is still not registered with AgentOS.
+
+### Product ticket write: `POST /api/v1/operations/tickets` (durable, idempotent)
+
+The first and only Product API write. It is **not an agent endpoint**: no model is
+involved, and the caller explicitly asks for one ticket. The business action is
+fixed server-side (`operations.ticket.create`); the client cannot name an action.
+
+```
+HTTP request
+  → RequestContextMiddleware (server request id) → ActorResolver
+  → trusted ActorContext                          (none → 401)
+  → strict body {store_id, title, description}    (anything else → 422)
+  → exact store grant: store_id ∈ actor.store_ids (otherwise → 403, nothing claimed)
+  → trusted ActionScope(company_id=actor.company_id, store_id=<granted store>)
+  → exactly one Idempotency-Key header            (missing → 400, invalid → 400)
+  → OperationsTicketCommandService                (app.application adapter; none → 503)
+  → WriteCommandCoordinator → PostgreSQL claim → GovernanceGate (tickets.create)
+  → CreateOperationalTicketHandler → TicketingIntegration → verification → audit
+  → durable command result
+  → {request_id, command_id, status, reason, ticket_id, replayed, persistence_complete}
+```
+
+- **Authentication.** Product `ActorResolver` only (default `NoActorResolver` → 401).
+  `OS_SECURITY_KEY` is not Product authentication: it neither authenticates nor is
+  needed here. The exact path is exempted from the AgentOS auth layer (no
+  wildcard); every AgentOS route still requires the key.
+- **Idempotency-Key is required.** It is opaque and case-sensitive, supplied by the
+  client and passed through unchanged; the command layer validates it. Only its
+  SHA-256 is stored; it is never logged, returned or put in audit data. Retrying
+  the exact same request with the same key is always safe (it replays). The same key
+  with a different title, description or store is `409 Idempotency conflict`, and
+  nothing runs. Replays keep their original outcome (a DENIED command stays DENIED
+  even after the actor is granted `tickets.create`; use a new key for a new attempt).
+- **Outcome.** `status` is the business outcome; only `verified` means the ticket was
+  created and independently confirmed, and only then is `ticket_id` (the canonical
+  ticket UUID) set. `requires_human` (e.g. an uncertain provider write, or an outcome
+  that could not be recorded) and `in_progress` are not success. HTTP codes report how
+  the command was processed: 201 fresh VERIFIED; 200 replayed VERIFIED, DENIED,
+  FAILED; 202 IN_PROGRESS, AWAITING_APPROVAL, REQUIRES_HUMAN or any result with
+  `persistence_complete=false`. Governance DENIED is 200 with `status: denied`,
+  not 403 (403 is only the store-scope rejection before any command exists).
+- **Errors.** 400 key missing/invalid, 401 no actor, 403 store not granted, 409
+  idempotency conflict, 422 malformed body, 503 service unconfigured, failing or
+  returning an invalid result. Details are fixed strings; no key, fingerprint,
+  parameters, SQL or provider data is ever returned, and every response carries
+  `X-Request-ID` (which equals `request_id`).
+- **No automatic recovery.** An `in_progress` command left by an interrupted process
+  is safe but unresolved: retries replay it and never re-execute. There is no status
+  endpoint yet; repeating the same POST with the same key shows the stored state.
+- **Composition.** `create_app(..., operations_ticket_service=...)` takes the service
+  from the caller (`WriteCommandTicketService(WriteCommandCoordinator(...))`); the app
+  builds no store, coordinator, handler or integration and has no mock fallback.
 
 ## 3. Technology stack
 
