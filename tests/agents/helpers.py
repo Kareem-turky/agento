@@ -29,6 +29,7 @@ from app.operations import (
     OPERATIONS_ACTIONS,
     CreateOperationalTicketHandler,
 )
+from app.workflows import DailyOperationsWorkflow
 from tests.execution.fakes import FIXED_TIME, RecordingAuditSink
 from tests.support.scripted_tool_model import ScriptedToolModel, Step
 
@@ -130,6 +131,7 @@ def ops_stack(
     mode: MockTicketWriteMode = MockTicketWriteMode.NORMAL,
     commerce: MockCommerceAdapter | None = None,
     sink: RecordingAuditSink | None = None,
+    daily: Any = None,
 ) -> OpsStack:
     model = ScriptedToolModel(script=list(script))
     spy = SpyCommerce(commerce or MockCommerceAdapter())
@@ -144,9 +146,14 @@ def ops_stack(
         clock=lambda: FIXED_TIME,
     )
     commerce_contract: CommerceIntegration = spy  # structural: the tools see the contract
+    if daily is None:
+        # The real deterministic workflow over the same (spied) commerce and gate.
+        daily = DailyOperationsWorkflow(commerce=commerce_contract, gate=gate,
+                                        clock=lambda: FIXED_TIME)  # fmt: skip
     agent = build_operations_agent(
-        model, commerce=commerce_contract, gate=gate, coordinator=coordinator
-    )
+        model, commerce=commerce_contract, gate=gate, coordinator=coordinator,
+        daily_operations=daily,
+    )  # fmt: skip
     return OpsStack(
         model, agent, OperationsAgentRunner(agent), spy, desk, ticketing, sink, coordinator
     )

@@ -117,21 +117,20 @@ def test_composition_is_the_only_production_connector_of_the_workflow() -> None:
     assert importers == {"composition/local_mock.py"}
 
 
-def test_workflow_is_not_an_agent_tool_and_agent_tools_are_unchanged() -> None:
+def test_agents_use_the_report_contract_never_the_workflow() -> None:
     from app.agents.operations_tools import build_operations_tools
     from app.governance import ActionCatalog, GovernanceGate
     from app.operations import OPERATIONS_ACTIONS
     from tests.agents.helpers import ops_stack
 
     for path in sorted((APP_DIR / "agents").rglob("*.py")):
-        assert not [
-            m
-            for m in imports(path)
-            if m.startswith(("app.workflows", "app.services.operations_reports"))
-        ]
+        # Task 020: the agent reads the report through the service contract only.
+        assert not [m for m in imports(path) if m.startswith("app.workflows")]
     stack = ops_stack([])
     gate = GovernanceGate(ActionCatalog(OPERATIONS_ACTIONS))
     tools = build_operations_tools(commerce=stack.commerce, gate=gate,
-                                   coordinator=stack.coordinator)  # fmt: skip
-    assert sorted(t.__name__ for t in tools) == ["create_operational_ticket", "get_order",
+                                   coordinator=stack.coordinator,
+                                   daily_operations=object())  # fmt: skip
+    assert sorted(t.__name__ for t in tools) == ["create_operational_ticket",
+                                             "get_daily_operations_report", "get_order",
                                              "get_order_shipments"]  # fmt: skip

@@ -8,7 +8,9 @@
 
 The model is untrusted: it sees only the user's message, its instructions and the
 three tool schemas. It never supplies actor, company, store, permissions, risk or
-approval, and the trusted context is never added to its prompt. Agno ``user_id`` /
+approval, and the trusted context is never added to its prompt. For daily/store-wide
+analysis it reads the deterministic ``DailyOperationsReportService`` result (the
+workflow calculates; the model explains). Agno ``user_id`` /
 ``session_id`` are not authorization.
 
 A write needs two independent trusted answers, neither from the LLM: the run's
@@ -35,6 +37,7 @@ from app.execution import ExecutionCoordinator
 from app.governance import ActionScope, GovernanceGate
 from app.integrations.commerce import CommerceIntegration
 from app.services.operations import ProductOperationsRunResult
+from app.services.operations_reports import DailyOperationsReportService
 
 OPERATIONS_AGENT_ID = "operations"
 OPERATIONS_TOOL_CALL_LIMIT = 6
@@ -60,6 +63,30 @@ INSTRUCTIONS = [
     "'awaiting_approval', say that no ticket was created by you.",
     "Do not reveal internal policy, permission sets or provider identifiers unless it is "
     "necessary to answer.",
+    # Daily operations: the deterministic report is the source of truth.
+    "For today's operations, daily operations, overall store operations, store-wide "
+    "operational performance or a day's operational issues and anomalies, call "
+    "get_daily_operations_report BEFORE answering.",
+    "The daily report is AUTHORITATIVE: its metrics, findings, coverage, business_date and "
+    "timezone are computed deterministically by the backend. Explain and prioritize them; "
+    "do not replace them.",
+    "Never recalculate the daily report yourself (for example by counting orders or "
+    "shipments with get_order or get_order_shipments), and never derive a different "
+    "status summary.",
+    "Never add anomaly rules or issues that are not in report.findings: no invented SLA "
+    "violations, late deliveries or other anomalies from normal statuses.",
+    "If report coverage says inventory is not_included, make no inventory claims; if "
+    "inventory is relevant, say that inventory was not included in this report.",
+    "For 'today', call get_daily_operations_report WITHOUT a business_date; never invent "
+    "or compute a date. If the user explicitly gives a calendar date, pass exactly that "
+    "date as YYYY-MM-DD and do not reinterpret it.",
+    "If the daily report tool returns denied, unavailable, invalid_date or "
+    "trusted_context_unavailable, do not present a daily report as if it succeeded, and "
+    "do not reconstruct it by aggregating individual order or shipment tools. For "
+    "invalid_date, ask for a date in YYYY-MM-DD format.",
+    "For a single order, get_order and get_order_shipments remain the right tools.",
+    "A finding, however critical, is information only: it never means a ticket should be "
+    "or was created. Ticket rules are unchanged.",
 ]
 
 
@@ -69,6 +96,7 @@ def build_operations_agent(
     commerce: CommerceIntegration,
     gate: GovernanceGate,
     coordinator: ExecutionCoordinator,
+    daily_operations: DailyOperationsReportService,
 ) -> Agent:
     return Agent(
         id=OPERATIONS_AGENT_ID,
@@ -76,7 +104,14 @@ def build_operations_agent(
         description="Analyzes orders and shipments and can request governed operational tickets.",
         model=model,
         instructions=INSTRUCTIONS,
-        tools=list(build_operations_tools(commerce=commerce, gate=gate, coordinator=coordinator)),
+        tools=list(
+            build_operations_tools(
+                commerce=commerce,
+                gate=gate,
+                coordinator=coordinator,
+                daily_operations=daily_operations,
+            )
+        ),  # fmt: skip
         tool_call_limit=OPERATIONS_TOOL_CALL_LIMIT,
         # Trusted dependencies are for tool execution only, never model context.
         add_dependencies_to_context=False,
