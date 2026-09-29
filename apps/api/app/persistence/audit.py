@@ -16,15 +16,34 @@ closed). Nothing here creates tables: ``product.audit_events`` is owned by migra
 0002.
 """
 
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, get_args
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.execution.audit import AuditEvent
+from app.context.models import ActorType, Channel
+from app.execution.audit import AuditEvent, AuditEventType
+from app.execution.models import ActionRunReason, ActionRunStatus
+from app.governance.policy import PolicyOutcome, PolicyReason
 from app.persistence.database import product_metadata
 
-# Mirrors migration 0002 (checked by ``alembic check`` in the tests); never created here.
+
+def _check(column: str, values: Iterable[str], *, nullable: bool) -> sa.CheckConstraint:
+    """``column IN (...)`` (``column IS NULL OR ...`` when nullable), named as in 0002."""
+    listed = ", ".join(f"'{v}'" for v in values)
+    condition = f"{column} IN ({listed})"
+    return sa.CheckConstraint(
+        f"{column} IS NULL OR {condition}" if nullable else condition,
+        name=f"ck_audit_events_{column}",
+    )
+
+
+# Mirrors the product.audit_events schema at the head migration (0002), including its
+# seven CHECK constraints; never created here. The allowed values come from the
+# trusted contracts. A vocabulary change therefore needs a NEW migration replacing the
+# constraints; 0002 is a frozen snapshot and is never edited
+# (tests/persistence/test_audit_schema.py and the live-database parity test check this).
 audit_events = sa.Table(
     "audit_events",
     product_metadata,
@@ -51,6 +70,13 @@ audit_events = sa.Table(
     sa.PrimaryKeyConstraint("event_id", name="pk_audit_events"),
     sa.Index("ix_audit_events_run_id", "run_id"),
     sa.Index("ix_audit_events_request_id", "request_id"),
+    _check("event_type", (e.value for e in AuditEventType), nullable=False),
+    _check("actor_type", get_args(ActorType), nullable=True),
+    _check("channel", get_args(Channel), nullable=False),
+    _check("policy_outcome", (e.value for e in PolicyOutcome), nullable=True),
+    _check("policy_reason", (e.value for e in PolicyReason), nullable=True),
+    _check("run_status", (e.value for e in ActionRunStatus), nullable=True),
+    _check("run_reason", (e.value for e in ActionRunReason), nullable=True),
 )
 
 

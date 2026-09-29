@@ -1,7 +1,11 @@
 """Audit table definition: in step with the audit contract, metadata-only by design."""
 
 import importlib.util
+import re
 from pathlib import Path
+from typing import get_args
+
+import sqlalchemy as sa
 
 from app.context.models import ActorType, Channel
 from app.execution import ActionRunReason, ActionRunStatus, AuditEvent, AuditEventType
@@ -17,8 +21,21 @@ RAW_COLUMN_WORDS = (
 )  # fmt: skip
 
 
-def migration():
-    spec = importlib.util.spec_from_file_location("migration_0002", MIGRATION)
+def values(enum) -> frozenset[str]:
+    return frozenset(e.value for e in enum)
+
+
+def parse_check(text: str) -> tuple[bool, frozenset[str]]:
+    """(allows NULL, allowed values) of a ``col IN (...)`` CHECK, from SQL text.
+
+    Works for the SQLAlchemy/migration text and for PostgreSQL's
+    ``pg_get_constraintdef`` rendering (``'v'::character varying`` / ``= ANY (ARRAY[..])``).
+    """
+    return "IS NULL" in text.upper(), frozenset(re.findall(r"'([^']*)'", text))
+
+
+def migration(path: Path = MIGRATION):
+    spec = importlib.util.spec_from_file_location(f"migration_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -42,16 +59,99 @@ def test_nullability_matches_the_event_contract() -> None:
     assert {c.name for c in audit_events.c if not c.nullable} == required
 
 
-def test_migration_vocabulary_matches_the_current_contracts() -> None:
+class _RecordingOp:
+    """Stands in for ``alembic.op``: captures what a migration's ``upgrade()`` creates."""
+
+    def __init__(self) -> None:
+        self.checks: dict[str, str] = {}
+
+    def create_table(self, name, *elements, **kwargs) -> None:
+        for element in elements:
+            if isinstance(element, sa.CheckConstraint):
+                self.checks[str(element.name)] = str(element.sqltext)
+
+    def create_index(self, *args, **kwargs) -> None:
+        pass
+
+
+def migration_checks(module) -> dict[str, tuple[bool, frozenset[str]]]:
+    """The CHECK constraints the migration's upgrade() really creates (not its source)."""
+    recorder = _RecordingOp()
+    module.op = recorder  # the loaded module's own reference only
+    module.upgrade()
+    return {name: parse_check(text) for name, text in recorder.checks.items()}
+
+
+def metadata_checks(table: sa.Table) -> dict[str, tuple[bool, frozenset[str]]]:
+    return {
+        str(c.name): parse_check(str(c.sqltext))
+        for c in table.constraints
+        if isinstance(c, sa.CheckConstraint)
+    }
+
+
+# Frozen: the audit vocabulary migration 0002 created. Migration 0002 is a historical
+# snapshot and is NEVER edited. When a new event type/status/reason is legitimately
+# introduced, write a NEW migration that replaces the affected constraint(s), and move
+# HEAD_AUDIT_CHECKS_MIGRATION below to it; this 0002 expectation stays as it is.
+EXPECTED_0002 = {
+    "ck_audit_events_event_type": (False, frozenset({
+        "requested", "policy_decided", "denied", "awaiting_approval", "handler_not_registered",
+        "validation_failed", "execution_started", "execution_completed", "execution_failed",
+        "verification_started", "verified", "requires_human"})),
+    "ck_audit_events_actor_type": (True, frozenset({"user", "api_client", "system_agent"})),
+    "ck_audit_events_channel": (False, frozenset({"api", "web", "whatsapp", "system"})),
+    "ck_audit_events_policy_outcome": (True, frozenset({"allow", "deny", "require_approval"})),
+    "ck_audit_events_policy_reason": (True, frozenset({
+        "unknown_action", "permission_denied", "read_allowed", "low_risk_write_allowed",
+        "medium_risk_requires_approval", "high_risk_requires_approval"})),
+    "ck_audit_events_run_status": (True, frozenset({
+        "denied", "awaiting_approval", "failed", "requires_human", "verified"})),
+    "ck_audit_events_run_reason": (True, frozenset({
+        "policy_denied", "approval_required", "audit_unavailable", "handler_not_registered",
+        "input_invalid", "handler_contract_violation", "execution_failed_no_effect",
+        "execution_outcome_uncertain", "verification_failed", "verification_error",
+        "audit_incomplete", "verified"})),
+}  # fmt: skip
+# The migration whose CHECK constraints are the ones in force at head (today: 0002).
+HEAD_AUDIT_CHECKS_MIGRATION = MIGRATION
+
+
+def test_migration_0002_creates_its_frozen_checks() -> None:
     m = migration()
     assert m.revision == "0002" and m.down_revision == "0001"
-    assert set(m.EVENT_TYPES) == {e.value for e in AuditEventType}
-    assert set(m.ACTOR_TYPES) == set(ActorType.__args__)
-    assert set(m.CHANNELS) == set(Channel.__args__)
-    assert set(m.POLICY_OUTCOMES) == {e.value for e in PolicyOutcome}
-    assert set(m.POLICY_REASONS) == {e.value for e in PolicyReason}
-    assert set(m.RUN_STATUSES) == {e.value for e in ActionRunStatus}
-    assert set(m.RUN_REASONS) == {e.value for e in ActionRunReason}
+    assert migration_checks(m) == EXPECTED_0002
+
+
+def test_metadata_has_exactly_the_seven_named_checks_of_the_head_migration() -> None:
+    checks = metadata_checks(audit_events)
+    assert sorted(checks) == sorted(EXPECTED_0002)  # all seven, named exactly, no others
+    head = migration_checks(migration(HEAD_AUDIT_CHECKS_MIGRATION))
+    # Same names, same NULL handling, same allowed vocabulary: the runtime metadata
+    # mirrors the schema the head migration creates.
+    assert checks == head
+
+
+def test_metadata_checks_follow_the_trusted_contracts() -> None:
+    checks = metadata_checks(audit_events)
+    assert checks["ck_audit_events_event_type"] == (False, values(AuditEventType))
+    assert checks["ck_audit_events_actor_type"] == (True, frozenset(get_args(ActorType)))
+    assert checks["ck_audit_events_channel"] == (False, frozenset(get_args(Channel)))
+    assert checks["ck_audit_events_policy_outcome"] == (True, values(PolicyOutcome))
+    assert checks["ck_audit_events_policy_reason"] == (True, values(PolicyReason))
+    assert checks["ck_audit_events_run_status"] == (True, values(ActionRunStatus))
+    assert checks["ck_audit_events_run_reason"] == (True, values(ActionRunReason))
+
+
+def test_parity_guard_detects_missing_or_altered_metadata_checks() -> None:
+    columns = [sa.Column(c.name, c.type) for c in audit_events.columns]
+    bare = sa.Table("audit_events", sa.MetaData(), *columns, schema="product")
+    assert metadata_checks(bare) == {}
+    assert metadata_checks(bare) != migration_checks(migration())
+    widened = dict(metadata_checks(audit_events))
+    nullable, allowed = widened["ck_audit_events_channel"]
+    widened["ck_audit_events_channel"] = (True, allowed)
+    assert widened != migration_checks(migration())
 
 
 def test_downgrade_touches_only_audit_events() -> None:

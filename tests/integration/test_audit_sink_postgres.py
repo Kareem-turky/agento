@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 
 from app.execution import ActionRunReason, ActionRunStatus, AuditEvent, AuditEventType
 from app.governance import PolicyOutcome, PolicyReason
@@ -198,3 +199,51 @@ def test_each_record_is_its_own_committed_transaction(migrated, engine) -> None:
         "INSERT", "COMMIT", "INSERT", "COMMIT",
     ]  # fmt: skip
     assert len(audit_rows(engine, run_id=run_id)) == 2
+
+
+def test_live_check_constraints_match_migration_and_metadata(migrated, engine) -> None:
+    """migration 0002 expectation == SQLAlchemy metadata == live PostgreSQL constraints."""
+    from app.persistence import audit_events
+    from tests.persistence.test_audit_schema import (
+        EXPECTED_0002,
+        metadata_checks,
+        migration,
+        migration_checks,
+        parse_check,
+    )
+
+    with engine.connect() as connection:
+        live_rows = connection.execute(
+            sa.text(
+                "SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint"
+                " WHERE conrelid = 'product.audit_events'::regclass AND contype = 'c'"
+            )
+        ).all()
+    live = {name: parse_check(definition) for name, definition in live_rows}
+    assert len(live) == 7
+    assert live == EXPECTED_0002
+    assert live == migration_checks(migration())
+    assert live == metadata_checks(audit_events)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [("event_type", "exfiltrated"), ("actor_type", "root"), ("channel", "email"),
+     ("policy_outcome", "maybe"), ("policy_reason", "because"), ("run_status", "done"),
+     ("run_reason", "whatever")],
+)  # fmt: skip
+def test_live_checks_reject_values_outside_the_vocabulary(migrated, engine, column, value) -> None:
+    row = {
+        "event_id": uuid4(), "run_id": uuid4(), "request_id": uuid4(), "occurred_at": T0,
+        "event_type": "requested", "action_name": "a", "company_id": "c", "channel": "api",
+    } | {column: value}  # fmt: skip
+    with engine.connect() as connection, pytest.raises(sa.exc.IntegrityError) as info:
+        connection.execute(
+            sa.text(
+                f"INSERT INTO product.audit_events ({', '.join(row)})"  # noqa: S608 - test columns
+                f" VALUES ({', '.join(':' + k for k in row)})"
+            ),
+            row,
+        )
+    assert f"ck_audit_events_{column}" in str(info.value)
+    assert audit_rows(engine, event_id=row["event_id"]) == []
