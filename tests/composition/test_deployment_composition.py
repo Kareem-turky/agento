@@ -35,7 +35,7 @@ BUILT_NAMES = (
     "MockCommerceAdapter", "MockTicketDesk", "MockTicketingAdapter",
     "CreateOperationalTicketHandler", "ActionHandlerRegistry", "ExecutionCoordinator",
     "WriteCommandCoordinator", "build_operations_agent", "OperationsAgentRunner",
-    "WriteCommandTicketService", "WriteCommandTicketQueryService",
+    "WriteCommandTicketService", "WriteCommandTicketQueryService", "DailyOperationsWorkflow",
 )  # fmt: skip
 MOCK_PROVIDER_NAMES = ("MockCommerceSystem", "MockCommerceAdapter", "MockTicketDesk",
                        "MockTicketingAdapter")  # fmt: skip
@@ -225,6 +225,11 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     query_service, args, _ = built.one("WriteCommandTicketQueryService")
     assert args == (store,)  # the same store is the durable reader
 
+    workflow, args, kwargs = built.one("DailyOperationsWorkflow")
+    # The report reads through the SAME adapter and gate (no second mock system).
+    assert args == () and kwargs == {"commerce": commerce, "gate": gate}
+    assert composition.daily_operations_service is workflow
+
     assert composition.operations_service is runner
     assert composition.operations_ticket_service is ticket_service
     assert composition.operations_ticket_query_service is query_service
@@ -232,7 +237,7 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     # Only Product service contracts and lifecycle callables leave the composition.
     assert set(vars(composition)) == {
         "default_model", "operations_service", "operations_ticket_service",
-        "operations_ticket_query_service", "close", "discard",
+        "operations_ticket_query_service", "daily_operations_service", "close", "discard",
     }  # fmt: skip
 
     # The engine is released exactly once, however often close is called.
@@ -312,6 +317,10 @@ def test_disabled_deployment_boots_with_503_business_routes(settings, runtime_se
         status = "/api/v1/operations/tickets/commands"
         params = {"command_id": "0c0c0c0c-0000-4000-8000-000000000001"}
         assert client.get(status, params=params, headers=headers).status_code == 503
+        report = client.get("/api/v1/operations/reports/daily", params={"store_id": store},
+                            headers=headers)  # fmt: skip
+        assert (report.status_code, report.json()) == (
+            503, {"detail": "Daily operations report unavailable"})  # fmt: skip
         assert client.get("/agents").status_code == 401
 
 

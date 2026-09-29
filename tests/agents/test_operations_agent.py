@@ -36,12 +36,18 @@ from tests.support.scripted_tool_model import CallTool, Reply
 
 
 def test_read_and_write_action_definitions() -> None:
-    assert OPERATIONS_ACTIONS == (ORDER_READ_ACTION, SHIPMENTS_READ_ACTION, CREATE_TICKET_ACTION)
+    # The first three are unchanged; Task 019 appended the daily report's list reads.
+    assert OPERATIONS_ACTIONS[:3] == (ORDER_READ_ACTION, SHIPMENTS_READ_ACTION,
+                                      CREATE_TICKET_ACTION)  # fmt: skip
     expected = {
         "operations.order.read": ("orders.read", ActionRisk.READ),
         "operations.shipments.read": ("shipments.read", ActionRisk.READ),
         "operations.ticket.create": ("tickets.create", ActionRisk.LOW_RISK_WRITE),
+        "operations.store.read": ("stores.read", ActionRisk.READ),
+        "operations.orders.list": ("orders.read", ActionRisk.READ),
+        "operations.shipments.list": ("shipments.read", ActionRisk.READ),
     }
+    assert [a.name for a in OPERATIONS_ACTIONS] == list(expected)
     for action in OPERATIONS_ACTIONS:
         assert (action.required_permission, action.risk) == expected[action.name]
         assert action.scope_requirement is ActionScopeRequirement.STORE

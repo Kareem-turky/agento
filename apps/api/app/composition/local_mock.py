@@ -11,6 +11,7 @@
       -> WriteCommandCoordinator(store, coordinator, catalog)
       -> WriteCommandTicketService / WriteCommandTicketQueryService(store)
     build_operations_agent(model, commerce, gate, coordinator) -> OperationsAgentRunner
+    DailyOperationsWorkflow(commerce=<the SAME MockCommerceAdapter>, gate=<the SAME gate>)
 
 The read and write adapters share one mock system, so they resolve the same canonical
 company and stores. Everything except the mock provider is the Product core a real
@@ -54,6 +55,7 @@ from app.persistence import (
     create_session_factory,
 )
 from app.runtime.models import build_default_model
+from app.workflows import DailyOperationsWorkflow
 
 
 class _EngineLifecycle:
@@ -122,6 +124,8 @@ def build_local_mock_composition(
             operations_service=OperationsAgentRunner(agent),
             operations_ticket_service=WriteCommandTicketService(commands),
             operations_ticket_query_service=WriteCommandTicketQueryService(store),
+            # The deterministic report reads through the SAME adapter and gate.
+            daily_operations_service=DailyOperationsWorkflow(commerce=commerce, gate=gate),
             close=lifecycle.close,
             discard=lifecycle.discard,
         )

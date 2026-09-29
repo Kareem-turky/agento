@@ -132,6 +132,7 @@ def test_trusted_actor_needs_no_agentos_key_and_agentos_stays_protected(
     assert OPERATIONS_TICKET_COMMANDS_PATH == PATH
     excluded = app.state.agent_os.authorization_config.excluded_route_paths
     assert sorted(excluded) == [
+        "/api/v1/operations/reports/daily",
         "/api/v1/operations/runs",
         "/api/v1/operations/tickets",
         "/api/v1/operations/tickets/commands",

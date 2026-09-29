@@ -75,6 +75,12 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
+- `app/workflows/` — deterministic Product workflows (no model): the
+  `DailyOperationsWorkflow` behind `GET /api/v1/operations/reports/daily`
+  (governance preflight for `stores.read`/`orders.read`/`shipments.read`, store-local
+  business day, orders created and shipments shipped that day, four canonical-status
+  finding rules, inventory explicitly `not_included`). Depends on contracts and the
+  canonical domain only; the composition root wires it to a concrete integration.
 - `app/composition/` — deployment composition root: `APP_BUSINESS_BACKEND`
   (`disabled` | `mock`) -> Product services for `create_app`. `mock` (local/test only)
   wires one Product engine, `PostgresWriteCommandStore`, `PostgresAuditSink`,
@@ -90,6 +96,7 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 Run (deployment factory):
 `uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api --env-file .env`
 
-Product endpoints: `GET /health`, `POST /api/v1/operations/runs` (read-only agent run) and
+Product endpoints: `GET /health`, `POST /api/v1/operations/runs` (read-only agent run),
+`GET /api/v1/operations/reports/daily` (deterministic daily report, no model),
 `POST /api/v1/operations/tickets` (the only write) and
 `GET /api/v1/operations/tickets/commands` (its read-only status).

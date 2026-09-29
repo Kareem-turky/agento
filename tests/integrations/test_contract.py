@@ -125,8 +125,12 @@ def test_shipment_query_validation() -> None:
         {"shipped_from": datetime(2026, 3, 1)},
         {"shipped_from": T0, "shipped_to": T0},
         {"limit": 501},
-        {"store_id": uuid4()},
+        {"store_id": "not-a-uuid"},
+        {"tenant_id": uuid4()},
     )
     for bad in bad_inputs:
         with pytest.raises(ValidationError):
             ShipmentQuery(**bad)
+    # Task 019: store scope is part of the shipment query contract.
+    store = uuid4()
+    assert ShipmentQuery(store_id=store).store_id == store

@@ -23,6 +23,11 @@ from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
+from app.routes.operations_reports import (
+    OPERATIONS_DAILY_REPORT_PATH,
+    OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY,
+)
+from app.routes.operations_reports import router as operations_reports_router
 from app.routes.operations_tickets import (
     OPERATIONS_TICKET_COMMANDS_PATH,
     OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY,
@@ -32,6 +37,7 @@ from app.routes.operations_tickets import (
 from app.routes.operations_tickets import router as operations_tickets_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 from app.services.operations import OperationsRunService
+from app.services.operations_reports import DailyOperationsReportService
 from app.services.operations_tickets import (
     OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
@@ -46,12 +52,14 @@ def create_app(
     operations_service: OperationsRunService | None = None,
     operations_ticket_service: OperationsTicketCommandService | None = None,
     operations_ticket_query_service: OperationsTicketCommandQueryService | None = None,
+    daily_operations_service: DailyOperationsReportService | None = None,
     shutdown_callback: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
-    """``operations_service``, ``operations_ticket_service`` and
-    ``operations_ticket_query_service`` are composed by the caller (no defaults: without
-    one the matching route answers 503; nothing falls back to mock data, and no store,
-    reader, coordinator or integration is built here).
+    """``operations_service``, ``operations_ticket_service``,
+    ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
+    the caller (no defaults: without one the matching route answers 503; nothing falls
+    back to mock data, and no store, reader, coordinator, workflow or integration is
+    built here).
 
     ``actor_resolver`` overrides Product authentication; by default it is built from
     settings (``APP_PRODUCT_AUTH_MODE``), see ``app.auth.build_actor_resolver``.
@@ -99,6 +107,7 @@ def create_app(
     setattr(app.state, OPERATIONS_SERVICE_STATE_KEY, operations_service)
     setattr(app.state, OPERATIONS_TICKET_SERVICE_STATE_KEY, operations_ticket_service)
     setattr(app.state, OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY, operations_ticket_query_service)
+    setattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY, daily_operations_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -114,6 +123,7 @@ def create_app(
 
     # Product routes are registered before AgentOS attaches its own routers.
     app.include_router(operations_router)
+    app.include_router(operations_reports_router)
     app.include_router(operations_tickets_router)
 
     app.state.agent_os = attach_agent_os(
@@ -124,6 +134,7 @@ def create_app(
         # Product-authenticated (ActorResolver), not AgentOS-key-authenticated.
         product_route_paths=(
             OPERATIONS_RUNS_PATH,
+            OPERATIONS_DAILY_REPORT_PATH,
             OPERATIONS_TICKETS_PATH,
             OPERATIONS_TICKET_COMMANDS_PATH,
         ),

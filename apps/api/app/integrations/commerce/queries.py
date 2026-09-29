@@ -7,6 +7,11 @@ Semantics (every adapter must follow them):
 - ``limit`` (1..MAX_QUERY_LIMIT) is applied after filtering and sorting.
 - Orders sort by ``created_at`` ascending, then ``id``. Shipments sort by
   ``shipped_at`` ascending (unshipped last), then ``id``.
+- ``ShipmentQuery.store_id`` matches only shipments whose PARENT canonical order
+  belongs to that store; the adapter enforces it (never the caller). An unknown store,
+  like an unknown order, simply has no shipments (empty result). With both
+  ``order_id`` and ``store_id``, an order of another store yields an empty result.
+  All filters combine with AND.
 """
 
 from datetime import datetime
@@ -45,6 +50,7 @@ class ShipmentQuery(BaseModel):
     model_config = DOMAIN_MODEL_CONFIG
 
     order_id: UUID | None = None
+    store_id: UUID | None = None
     statuses: frozenset[ShipmentStatus] = frozenset()
     shipped_from: AwareDatetime | None = None
     shipped_to: AwareDatetime | None = None
