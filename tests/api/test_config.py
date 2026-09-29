@@ -21,6 +21,13 @@ def test_loads_from_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("APP_API_PORT", "9000")
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql+psycopg://user:pw@localhost:5432/db")
     monkeypatch.setenv("APP_REDIS_URL", "redis://localhost:6379/0")
+    # Staging requires Product authentication (configured as a JSON array of hashes).
+    monkeypatch.setenv("APP_PRODUCT_AUTH_MODE", "api_key")
+    monkeypatch.setenv("APP_COMPANY_ID", "company-1")
+    monkeypatch.setenv(
+        "APP_PRODUCT_API_KEYS",
+        '[{"key_id": "ops", "key_sha256": "' + "a" * 64 + '", "actor_id": "ops-api"}]',
+    )
 
     settings = Settings(_env_file=None)
 

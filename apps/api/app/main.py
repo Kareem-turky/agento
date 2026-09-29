@@ -14,8 +14,9 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app import __version__
+from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
-from app.context import ActorResolver, NoActorResolver, RequestContextMiddleware
+from app.context import ActorResolver, RequestContextMiddleware
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
 from app.routes.operations_tickets import (
@@ -45,9 +46,22 @@ def create_app(
     """``operations_service``, ``operations_ticket_service`` and
     ``operations_ticket_query_service`` are composed by the caller (no defaults: without
     one the matching route answers 503; nothing falls back to mock data, and no store,
-    reader, coordinator or integration is built here)."""
+    reader, coordinator or integration is built here).
+
+    ``actor_resolver`` overrides Product authentication; by default it is built from
+    settings (``APP_PRODUCT_AUTH_MODE``), see ``app.auth.build_actor_resolver``."""
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
+    # An explicitly injected resolver is used exactly; otherwise Product authentication
+    # comes from settings (API keys), and staging/production refuse to start without it.
+    if actor_resolver is not None:
+        resolver = actor_resolver
+    else:
+        resolver = build_actor_resolver(settings)
+        if settings.product_auth_mode == "api_key":
+            # One credential must never open both surfaces: refuse a Product key that is
+            # the AgentOS key. Only the OS key string crosses into the auth module.
+            validate_credential_separation(settings, runtime_settings.os_security_key)
     # AgentOS applies Agno's ``docs_enabled`` only to apps it creates itself; with a
     # base_app the docs routes come from this constructor, so use the same setting here.
     docs_enabled = runtime_settings.docs_enabled
@@ -103,5 +117,5 @@ def create_app(
     )
     # Added after AgentOS so it is the outermost middleware: every response, including
     # AgentOS auth rejections, carries the server-generated X-Request-ID.
-    app.add_middleware(RequestContextMiddleware, resolver=actor_resolver or NoActorResolver())
+    app.add_middleware(RequestContextMiddleware, resolver=resolver)
     return app

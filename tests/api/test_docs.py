@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.conftest import TEST_OS_SECURITY_KEY
+from tests.support.product_auth import deployment_settings
 
 DOC_PATHS = ["/docs", "/redoc", "/openapi.json"]
 
@@ -14,9 +15,12 @@ def build_client(settings, environment: str, docs_enabled: bool = True) -> TestC
     runtime_settings = AgnoAPISettings(
         os_security_key=TEST_OS_SECURITY_KEY, docs_enabled=docs_enabled
     )
-    return TestClient(
-        create_app(settings.model_copy(update={"environment": environment}), runtime_settings)
-    )
+    if environment in ("staging", "production"):
+        # Deployments always run with Product authentication configured.
+        configured = deployment_settings(settings, environment)
+    else:
+        configured = settings.model_copy(update={"environment": environment})
+    return TestClient(create_app(configured, runtime_settings))
 
 
 @pytest.mark.parametrize("environment", ["local", "test"])

@@ -31,8 +31,13 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/agents/generic_reasoning.py` — the `generic-reasoning` agent (takes any Agno `Model`).
 - `app/agents/operations*.py` — the Operations Agent, its governed product tools and
   `OperationsAgentRunner`. Not registered with AgentOS or exposed over HTTP yet.
+- `app/auth/` — Product authentication: `ProductApiKeyActorResolver` (`Authorization:
+  Bearer <Product API key>` → SHA-256 → constant-time match → `ActorContext` of the
+  deployment's single company) and `build_actor_resolver(settings)`, the default used by
+  `create_app` (fails closed in staging/production without Product auth). Operator helper:
+  `apps/api/scripts/hash_product_api_key.py` (reads the key from stdin, prints its SHA-256).
 - `app/context/` — immutable `ActorContext`/`RequestContext`, the `ActorResolver`
-  boundary (default `NoActorResolver`), the per-request middleware (`X-Request-ID`) and
+  boundary (`NoActorResolver` when auth is disabled, local/test only), the per-request middleware (`X-Request-ID`) and
   the `get_request_context` / `require_actor_context` dependencies.
 - `app/commerce/domain/` — canonical, provider-independent commerce models (no
   persistence, APIs or adapters yet; depends only on Pydantic and the standard library).
