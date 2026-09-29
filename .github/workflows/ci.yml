@@ -37,6 +37,13 @@ jobs:
         run: uv python install
       - name: Install dependencies
         run: uv sync --locked
+      - name: Product migrations (explicit; the API never migrates at startup)
+        run: uv run alembic upgrade head
+      - name: Product migrations are reversible (disposable CI database only)
+        run: |
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
+          uv run alembic check
       - name: Tests (unit + PostgreSQL integration)
         run: uv run pytest
       - name: Boot API and check health and AgentOS auth

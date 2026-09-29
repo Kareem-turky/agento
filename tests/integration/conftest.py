@@ -38,3 +38,23 @@ def engine(integration_settings: Settings):
 @pytest.fixture
 def settings(integration_settings: Settings) -> Settings:
     return integration_settings
+
+
+@pytest.fixture(scope="session")
+def database_url(integration_settings: Settings, engine) -> str:
+    return str(integration_settings.database_url)
+
+
+@pytest.fixture(scope="session")
+def migrated(database_url: str, engine) -> str:
+    """The product schema at the head revision, via Alembic (never create_all).
+
+    CI already ran ``alembic upgrade head`` explicitly; this makes local runs work too.
+    Upgrading an up-to-date database is a no-op.
+    """
+    from alembic import command
+
+    from tests.integration.product_db import alembic_config
+
+    command.upgrade(alembic_config(database_url), "head")
+    return database_url

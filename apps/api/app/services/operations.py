@@ -4,8 +4,8 @@ The Product API depends on this narrow interface, never on Agno, integrations or
 execution internals. ``OperationsAgentRunner`` implements it.
 
 ``run_product`` is READ-ONLY: implementations must run with no requested write
-actions. Writing through the product API needs a durable write-command and
-idempotency boundary that does not exist yet.
+actions. Writes need the durable write-command boundary (``app.commands``), which
+is deliberately not exposed over HTTP yet.
 """
 
 from typing import Protocol, runtime_checkable

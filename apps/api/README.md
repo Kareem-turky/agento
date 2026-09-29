@@ -39,6 +39,14 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   `operations.ticket.create` (`CreateOperationalTicketHandler`, via the
   `TicketingIntegration` contract), plus the `operations.order.read` and
   `operations.shipments.read` read actions. Reached only by the Operations Agent.
+- `app/commands/` — durable write commands: `WriteCommandCoordinator` (idempotent,
+  above `ExecutionCoordinator`), the `WriteCommandStore` contract, key/fingerprint
+  hashing and command models. No SQLAlchemy, FastAPI or Agno. Not exposed over HTTP.
+- `app/persistence/` — SQLAlchemy 2 async infrastructure: explicit engine/session
+  factories and `PostgresWriteCommandStore` (`product.write_commands`).
+- `migrations/` — Alembic migrations for the `product` schema (config: `/alembic.ini`,
+  target `APP_DATABASE_URL`). Run explicitly: `uv run alembic upgrade head`; the API
+  never migrates at startup.
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
