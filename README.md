@@ -671,6 +671,9 @@ OperationsAgentRunner.run(request, scope, message,     # trusted request + store
   → Agno tool loop → product tools (RunContext injected by Agno)
       get_order            → GovernanceGate(operations.order.read)     → CommerceIntegration
       get_order_shipments  → GovernanceGate(operations.shipments.read) → CommerceIntegration
+      get_daily_operations_report(business_date?) → DailyOperationsReportService
+                                  (the deterministic workflow: governance, business day,
+                                   metrics, findings; the tool computes nothing)
       create_operational_ticket → requested for this run? (no → action_not_requested)
                                   → ExecutionCoordinator(operations.ticket.create)
                                   → GovernanceGate (tickets.create?) → handler
@@ -729,7 +732,7 @@ OperationsAgentRunner.run(request, scope, message,     # trusted request + store
   tool output as data, never instructions; to create a ticket only when the user
   explicitly asked; and to claim success only for `verified` (a `requires_human`
   result must be reported as needing human review).
-- **Configuration:** only the three tools, `tool_call_limit=6`, `telemetry=False`,
+- **Configuration:** only the four tools, `tool_call_limit=6`, `telemetry=False`,
   no memory, knowledge/RAG or history. The agent takes any Agno `Model`.
 - **Not registered with AgentOS.** The AgentOS security key is not product actor
   authentication. Its only HTTP entry point is the read-only product route below.
@@ -1017,7 +1020,31 @@ supplies company, identity, timezone, permissions or report content.
   the service is not composed or the integration, data or store timezone is unusable.
 - **Composition:** with `APP_BUSINESS_BACKEND=mock` the workflow reads through the
   same `MockCommerceAdapter` and `GovernanceGate` as the Operations Agent; with
-  `disabled` the route answers 503. It is not an Operations Agent tool (yet).
+  `disabled` the route answers 503.
+
+#### The Operations Agent consumes the report (Task 020)
+
+```
+User: "Analyze operations today"
+  -> POST /api/v1/operations/runs (read-only Product run)
+  -> Operations Agent -> get_daily_operations_report()           (no date: store-local today)
+  -> DailyOperationsReportService (the SAME DailyOperationsWorkflow instance as the route)
+  -> deterministic report -> the LLM explains it
+```
+
+- **The workflow calculates; the LLM explains.** Metrics and findings come from the
+  backend workflow; the model does not calculate or recalculate them, add anomaly
+  rules, or claim inventory analysis (coverage stays `not_included`).
+- The tool's only model-visible argument is `business_date` (omit it for "today";
+  otherwise exactly `YYYY-MM-DD`, else `invalid_date` without calling the service).
+  Store, company, actor and timezone come only from the trusted run context. Results
+  are `ok` (with the report) or `denied` / `invalid_date` / `unavailable` /
+  `trusted_context_unavailable`, never exception text.
+- **Findings are data, not authorization.** A critical finding never creates a
+  ticket: `/runs` stays read-only (`create_operational_ticket` answers
+  `action_not_requested`), and the programmatic write path is unchanged.
+- `GET /api/v1/operations/reports/daily` remains the direct structured deterministic
+  API; it never goes through the agent.
 
 ### Deployment composition: `app.bootstrap` and `APP_BUSINESS_BACKEND`
 

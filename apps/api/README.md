@@ -29,8 +29,14 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   native Agno model (`OpenAIResponses`, `Claude`) or `None` when disabled.
 - `app/runtime/components.py` — decides which agents AgentOS registers per environment.
 - `app/agents/generic_reasoning.py` — the `generic-reasoning` agent (takes any Agno `Model`).
-- `app/agents/operations*.py` — the Operations Agent, its governed product tools and
-  `OperationsAgentRunner`. Not registered with AgentOS or exposed over HTTP yet.
+- `app/agents/operations*.py` — the Operations Agent, its four governed product tools
+  (`get_order`, `get_order_shipments`, `get_daily_operations_report`,
+  `create_operational_ticket`) and `OperationsAgentRunner`. For daily/store-wide
+  analysis it calls `get_daily_operations_report`, which only uses the injected
+  `DailyOperationsReportService`: the deterministic workflow calculates, the LLM
+  explains (no recalculation, no invented findings, inventory stays `not_included`;
+  a critical finding never creates a ticket). Not registered with AgentOS; its only
+  HTTP entry point is the read-only `POST /api/v1/operations/runs`.
 - `app/auth/` — Product authentication: `ProductApiKeyActorResolver` (`Authorization:
   Bearer <Product API key>` → SHA-256 → constant-time match → `ActorContext` of the
   deployment's single company) and `build_actor_resolver(settings)`, the default used by

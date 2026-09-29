@@ -347,7 +347,9 @@ def test_tool_schemas_expose_only_business_arguments() -> None:
     s = ops_stack([Reply("ok")])
     s.run(READ_ONLY)
     tools = {t["function"]["name"]: t["function"]["parameters"] for t in s.model.requests[0].tools}
-    assert set(tools) == {"get_order", "get_order_shipments", "create_operational_ticket"}
+    assert set(tools) == {"get_order", "get_order_shipments", "get_daily_operations_report",
+                          "create_operational_ticket"}  # fmt: skip
+    assert set(tools["get_daily_operations_report"]["properties"]) == {"business_date"}
     assert set(tools["get_order"]["properties"]) == {"order_id"}
     assert set(tools["get_order_shipments"]["properties"]) == {"order_id"}
     assert set(tools["create_operational_ticket"]["properties"]) == {"title", "description"}

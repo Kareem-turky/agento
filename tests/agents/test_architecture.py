@@ -15,12 +15,14 @@ APP_DIR = Path(app.__file__).parent
 OPERATIONS_AGENT_FILES = sorted(AGENTS_DIR.glob("operations*.py"))
 
 ALLOWED_IMPORT_ROOTS = {
-    "__future__", "collections", "dataclasses", "enum", "typing", "uuid", "pydantic", "agno",
+    "__future__", "collections", "dataclasses", "datetime", "enum", "typing", "uuid",
+    "pydantic", "agno",
 }  # fmt: skip
 ALLOWED_APP_MODULES = (
     "app.agents.operations", "app.context.models", "app.governance", "app.execution",
     "app.operations", "app.commerce.domain",
     "app.services.operations",  # Task 012: the product run-service contract it implements
+    # (also matches app.services.operations_reports: Task 020's daily report contract)
 )  # fmt: skip
 ALLOWED_INTEGRATION_MODULES = ("app.integrations.commerce",)
 FORBIDDEN_MODULES = (
@@ -101,7 +103,7 @@ def test_no_direct_integration_write_or_handler_call() -> None:
     assert "coordinator.run(" in tools
 
 
-def test_only_the_three_product_tools_exist() -> None:
+def test_only_the_four_product_tools_exist() -> None:
     tree = ast.parse((AGENTS_DIR / "operations_tools.py").read_text())
     builder = next(
         n
@@ -111,7 +113,8 @@ def test_only_the_three_product_tools_exist() -> None:
     returned = next(n for n in ast.walk(builder) if isinstance(n, ast.Return))
     assert isinstance(returned.value, ast.List)
     assert [e.id for e in returned.value.elts if isinstance(e, ast.Name)] == [
-        "get_order", "get_order_shipments", "create_operational_ticket",
+        "get_order", "get_order_shipments", "get_daily_operations_report",
+        "create_operational_ticket",
     ]  # fmt: skip
 
 

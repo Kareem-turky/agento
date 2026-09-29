@@ -215,9 +215,15 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     commands, args, _ = built.one("WriteCommandCoordinator")
     assert args == (store, coordinator, catalog)
 
+    workflow, args, kwargs = built.one("DailyOperationsWorkflow")  # exactly one instance
+    # The report reads through the SAME adapter and gate (no second mock system).
+    assert args == () and kwargs == {"commerce": commerce, "gate": gate}
+
     agent, args, kwargs = built.one("build_operations_agent")
     assert args == (model,)
-    assert kwargs == {"commerce": commerce, "gate": gate, "coordinator": coordinator}
+    # The agent's report tool is bound to that SAME workflow instance.
+    assert kwargs == {"commerce": commerce, "gate": gate, "coordinator": coordinator,
+                      "daily_operations": workflow}  # fmt: skip
     runner, args, _ = built.one("OperationsAgentRunner")
     assert args == (agent,)
     ticket_service, args, _ = built.one("WriteCommandTicketService")
@@ -225,10 +231,7 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     query_service, args, _ = built.one("WriteCommandTicketQueryService")
     assert args == (store,)  # the same store is the durable reader
 
-    workflow, args, kwargs = built.one("DailyOperationsWorkflow")
-    # The report reads through the SAME adapter and gate (no second mock system).
-    assert args == () and kwargs == {"commerce": commerce, "gate": gate}
-    assert composition.daily_operations_service is workflow
+    assert composition.daily_operations_service is workflow  # HTTP and agent share it
 
     assert composition.operations_service is runner
     assert composition.operations_ticket_service is ticket_service

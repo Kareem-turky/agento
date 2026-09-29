@@ -10,8 +10,10 @@
       -> ExecutionCoordinator(gate, registry, PostgresAuditSink)
       -> WriteCommandCoordinator(store, coordinator, catalog)
       -> WriteCommandTicketService / WriteCommandTicketQueryService(store)
-    build_operations_agent(model, commerce, gate, coordinator) -> OperationsAgentRunner
     DailyOperationsWorkflow(commerce=<the SAME MockCommerceAdapter>, gate=<the SAME gate>)
+      -> the HTTP report service AND the agent's report tool (one instance)
+    build_operations_agent(model, commerce, gate, coordinator, daily_operations)
+      -> OperationsAgentRunner
 
 The read and write adapters share one mock system, so they resolve the same canonical
 company and stores. Everything except the mock provider is the Product core a real
@@ -116,16 +118,19 @@ def build_local_mock_composition(
         coordinator = ExecutionCoordinator(gate, registry, audit)
         commands = WriteCommandCoordinator(store, coordinator, catalog)
 
+        # ONE deterministic report service, shared by the HTTP report route and the
+        # Operations Agent's report tool (same adapter, same gate).
+        daily_operations = DailyOperationsWorkflow(commerce=commerce, gate=gate)
         agent = build_operations_agent(
-            operations_model, commerce=commerce, gate=gate, coordinator=coordinator
-        )
+            operations_model, commerce=commerce, gate=gate, coordinator=coordinator,
+            daily_operations=daily_operations,
+        )  # fmt: skip
         return DeploymentComposition(
             default_model=operations_model,
             operations_service=OperationsAgentRunner(agent),
             operations_ticket_service=WriteCommandTicketService(commands),
             operations_ticket_query_service=WriteCommandTicketQueryService(store),
-            # The deterministic report reads through the SAME adapter and gate.
-            daily_operations_service=DailyOperationsWorkflow(commerce=commerce, gate=gate),
+            daily_operations_service=daily_operations,
             close=lifecycle.close,
             discard=lifecycle.discard,
         )

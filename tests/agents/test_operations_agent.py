@@ -65,7 +65,8 @@ def test_operations_agent_configuration() -> None:
     )  # fmt: skip
     assert agent.model is s.model
     assert [t.__name__ for t in agent.tools] == [  # type: ignore[union-attr]
-        "get_order", "get_order_shipments", "create_operational_ticket",
+        "get_order", "get_order_shipments", "get_daily_operations_report",
+        "create_operational_ticket",
     ]  # fmt: skip
     assert agent.tool_call_limit == OPERATIONS_TOOL_CALL_LIMIT == 6
     assert agent.telemetry is False
