@@ -965,6 +965,54 @@ HTTP request
   `WriteCommandTicketQueryService(<WriteCommandReader>)` from the caller (e.g. the
   `PostgresWriteCommandStore`); no approval, cancellation, listing or recovery exists.
 
+### Deployment composition: `app.bootstrap` and `APP_BUSINESS_BACKEND`
+
+Two application factories, on purpose:
+
+| Factory | Use | What it builds |
+|---|---|---|
+| `app.main:create_app` | LOW-LEVEL test/injection factory | FastAPI + AgentOS + Product auth; Product services only if the caller injects them. No persistence, integrations, coordinators or agents, and no business-backend policy. |
+| `app.bootstrap:create_deployment_app` | DEPLOYMENT factory (operators) | Composes the Product services from settings (`app/composition/`), then calls `create_app`. |
+
+```
+Operator -> create_deployment_app() -> Settings -> deployment composition
+  -> (mock only) one Product AsyncEngine -> one session factory
+       -> PostgresWriteCommandStore + PostgresAuditSink
+     ActionCatalog -> GovernanceGate -> ExecutionCoordinator(PostgresAuditSink)
+     -> WriteCommandCoordinator -> ticket create + status services
+     one MockCommerceSystem -> MockCommerceAdapter (reads) + MockTicketingAdapter (writes)
+     Operations Agent -> OperationsAgentRunner (read-only Product boundary)
+  -> create_app(...) -> FastAPI + AgentOS (Product auth inside)
+```
+
+`APP_BUSINESS_BACKEND` (default `disabled`) chooses the business backend:
+
+- **`disabled`**: local/test only. No Product business services are composed:
+  `/operations/runs`, `/operations/tickets` and the status route answer 503. Useful for
+  auth, AgentOS and infrastructure work without a model or backend.
+- **`mock`**: local/test only. The real Product core (governance, execution,
+  durable commands, durable audit, Product services, Operations Agent) on the
+  deterministic in-memory mock commerce/ticketing backend. It requires an Operations
+  model (`APP_DEFAULT_MODEL_PROVIDER`/`APP_DEFAULT_MODEL_ID`); without one composition
+  fails (`Operations model is required for mock business composition`) instead of
+  serving a permanently broken `/operations/runs`. Tests pass a deterministic scripted
+  model explicitly; it is the only override `create_deployment_app` accepts.
+- **staging/production**: the deployment factory REFUSES to start
+  (`DeploymentCompositionError`) with either value. No authoritative real commerce
+  backend exists yet, so there is no allowed backend; the mock is never constructed
+  there, and there is no mock, dummy or in-memory fallback. This is intentional
+  fail-closed behaviour; never use `mock` for a deployment.
+
+The composition owns one Product engine, disposed exactly once when the application
+shuts down (or immediately if the application cannot be built). Startup never
+migrates: run `uv run alembic upgrade head` first. With `mock`, the ticket desk is in
+memory: its tickets disappear on restart, while Product-owned command and audit state
+stays in PostgreSQL (command status still answers from it). The Operations Agent is
+still not registered with AgentOS, and `/operations/runs` stays read-only. Routes,
+services, the domain, execution, governance and persistence never import
+`app.composition`; mock integrations are imported only by
+`app/composition/local_mock.py`.
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -1068,9 +1116,15 @@ Set `OS_SECURITY_KEY` in `.env` first (`openssl rand -hex 32`); the API refuses 
 without `APP_DATABASE_URL` or without a key of at least 32 characters. PostgreSQL must be running (section 7).
 
 ```bash
-uv run uvicorn app.main:create_app --factory --app-dir apps/api --env-file .env --reload --port 8000
+uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api --env-file .env --reload --port 8000
 curl http://localhost:8000/health
 ```
+
+This is the deployment factory (see "Deployment composition" above). With the default
+`APP_BUSINESS_BACKEND=disabled` the Product business routes answer 503; set
+`APP_BUSINESS_BACKEND=mock` (local/test only, needs a model provider) for the full
+deterministic mock runtime. `app.main:create_app` remains the low-level injection
+factory used by tests.
 
 Example `/health` response:
 

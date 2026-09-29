@@ -141,9 +141,13 @@ def test_operations_agent_is_not_registered_or_routed() -> None:
         assert not any(
             m.startswith(("app.agents.operations", "app.operations")) for m in imports(path)
         )
+    # The deployment composition root (local/test mock backend) is the only composer:
+    # it builds the runner for the read-only Product boundary, never an AgentOS agent.
+    composer = APP_DIR / "composition" / "local_mock.py"
     others = [p for p in APP_DIR.rglob("*.py") if p not in OPERATIONS_AGENT_FILES]
-    for path in others:
-        assert not any(m.startswith("app.agents.operations") for m in imports(path)), path
+    importers = [p for p in others if any(m.startswith("app.agents.operations")
+                                          for m in imports(p))]  # fmt: skip
+    assert importers == [composer]
 
 
 def test_importing_the_agent_loads_no_mock_runtime_persistence_or_provider_sdk() -> None:

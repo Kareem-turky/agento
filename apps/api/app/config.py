@@ -31,6 +31,12 @@ Environment = Literal["local", "test", "staging", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ModelProvider = Literal["disabled", "openai", "anthropic"]
 ProductAuthMode = Literal["disabled", "api_key"]
+# Which business backend the deployment composition root (``app.bootstrap``) wires in.
+# "mock" is the deterministic in-memory commerce/ticketing backend for local/test only.
+# There is deliberately no real backend value yet: no authoritative provider contract
+# exists, so staging/production deployment composition fails closed (see
+# ``app.composition``). The low-level ``app.main.create_app`` ignores this setting.
+BusinessBackend = Literal["disabled", "mock"]
 
 _ConfigId = Annotated[
     str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=256)
@@ -95,6 +101,10 @@ class Settings(BaseSettings):
     product_auth_mode: ProductAuthMode = "disabled"
     company_id: _ConfigId | None = None
     product_api_keys: tuple[ProductApiKeyPrincipalConfig, ...] = ()
+
+    # Deployment composition only (``app.bootstrap``); environment policy is enforced
+    # there, not here, so the low-level factory stays injectable in every environment.
+    business_backend: BusinessBackend = "disabled"
 
     @field_validator("company_id", mode="before")
     @classmethod

@@ -131,7 +131,9 @@ def test_operations_are_reached_only_by_the_operations_agent() -> None:
         and any(m.startswith("app.operations") for m in imports(p))
     }
     adapters = {TICKET_COMMAND_ADAPTER, TICKET_QUERY_ADAPTER}
-    assert importers <= OPERATIONS_AGENT_MODULES | adapters
+    # The local/test deployment composition root builds the ticket handler registry.
+    composer = "composition/local_mock.py"
+    assert importers <= OPERATIONS_AGENT_MODULES | adapters | {composer}
     for adapter in adapters:
         adapter_imports = [m for m in imports(APP_DIR / adapter) if m.startswith("app.operations")]
         assert adapter_imports == ["app.operations.actions"], adapter

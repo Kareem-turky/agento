@@ -75,7 +75,20 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
-Run: `uv run uvicorn app.main:create_app --factory --app-dir apps/api --env-file .env`
+- `app/composition/` — deployment composition root: `APP_BUSINESS_BACKEND`
+  (`disabled` | `mock`) -> Product services for `create_app`. `mock` (local/test only)
+  wires one Product engine, `PostgresWriteCommandStore`, `PostgresAuditSink`,
+  governance, `ExecutionCoordinator`, `WriteCommandCoordinator`, the ticket services
+  and the Operations Agent runner onto ONE deterministic `MockCommerceSystem`
+  (`local_mock.py`, the only module importing the mock integration). Staging and
+  production are refused: no real business backend exists yet (fail closed).
+- `app/bootstrap.py` — `create_deployment_app`, the operator entry point; disposes the
+  composed engine on shutdown. Never migrates.
+- `app/main.py` — `create_app`, the LOW-LEVEL injection factory (tests, explicit
+  compositions); builds no persistence, integrations or agents.
+
+Run (deployment factory):
+`uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api --env-file .env`
 
 Product endpoints: `GET /health`, `POST /api/v1/operations/runs` (read-only agent run) and
 `POST /api/v1/operations/tickets` (the only write) and

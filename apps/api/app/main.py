@@ -3,10 +3,14 @@
 The Product API is a FastAPI app; Agno AgentOS is attached to it as the agent
 runtime (``AgentOS(base_app=...)``), producing one combined application.
 
-Run with: ``uvicorn app.main:create_app --factory --app-dir apps/api``
+This is the LOW-LEVEL, injection-oriented factory (tests and explicit compositions).
+It builds no Product persistence, integrations, coordinators or agents and applies no
+business-backend policy. Operators run the deployment factory instead, which composes
+the Product services and then calls this function:
+``uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api``.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from agno.models.base import Model
@@ -42,6 +46,7 @@ def create_app(
     operations_service: OperationsRunService | None = None,
     operations_ticket_service: OperationsTicketCommandService | None = None,
     operations_ticket_query_service: OperationsTicketCommandQueryService | None = None,
+    shutdown_callback: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service`` and
     ``operations_ticket_query_service`` are composed by the caller (no defaults: without
@@ -49,7 +54,11 @@ def create_app(
     reader, coordinator or integration is built here).
 
     ``actor_resolver`` overrides Product authentication; by default it is built from
-    settings (``APP_PRODUCT_AUTH_MODE``), see ``app.auth.build_actor_resolver``."""
+    settings (``APP_PRODUCT_AUTH_MODE``), see ``app.auth.build_actor_resolver``.
+
+    ``shutdown_callback`` is a generic hook awaited once when the application lifespan
+    ends (e.g. the caller releasing resources it composed); nothing is called without
+    one."""
     settings = settings or get_settings()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # An explicitly injected resolver is used exactly; otherwise Product authentication
@@ -69,8 +78,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.runtime_started = True
-        yield
-        app.state.runtime_started = False
+        try:
+            yield
+        finally:
+            app.state.runtime_started = False
+            if shutdown_callback is not None:
+                await shutdown_callback()
 
     app = FastAPI(
         title=settings.name,
