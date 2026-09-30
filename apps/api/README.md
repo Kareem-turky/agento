@@ -145,6 +145,13 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 Run (deployment factory):
 `uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api --env-file .env`
 
+Container image (build context = repository root; see `deployments/template/README.md`):
+`docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 .` — non-root
+(UID/GID 10001), runs the same `app.bootstrap` deployment factory, read-only root
+filesystem in the deployment template. The same image runs the explicit migration job:
+`alembic -c /app/alembic.ini upgrade head` (the API never migrates at startup).
+Staging/production still fail closed: no real business backend exists yet.
+
 Product endpoints: `GET /health`, `POST /api/v1/operations/runs` (read-only agent run),
 `GET /api/v1/operations/reports/daily` (deterministic daily report, no model),
 `POST /api/v1/operations/tickets` (the only write) and

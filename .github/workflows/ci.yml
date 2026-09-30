@@ -103,6 +103,16 @@ jobs:
           "SELECT extversion FROM pg_extension WHERE extname = 'vector'" | grep -E '^[0-9]'
       - name: Verify Redis
         run: docker compose exec -T redis redis-cli ping | grep -x PONG
+      - name: Build the API deployment image (build context = repository root)
+        run: docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:ci .
+      - name: Validate the deployment template requires its secrets
+        run: |
+          if docker compose -f deployments/template/compose.yaml \
+               --env-file deployments/template/.env.example config --quiet 2>/dev/null; then
+            echo "deployment template rendered without required secrets" >&2; exit 1
+          fi
+      - name: Deployment package smoke test (CI-only throwaway values, no model/provider)
+        run: .github/scripts/deployment-smoke.sh commerce-ai-platform-api:ci
       - name: Show service status and logs
         if: always()
         run: |
@@ -111,3 +121,8 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+      - name: Tear down the deployment smoke test
+        if: always()
+        run: |
+          docker compose -p cap-deploy-smoke down -v --remove-orphans || true
+          docker rm -f cap-deploy-smoke-probe || true
