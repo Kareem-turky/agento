@@ -61,6 +61,16 @@ class IntegrationHttpClosedError(IntegrationHttpTransportError):
         super().__init__(request_may_have_been_sent=False)
 
 
+class IntegrationHttpCloseError(IntegrationHttpTransportError):
+    """Releasing the transport's resources failed. The transport is closed anyway; this
+    is a lifecycle failure, never evidence that any request was sent."""
+
+    code = "integration_http_close_failed"
+
+    def __init__(self) -> None:
+        super().__init__(request_may_have_been_sent=False)
+
+
 class IntegrationHttpUnavailableError(IntegrationHttpTransportError):
     """The remote system could not be reached, timed out, or broke the exchange."""
 

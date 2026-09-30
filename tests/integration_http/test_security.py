@@ -187,8 +187,9 @@ def test_transport_source_has_no_logging_or_printing() -> None:
 
     for path in Path(package.__file__).parent.glob("*.py"):
         source = path.read_text()
-        assert "import logging" not in source and "print(" not in source, path.name
-        assert "getLogger" not in source, path.name
+        assert "print(" not in source, path.name
+        if path.name != "dependency_logging.py":  # the only (filter-only) logging use
+            assert "import logging" not in source and "getLogger" not in source, path.name
 
 
 def test_response_contains_only_response_data() -> None:

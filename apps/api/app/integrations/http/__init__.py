@@ -17,6 +17,7 @@ from app.integrations.http.contracts import (
 )
 from app.integrations.http.errors import (
     IntegrationHttpClosedError,
+    IntegrationHttpCloseError,
     IntegrationHttpRequestInvalidError,
     IntegrationHttpRequestTooLargeError,
     IntegrationHttpResponseTooLargeError,
@@ -30,6 +31,7 @@ __all__ = [
     "FORBIDDEN_REQUEST_HEADERS",
     "HttpMethod",
     "HttpxIntegrationTransport",
+    "IntegrationHttpCloseError",
     "IntegrationHttpClosedError",
     "IntegrationHttpPolicy",
     "IntegrationHttpRequest",

@@ -55,7 +55,10 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   TLS verification is on, and redirects, environment proxies and cookies are disabled.
   Timeouts, connection limits and request and decoded-response size caps are explicit.
   Only GET/HEAD are retried (bounded, deterministic); writes are sent exactly once.
-  Errors are fixed and carry `request_may_have_been_sent`. It does no logging. Nothing
+  Errors are fixed and carry `request_may_have_been_sent`, and a failed `close()` is a
+  fixed `IntegrationHttpCloseError`. It does no logging. httpx/httpcore records emitted
+  during its requests are dropped by a per-task ContextVar filter
+  (`dependency_logging.py`). Nothing
   in the Product imports it yet, and agents, workflows and models never receive it.
 - `app/integrations/commerce/` — product-owned async `CommerceIntegration` contract
   (read-only), the `TicketingIntegration` write contract, queries, capabilities and

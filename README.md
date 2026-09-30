@@ -553,6 +553,11 @@ reviewed provider adapters may use:
     by a request, and CR/LF header injection is rejected.
   - `Authorization` and other adapter headers are sent but never logged, repr'd or
     placed in errors or responses.
+  - The HTTP dependencies' own log records are suppressed while the transport sends,
+    streams or closes. httpx logs the full request URL at INFO and httpcore logs
+    connection details at DEBUG. A per-task ContextVar and one shared, stateless filter
+    on the `httpx`/`httpcore` loggers drop only those records. Unrelated
+    httpx/httpcore logging, logger levels and the root logger are untouched.
 - **Explicit limits** in the immutable `IntegrationHttpPolicy`:
   - connect/read/write/pool timeouts of 5/15/15/5 s;
   - 20 connections, of which 10 keep-alive;
@@ -565,7 +570,10 @@ reviewed provider adapters may use:
   is capped at 5 s. **POST, PUT, PATCH and DELETE are never retried automatically**,
   even with an idempotency header.
 - **Safe errors:** fixed `IntegrationHttp*Error` codes, never a URL, header, body or
-  exception text, and never chained.
+  exception text, and never chained. `close()` is final and idempotent. A cleanup
+  failure raises `IntegrationHttpCloseError`, which is a lifecycle failure with
+  `request_may_have_been_sent=False`. The transport stays closed, cleanup is never
+  retried, and cancellation propagates.
   - `request_may_have_been_sent` is `False` only when the request provably never left
     (validation, size, closed, no connection).
   - It is `True` otherwise, including timeouts after sending and oversized responses.

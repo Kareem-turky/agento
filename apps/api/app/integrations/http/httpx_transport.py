@@ -20,6 +20,10 @@ Security properties (all enforced here, none configurable per request):
 - Every failure is a fixed ``IntegrationHttpTransportError`` raised ``from None``, with
   a conservative ``request_may_have_been_sent``. Cancellation always propagates.
 - Nothing is logged, and ``repr`` never shows the origin, headers or credentials.
+  httpx/httpcore's own log records (request URLs, connection details, failure text) are
+  suppressed while this transport sends, streams or closes (``dependency_logging``).
+- ``close`` is final and idempotent; a cleanup failure is a fixed
+  ``IntegrationHttpCloseError`` (the transport stays closed, cleanup is not retried).
 """
 
 import asyncio
@@ -40,8 +44,13 @@ from app.integrations.http.contracts import (
     validate_path,
     validate_request_header,
 )
+from app.integrations.http.dependency_logging import (
+    install_dependency_log_suppression,
+    suppressed,
+)
 from app.integrations.http.errors import (
     IntegrationHttpClosedError,
+    IntegrationHttpCloseError,
     IntegrationHttpRequestInvalidError,
     IntegrationHttpRequestTooLargeError,
     IntegrationHttpResponseTooLargeError,
@@ -227,6 +236,7 @@ class HttpxIntegrationTransport:
         self._default_headers = tuple(validate_request_header(n, v) for n, v in items)
         self._sleep = sleep
         self._closed = False
+        install_dependency_log_suppression()
         pool = transport if transport is not None else httpx.AsyncHTTPTransport(
             verify=True,
             limits=client_limits(self._policy),
@@ -254,10 +264,18 @@ class HttpxIntegrationTransport:
     # ----- lifecycle ----------------------------------------------------------------------
 
     async def close(self) -> None:
+        """Final and idempotent. The transport is closed as soon as this starts; cleanup
+        runs at most once and is never retried. A cleanup failure is a fixed
+        ``IntegrationHttpCloseError`` (no raw exception, no chained cause); cancellation
+        propagates unchanged."""
         if self._closed:
             return
         self._closed = True
-        await self._client.aclose()
+        try:
+            with suppressed():
+                await self._client.aclose()
+        except Exception:  # noqa: BLE001 - never leak raw dependency cleanup errors
+            raise IntegrationHttpCloseError from None
 
     # ----- requests -----------------------------------------------------------------------
 
@@ -326,9 +344,18 @@ class HttpxIntegrationTransport:
     async def _send_once(
         self, prepared: httpx.Request, request: IntegrationHttpRequest
     ) -> IntegrationHttpResponse:
-        is_read = request.method.is_read
         if self._closed:
             raise IntegrationHttpClosedError from None
+        install_dependency_log_suppression()  # idempotent; covers lazily created loggers
+        # Dependency log records (URL, connection and failure details) are suppressed
+        # for the whole attempt: sending, streaming the body and releasing the response.
+        with suppressed():
+            return await self._attempt(prepared, request)
+
+    async def _attempt(
+        self, prepared: httpx.Request, request: IntegrationHttpRequest
+    ) -> IntegrationHttpResponse:
+        is_read = request.method.is_read
         response: httpx.Response | None = None
         try:
             try:
