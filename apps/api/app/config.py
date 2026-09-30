@@ -31,12 +31,16 @@ Environment = Literal["local", "test", "staging", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ModelProvider = Literal["disabled", "openai", "anthropic"]
 ProductAuthMode = Literal["disabled", "api_key"]
-# Which business backend the deployment composition root (``app.bootstrap``) wires in.
-# "mock" is the deterministic in-memory commerce/ticketing backend for local/test only.
-# There is deliberately no real backend value yet: no authoritative provider contract
-# exists, so staging/production deployment composition fails closed (see
-# ``app.composition``). The low-level ``app.main.create_app`` ignores this setting.
-BusinessBackend = Literal["disabled", "mock"]
+# Which business backend the deployment composition root (``app.bootstrap``) selects:
+# a stable, Product-owned backend plugin IDENTIFIER, never a module, class, import path,
+# URL or code. Settings validate only its syntax (no normalization); whether an id is
+# installed is decided by the Product-owned allowlist in ``app.composition.registry``.
+# "disabled" is a reserved Product sentinel (no business backend), not a plugin.
+BUSINESS_BACKEND_ID_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,63}$"
+BusinessBackendId = Annotated[
+    str, StringConstraints(strict=True, pattern=BUSINESS_BACKEND_ID_PATTERN)
+]
+DISABLED_BUSINESS_BACKEND = "disabled"
 
 _ConfigId = Annotated[
     str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=256)
@@ -102,9 +106,10 @@ class Settings(BaseSettings):
     company_id: _ConfigId | None = None
     product_api_keys: tuple[ProductApiKeyPrincipalConfig, ...] = ()
 
-    # Deployment composition only (``app.bootstrap``); environment policy is enforced
-    # there, not here, so the low-level factory stays injectable in every environment.
-    business_backend: BusinessBackend = "disabled"
+    # Deployment composition only (``app.bootstrap``); availability and environment
+    # policy are enforced there (the registry), not here, so the low-level factory stays
+    # injectable in every environment.
+    business_backend: BusinessBackendId = DISABLED_BUSINESS_BACKEND
 
     @field_validator("company_id", mode="before")
     @classmethod

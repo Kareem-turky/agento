@@ -85,11 +85,14 @@ def disabled_settings(settings: Settings, environment: str = "test") -> Settings
 # ----- configuration --------------------------------------------------------------
 
 
-def test_business_backend_defaults_to_disabled_and_accepts_only_known_values(monkeypatch):
+def test_business_backend_defaults_to_disabled_and_validates_syntax_only(monkeypatch):
+    """Task 022: Settings check the id's shape; the registry decides what is installed."""
     assert Settings(_env_file=None).business_backend == "disabled"
     monkeypatch.setenv("APP_BUSINESS_BACKEND", "mock")
     assert Settings(_env_file=None).business_backend == "mock"
-    for bad in ("real", "provider", "production", "MOCK", "", "memory", "dummy"):
+    for valid in ("disabled", "mock", "test-backend", "not-registered", "erp.v2"):
+        assert Settings(_env_file=None, business_backend=valid).business_backend == valid
+    for bad in ("MOCK", "", "memory backend", "../mock", "app.module:Class"):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, business_backend=bad)
 
@@ -105,7 +108,7 @@ def test_deployments_fail_closed_before_anything_is_built(settings, built, envir
         build_deployment_composition(s, model=ScriptedToolModel())
     assert str(info.value) in (
         "no business backend is available for staging/production deployments",
-        "the mock business backend is for local/test environments only",
+        "selected business backend is not allowed in this environment",
     )
     assert info.value.__cause__ is None
     assert dict(built.calls) == {}  # no engine, no mock provider, no service
@@ -124,14 +127,14 @@ def test_mock_in_a_deployment_never_constructs_a_mock_provider(settings, monkeyp
     for name in MOCK_PROVIDER_NAMES:
         monkeypatch.setattr(local_mock, name, explode)
     s = deployment_settings(settings, environment, business_backend="mock")
-    with pytest.raises(DeploymentCompositionError, match="local/test environments only"):
+    with pytest.raises(DeploymentCompositionError, match="not allowed in this environment"):
         create_deployment_app(s, AgnoAPISettings(os_security_key=TEST_OS_SECURITY_KEY),
                               model=ScriptedToolModel())  # fmt: skip
 
 
 def test_local_mock_builder_refuses_deployments_itself(settings, built) -> None:
     s = deployment_settings(settings, "production", business_backend="mock")
-    with pytest.raises(DeploymentCompositionError, match="local/test environments only"):
+    with pytest.raises(DeploymentCompositionError, match="not allowed in this environment"):
         local_mock.build_local_mock_composition(s, model=ScriptedToolModel())
     assert dict(built.calls) == {}
 

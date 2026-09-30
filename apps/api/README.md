@@ -93,8 +93,13 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   business day, orders created and shipments shipped that day, four canonical-status
   finding rules, inventory explicitly `not_included`). Depends on contracts and the
   canonical domain only; the composition root wires it to a concrete integration.
-- `app/composition/` — deployment composition root: `APP_BUSINESS_BACKEND`
-  (`disabled` | `mock`) -> Product services for `create_app`. `mock` (local/test only)
+- `app/composition/` — deployment composition root: `APP_BUSINESS_BACKEND` is a
+  Product-owned backend plugin id (syntax-checked in settings, never a module path)
+  resolved against the immutable allowlist in `registry.py` (built-ins: the `disabled`
+  sentinel and the `mock` plugin); `deployment.py` selects generically (resolve ->
+  allowed environment -> registered builder) and has no backend-specific branch.
+  Future backends must pass the conformance harness and review, then be added as one
+  explicit registration. `mock` (local/test only)
   wires one Product engine, `PostgresWriteCommandStore`, `PostgresAuditSink`,
   governance, `ExecutionCoordinator`, `WriteCommandCoordinator`, the ticket services
   and the Operations Agent runner onto ONE deterministic `MockCommerceSystem`

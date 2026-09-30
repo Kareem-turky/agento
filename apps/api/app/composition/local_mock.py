@@ -32,9 +32,9 @@ from app.agents.operations import OperationsAgentRunner, build_operations_agent
 from app.application.operations_ticket_queries import WriteCommandTicketQueryService
 from app.application.operations_tickets import WriteCommandTicketService
 from app.commands import WriteCommandCoordinator
-from app.composition.deployment import (
+from app.composition.contracts import (
+    BACKEND_NOT_ALLOWED,
     DATABASE_REQUIRED,
-    MOCK_NOT_ALLOWED,
     MODEL_REQUIRED,
     RELEASE_FAILED,
     DeploymentComposition,
@@ -90,9 +90,9 @@ class _EngineLifecycle:
 def build_local_mock_composition(
     settings: Settings, *, model: Model | None = None
 ) -> DeploymentComposition:
-    # Defense in depth: the deployment selector already refused other environments.
+    # Defense in depth: the registry already refused other environments.
     if settings.environment not in DEVELOPMENT_ENVIRONMENTS:
-        raise DeploymentCompositionError(MOCK_NOT_ALLOWED)
+        raise DeploymentCompositionError(BACKEND_NOT_ALLOWED)
     operations_model = model if model is not None else build_default_model(settings)
     if operations_model is None:
         # A "complete" mock runtime must not expose /operations/runs as a permanent 503.
