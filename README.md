@@ -1316,33 +1316,44 @@ BusinessBackendRegistration(backend_id, allowed_environments, builder,
   model classes), `APP_DATABASE_URL` and `APP_PRODUCT_API_KEYS` keep their existing
   handling. No real backend and no vendor secret-manager dependency exist yet.
 
-### Deployment packaging: API image and Compose template (`deployments/`)
+### Deployment packaging: API + Web images and the Compose template (`deployments/`)
 
-The Product API ships as ONE immutable image that also carries the Product migrations.
-The build context is the repository root:
+The Product ships as TWO immutable images built from the repository root, and one Compose
+template that runs them as a single installation:
 
 ```bash
 docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 .
+docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:0.1.0 .
+cd deployments/template && cp .env.example .env   # fill in the secrets
+docker compose up -d                               # then open http://127.0.0.1:3000
 ```
 
-- Multi-stage, Python 3.13 slim base pinned by digest, dependencies installed exactly
-  from `uv.lock` without the dev group (`uv sync --locked --no-dev`, uv 0.8.17); the
-  runtime stage copies only the virtual environment, `alembic.ini`, `apps/api/app/` and
-  `apps/api/migrations/`.
-- Non-root (`app`, UID/GID 10001), exec-form command running the same deployment
-  factory as a source checkout (`app.bootstrap:create_deployment_app --factory`), no
-  `--reload`, a stdlib `HEALTHCHECK` on `/health`. No secret is baked into the image.
-- **Migrations stay explicit**: the same image runs `alembic -c /app/alembic.ini upgrade
-  head` as a one-shot job; the API never migrates at startup.
+- **API image**: multi-stage, Python 3.13 slim base pinned by digest, dependencies exactly
+  from `uv.lock` without the dev group (`uv sync --locked --no-dev`, uv 0.8.17); only the
+  virtual environment, `alembic.ini`, `apps/api/app/` and `apps/api/migrations/`.
+  Non-root (UID/GID 10001), the same `app.bootstrap` deployment factory as a source
+  checkout, a stdlib `HEALTHCHECK` on `/health`. **Migrations stay explicit**: the same
+  image runs `alembic -c /app/alembic.ini upgrade head` as a one-shot job; the API never
+  migrates at startup.
+- **Web image**: multi-stage on a digest-pinned Node 22 slim base, `npm ci` from
+  `package-lock.json`, Next **standalone** output (only `server.js`, the compiled server,
+  traced runtime modules and static assets). Non-root (UID/GID 10002), `node server.js`
+  as PID 1, a `HEALTHCHECK` through the BFF to the private API's `/health`.
+  `PRODUCT_API_ORIGIN` is not baked in.
 
-`deployments/template/` is the generic installation template (one installation = one
-company, its own PostgreSQL): PostgreSQL (pinned pgvector image, named volume, private
-network, no host port) → `migrate` (must exit 0) → `api` (read-only root filesystem with
-a `/tmp` tmpfs, all capabilities dropped, published on `127.0.0.1` only). AgentOS must
-never be directly internet-exposed. **This is not production-ready end to end:** no real
-business backend exists, so staging/production still refuse to start (fail closed), and
-reverse proxy/TLS, backup/restore automation and registry publication are not
-implemented. The root `docker-compose.yml` remains local development only. See
+Topology: **Browser → localhost Web (Operations Console + same-origin BFF) → private
+Product network → Product API (with AgentOS inside it) → private PostgreSQL.** Only the
+Web is host-published, on `127.0.0.1`; the API and AgentOS have no host port, PostgreSQL
+has none either. The template fixes the Web BFF's upstream to `http://api:8000` (not an
+operator setting) and gives the Web no database, AgentOS, model or backend secret. All
+runtime containers are read-only (only `/tmp` is writable), drop all capabilities and run
+non-root. The Product API key stays in the browser tab's memory only.
+
+**This is not production-ready end to end:** no real business backend exists, so
+staging/production still refuse to start (fail closed, and the Web never starts without a
+healthy API); remote/public ingress still needs a later, reviewed TLS / reverse-proxy
+design; backup/restore automation and registry publication are not implemented. The root
+`docker-compose.yml` remains local development only. See
 [`deployments/template/README.md`](deployments/template/README.md).
 
 ### Operations Console (`apps/web`)
@@ -1354,8 +1365,8 @@ deterministic daily report, explicit idempotent operational ticket creation (nev
 the Agent, never retried automatically) and manual ticket command status lookup. The
 browser talks only to five fixed same-origin proxy routes under `/api/product/*`, which
 forward to the server-only `PRODUCT_API_ORIGIN`; AgentOS routes are never proxied. The
-Task 026 deployment package still ships the **API only**: the Console is not part of the
-Compose template yet. See [`apps/web/README.md`](apps/web/README.md).
+deployment package runs it as the `web` service, the only host-published one (see above).
+See [`apps/web/README.md`](apps/web/README.md).
 
 ## 3. Technology stack
 
@@ -1553,6 +1564,7 @@ uv run ruff check . && uv run ruff format --check .
 cd apps/web && npm run typecheck && npm run build && npm run smoke:proxy
 docker compose --env-file .env.example config --quiet   # validate compose
 docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 .   # API image
+docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:0.1.0 .   # Web image
 ```
 
 CI (`.github/workflows/ci.yml`) runs the backend, frontend and infrastructure checks above on
@@ -1562,8 +1574,10 @@ runs the product migrations and proves they are reversible on the disposable dat
 not skip in CI), then boots the API with a CI-only
 `OS_SECURITY_KEY` and checks `/health` and AgentOS authentication. The infrastructure job starts
 PostgreSQL/Redis and verifies they are healthy and that pgvector is enabled; it then builds
-the API image and runs the deployment smoke test (`.github/scripts/deployment-smoke.sh`)
-against `deployments/template` with throwaway CI-only values: fresh volume, migration job
+the API and Web images and runs the deployment smoke test
+(`.github/scripts/deployment-smoke.sh`) against the four-service `deployments/template`
+with throwaway CI-only values (it drives the Product from the Web port: console, BFF,
+Product auth, and the API/AgentOS isolation): fresh volume, migration job
 exits 0 (and a failing one keeps the API down), Product tables exist, the API becomes
 healthy with the agent runtime ready, AgentOS answers 401/200, business routes stay 503
 with the disabled backend, the process is non-root, the root filesystem is read-only

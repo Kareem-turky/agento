@@ -6,23 +6,30 @@ repository-root `docker-compose.yml`) and it is **not production-ready end to en
 see [Current limitations](#current-limitations).
 
 ```
-immutable API image (apps/api/Dockerfile)
-  postgres (healthy, private network, named volume, no host port)
-    -> migrate  (same image: alembic upgrade head, then exits 0)
-      -> api    (same image: app.bootstrap deployment factory, read-only root,
-                 non-root, published on 127.0.0.1 only)
-        -> future: reviewed reverse proxy / TLS / Product UI (not implemented)
+Browser
+  -> http://127.0.0.1:${PRODUCT_WEB_PORT}   web: Operations Console + same-origin BFF
+       (the ONLY host-published service)     (Web image, read-only root, UID 10002)
+  -> private "product" network             -> api: Product API + AgentOS
+       (PRODUCT_API_ORIGIN=http://api:8000)     (API image, read-only root, UID 10001,
+                                                  NO host port)
+  -> private "database" network            -> postgres (named volume, NO host port)
+
+startup: postgres healthy -> migrate exits 0 -> api healthy -> web healthy
 ```
 
-## 1. Build the API image
+## 1. Build the two images
 
-From the repository root (the build context MUST be the repository root):
+From the repository root (the build context MUST be the repository root for both):
 
 ```bash
 docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 .
+docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:0.1.0 .
 ```
 
-Use an explicit, locally controlled tag. No registry is used or published to.
+Use explicit, locally controlled tags. No registry is used or published to. Both images
+are independently reproducible and contain no secret.
+
+### API image (`apps/api/Dockerfile`)
 
 - Multi-stage build on `python:3.13.12-slim-bookworm`, pinned by manifest digest (the
   same Python 3.13 as `.python-version`). uv `0.8.17` (same as CI, hash-verified) installs
@@ -37,13 +44,33 @@ Use an explicit, locally controlled tag. No registry is used or published to.
 - Default command (exec form, uvicorn is PID 1 and receives SIGTERM directly; no
   `--reload`, no migration):
   `python -m uvicorn app.bootstrap:create_deployment_app --factory --app-dir /app/apps/api --host 0.0.0.0 --port 8000`
-  (inside the container; the template publishes it on `127.0.0.1` only).
+  (inside the container; the template does not publish it on the host at all).
 - `HEALTHCHECK`: `GET /health` via the Python standard library (no curl).
 - No secret is an `ARG` or `ENV` of the image. Everything sensitive is a runtime input.
 
 Note: `opentelemetry-sdk` and `pyyaml` are present in the runtime image because the pinned
 `agno[os]` depends on them (through `openinference-instrumentation-agno`). The Product
 configures no SDK and no exporter (see the root README, "Product observability").
+
+### Web image (`apps/web/Dockerfile`)
+
+- Multi-stage build (`dependencies` -> `builder` -> `runtime`) on
+  `node:22.22.2-bookworm-slim`, pinned by manifest digest. Dependencies come only from
+  `package-lock.json` (`npm ci`); no npm dependency was added for packaging. Next
+  telemetry is disabled at build and run time.
+- Next's **standalone** output (`output: "standalone"`): the runtime stage copies only
+  `.next/standalone` (`server.js`, the compiled server code and the traced runtime
+  `node_modules`) and `.next/static`. No source tree, tests, scripts, TypeScript or
+  `@types` packages, `.git`, `.env*` or deployment material is in the image.
+- Runs as the fixed unprivileged user **`web`, UID 10002 / GID 10002**; files are
+  root-owned and read-only for it.
+- Command `node server.js` (exec form, no entrypoint script: Node is PID 1 and receives
+  SIGTERM directly; Next's own handler closes the server and exits 143).
+- `HEALTHCHECK`: `GET /api/product/health` with Node's built-in `fetch`, i.e. Next ->
+  same-origin BFF -> private Product API `/health`.
+- `PRODUCT_API_ORIGIN` is **not** baked into the image: it is deployment wiring, fixed by
+  the template to `http://api:8000`. The Product API key is never on the server at all:
+  it lives only in the browser tab's memory.
 
 ## 2. Configure
 
@@ -67,34 +94,45 @@ Fill in `.env` (never commit it; `.env` files are git-ignored):
 
 Each service receives only what it needs: the migration job gets only the database URL
 (no AgentOS key, no model keys, no backend inputs); PostgreSQL gets only its own
-credentials.
+credentials; the Web service gets only `PRODUCT_API_ORIGIN=http://api:8000` (no database,
+AgentOS, model or backend secret). `PRODUCT_API_ORIGIN` is deliberately not an operator
+setting: the packaged BFF can only target the private API service.
 
 ## 3. Run
 
 ```bash
-docker compose up -d        # postgres healthy -> migrate exits 0 -> api starts
+docker compose up -d        # postgres -> migrate (exits 0) -> api (healthy) -> web
 docker compose ps
-curl -s http://127.0.0.1:8000/health
 ```
+
+Open the Operations Console at **http://127.0.0.1:3000** (or your `PRODUCT_WEB_PORT`) and
+enter a Product API key and a Store UUID; the key stays in that browser tab's memory
+only. The API is not reachable from the host, so do not try to browse it directly.
 
 - **Migrations are explicit.** The `migrate` service runs `alembic upgrade head` with the
   same image and exits; the `api` service depends on it with
-  `condition: service_completed_successfully`, so **a failed migration keeps the API
-  down**. The API never migrates itself. `docker compose up` re-runs the (idempotent)
+  `condition: service_completed_successfully`, and `web` depends on a healthy `api`, so
+  **a failed migration keeps the API and the Web down**. The API never migrates itself. `docker compose up` re-runs the (idempotent)
   migration job before (re)starting the API. To run it on its own:
   `docker compose run --rm migrate`.
-- **Read-only runtime.** `api` and `migrate` run with a read-only root filesystem, all
-  capabilities dropped and `no-new-privileges`; only `/tmp` is a small tmpfs.
+- **Read-only runtime.** `api`, `migrate` and `web` run with a read-only root
+  filesystem, all capabilities dropped and `no-new-privileges`; only `/tmp` is a small
+  tmpfs (Next's standalone server needs no other writable path).
 - **Persistence.** PostgreSQL data lives in the named volume `postgres-data`. The
   template mounts `../../infra/postgres/init` (enables pgvector on first initialisation),
   so it is run from a checked-out Product repository.
-- **Networks.** `database` is internal (no external connectivity): PostgreSQL, the
-  migration job and the API. Only the API also joins `egress`, for its localhost port
-  and outbound calls (e.g. a model provider). No host networking.
-- **Exposure.** PostgreSQL publishes no host port. The API is published on
-  `127.0.0.1:${PRODUCT_API_PORT}` only. **AgentOS routes (`/agents`, `/info`, …) must never
-  be directly internet-exposed**; remote access requires a reviewed reverse proxy that
-  exposes Product routes deliberately (not part of this template yet).
+- **Networks.** No host networking.
+  - `database` (internal): PostgreSQL, the migration job and the API.
+  - `product` (internal): the Web BFF and the API only.
+  - `egress`: the API only, for outbound calls (e.g. a model provider).
+  - `web-publish`: the Web only, to carry its localhost port. Outbound NAT is disabled
+    on it (`enable_ip_masquerade: false`), so the Web gets no general Internet egress.
+- **Exposure.** Only the Web is published, on `127.0.0.1:${PRODUCT_WEB_PORT}`. The API is not published on the host: the
+  API, and the AgentOS routes inside it (`/agents`, `/info`, `/sessions`, …), are
+  reachable only from the private `product` network, and the Web BFF forwards only its
+  five fixed Product routes. **AgentOS must never be directly internet-exposed**; remote
+  or public access requires a later, reviewed TLS / reverse-proxy design (not part of
+  this template).
 
 Stop with `docker compose down` (keeps the database volume). `docker compose down -v`
 **deletes the database**.
@@ -134,4 +172,5 @@ Not implemented yet (later, explicit tasks):
   policy** until then;
 - image registry publication and release automation;
 - container orchestrators (Kubernetes, Helm, Nomad, Terraform, Ansible);
-- a Product Web UI container.
+- login, accounts or server-side sessions (the Product API key is entered per browser
+  tab and kept in memory only).

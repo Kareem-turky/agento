@@ -3,9 +3,10 @@
 # docker-compose.yml). Run from this directory of a checked-out Product repository:
 #
 #   cp .env.example .env        # then fill in real values (never commit .env)
-#   docker compose up -d        # postgres -> migrate (exits 0) -> api
+#   docker compose up -d        # postgres -> migrate (exits 0) -> api (healthy) -> web
 #
-# The API image is built separately (see README.md) and referenced by API_IMAGE.
+# The API and Web images are built separately (see README.md) and referenced by
+# API_IMAGE and WEB_IMAGE. Only Web is published, on 127.0.0.1; the API is private.
 # Secrets are runtime inputs only; nothing here or in the image contains one.
 # Distinct from the local development project so volumes are never shared.
 name: commerce-ai-platform-deployment
@@ -84,20 +85,55 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OS_SECURITY_KEY: ${OS_SECURITY_KEY:?OS_SECURITY_KEY must be set}
       AGNO_TELEMETRY: "false"
-    # Localhost only: AgentOS routes must never be directly internet-exposed.
-    ports:
-      - "127.0.0.1:${PRODUCT_API_PORT:-8000}:8000"
+    # No host port: the API (and the AgentOS routes inside it) is reachable only on the
+    # private Product network (by the Web BFF) and never directly from the host.
     networks:
       - database
+      - product
       - egress
+    stop_grace_period: 30s
+
+  web:
+    # The Operations Console and its same-origin Product BFF: the ONLY host-facing service.
+    image: ${WEB_IMAGE:?WEB_IMAGE must be set (see README.md)}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Starts only once the Product API is healthy.
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Product-owned wiring (not an operator setting): the BFF talks only to the
+      # private API service. No database, AgentOS, model or backend secret reaches Web.
+      PRODUCT_API_ORIGIN: http://api:8000
+    # Localhost only. Remote access needs a later, reviewed TLS / reverse-proxy design.
+    ports:
+      - "127.0.0.1:${PRODUCT_WEB_PORT:-3000}:3000"
+    networks:
+      - product
+      - web-publish
     stop_grace_period: 30s
 
 networks:
   # Private: no external connectivity, no host exposure (PostgreSQL lives only here).
   database:
     internal: true
-  # API only: localhost port publication and outbound calls (e.g. a model provider).
+  # Private: Web BFF -> Product API only.
+  product:
+    internal: true
+  # API only: outbound calls (e.g. a model provider).
   egress: {}
+  # Web only: carries the localhost port publication. Outbound NAT is disabled, so the
+  # Web container gets no general Internet egress through it.
+  web-publish:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   postgres-data:
