@@ -15,6 +15,7 @@ from app.bootstrap import create_deployment_app
 from app.composition import local_mock
 from app.integrations.commerce.mock import EntityType, canonical_id
 from app.routes.operations_reports import OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY
+from tests.support.canonical_mock import AGENT_NEVER_SHOWS
 from tests.support.product_auth import TEST_PRODUCT_KEY, deployment_settings, principal
 from tests.support.scripted_tool_model import CallTool, Reply, ScriptedToolModel
 
@@ -26,8 +27,7 @@ RUNS, REPORT = "/api/v1/operations/runs", "/api/v1/operations/reports/daily"
 HEADERS = {"Authorization": f"Bearer {TEST_PRODUCT_KEY}"}
 TOOL = "get_daily_operations_report"
 NOT_REQUESTED = {"status": "denied", "reason": "action_not_requested", "ticket_id": None}
-LEAKS = ("ord_2002", "ship_507", "delivery_failed", "SE000507", "Sample Express", "shop_south",
-         "acct_demo", "cus_005", "Robin Demo", "source_status", "external_refs")  # fmt: skip
+LEAKS = AGENT_NEVER_SHOWS
 
 
 class Observed:
