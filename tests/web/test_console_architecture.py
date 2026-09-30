@@ -264,9 +264,10 @@ def test_web_dependencies_and_packaging_are_unchanged_in_scope() -> None:
                                                "typescript"}  # fmt: skip
     assert package["scripts"]["smoke:proxy"] == "node scripts/product-proxy-smoke.mjs"
     assert package["scripts"]["test:session"] == "node --test scripts/session-epoch.test.mjs"
-    assert not (WEB / "Dockerfile").exists()
     compose = yaml.safe_load((ROOT / "deployments" / "template" / "compose.yaml").read_text())
-    assert set(compose["services"]) == {"postgres", "migrate", "api"}
+    assert set(compose["services"]) == {"postgres", "migrate", "api", "web"}
+    # The packaged BFF targets only the private API service.
+    assert compose["services"]["web"]["environment"] == {"PRODUCT_API_ORIGIN": "http://api:8000"}
 
 
 def test_env_example_holds_only_the_server_origin() -> None:

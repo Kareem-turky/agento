@@ -65,8 +65,28 @@ built app on `127.0.0.1` and proves the route allowlist, header and query filter
 body/response caps, redirect and failure handling, and that no key appears in the
 rendered HTML, client bundles or server logs. It makes no external network call.
 
+## Packaged deployment
+
+`apps/web/Dockerfile` builds the Web image (build context = repository root):
+
+```bash
+docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:0.1.0 .
+```
+
+Multi-stage on a digest-pinned Node 22 slim base, `npm ci` from `package-lock.json`,
+Next's `output: "standalone"`: the image holds only `server.js`, the compiled server,
+the traced runtime modules and the static assets, runs as UID/GID 10002 with `node
+server.js` as PID 1, and health-checks through the BFF (`/api/product/health`). Next
+telemetry is disabled at build and run time.
+
+In `deployments/template` the `web` service is the **only host-published** service
+(`127.0.0.1:${PRODUCT_WEB_PORT:-3000}`); the template fixes `PRODUCT_API_ORIGIN` to the
+private `http://api:8000` (it is not an operator setting, and the browser never sees it).
+The API and AgentOS are not host-published at all. `.env.example` in this directory is
+for **source-tree** development only (`PRODUCT_API_ORIGIN=http://127.0.0.1:8000`); the
+deployment does not use it. Remote/public ingress still needs a later, reviewed TLS /
+reverse-proxy design.
+
 ## Not yet
 
-The Task 026 deployment package ships the **API only**: this console has no container
-image and is not part of `deployments/template` yet (packaging and public ingress are a
-later task). No login, store discovery, approvals, polling, charts or analytics.
+No login, store discovery, approvals, polling, charts or analytics.

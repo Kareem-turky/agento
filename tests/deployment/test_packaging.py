@@ -8,7 +8,6 @@ cannot drift silently.
 
 import json
 import re
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -191,8 +190,8 @@ def test_dockerignore_excludes_secrets_and_local_state_but_not_runtime_inputs() 
 # ----- deployment template ---------------------------------------------------------------------
 
 
-def test_template_has_exactly_postgres_migrate_and_api() -> None:
-    assert set(compose()["services"]) == {"postgres", "migrate", "api"}
+def test_template_has_exactly_postgres_migrate_api_and_web() -> None:
+    assert set(compose()["services"]) == {"postgres", "migrate", "api", "web"}
     assert compose()["name"] == "commerce-ai-platform-deployment"
     assert yaml.safe_load(LOCAL_COMPOSE.read_text())["name"] != compose()["name"]
 
@@ -231,7 +230,7 @@ def test_api_starts_only_after_a_successful_migration() -> None:
     assert "command" not in api and "entrypoint" not in api  # the image's own command
 
 
-@pytest.mark.parametrize("name", ["migrate", "api"])
+@pytest.mark.parametrize("name", ["migrate", "api", "web"])
 def test_runtime_containers_are_read_only_and_unprivileged(name) -> None:
     runtime = service(name)
     assert runtime["read_only"] is True
@@ -242,13 +241,17 @@ def test_runtime_containers_are_read_only_and_unprivileged(name) -> None:
     assert "volumes" not in runtime  # no writable application mounts
 
 
-def test_api_is_published_on_localhost_only_and_nothing_uses_host_networking() -> None:
-    assert service("api")["ports"] == ["127.0.0.1:${PRODUCT_API_PORT:-8000}:8000"]
+def test_only_web_is_published_on_localhost_and_nothing_uses_host_networking() -> None:
+    assert service("web")["ports"] == ["127.0.0.1:${PRODUCT_WEB_PORT:-3000}:3000"]
+    published = {name for name, d in compose()["services"].items() if "ports" in d}
+    assert published == {"web"}  # the API (and AgentOS inside it) has no host port
     for name, definition in compose()["services"].items():
         assert "network_mode" not in definition, name
+        assert "expose" not in definition, name
         for port in definition.get("ports", []):
             assert str(port).startswith("127.0.0.1:"), (name, port)
     assert compose()["networks"]["database"] == {"internal": True}
+    assert "8000:8000" not in TEMPLATE_COMPOSE.read_text()
     assert "network_mode" not in TEMPLATE_COMPOSE.read_text()
     assert "5432:5432" not in TEMPLATE_COMPOSE.read_text()
 
@@ -300,8 +303,7 @@ def test_deployments_hold_only_the_generic_template() -> None:
     ]
 
 
-def test_no_web_container_proxy_backup_or_orchestrator_was_added() -> None:
-    assert not (ROOT / "apps" / "web" / "Dockerfile").exists()
+def test_no_proxy_backup_or_orchestrator_was_added() -> None:
     names = {p.name.lower() for p in ROOT.rglob("*") if ".git" not in p.parts
              and "node_modules" not in p.parts and ".venv" not in p.parts}  # fmt: skip
     for forbidden in ("nginx.conf", "traefik.yml", "traefik.yaml", "caddyfile", "haproxy.cfg",
@@ -327,7 +329,9 @@ def test_ci_keeps_three_jobs_and_runs_the_deployment_smoke_test() -> None:
     commands = [step.get("run", "") for step in steps]
     assert "docker compose config --quiet" in commands  # local development compose
     assert any("docker build -f apps/api/Dockerfile" in c for c in commands)
-    assert any(".github/scripts/deployment-smoke.sh" in c for c in commands)
+    assert any("docker build -f apps/web/Dockerfile" in c for c in commands)
+    assert any(".github/scripts/deployment-smoke.sh commerce-ai-platform-api:ci "
+               "commerce-ai-platform-web:ci" in c for c in commands)  # fmt: skip
     teardown = [s for s in steps if "cap-deploy-smoke down -v" in s.get("run", "")]
     assert teardown and teardown[0]["if"] == "always()"
     assert SMOKE.stat().st_mode & 0o111
@@ -341,7 +345,11 @@ def test_smoke_script_covers_the_packaging_contract() -> None:
                   "docker history --no-trunc", "docker image inspect", "docker export",
                   "docker stop", "Finished server process", "APP_ENVIRONMENT=production",
                   "no business backend is available for staging/production deployments",
-                  '"pytest"', '"ruff"', "trap cleanup EXIT", "down -v"):  # fmt: skip
+                  '"pytest"', '"ruff"', "trap cleanup EXIT", "down -v", "10001:10001",
+                  "10002:10002", "/api/product/health", "compose port api 8000",
+                  "never_started", "http://api:8000", "api_internal", "os-key",
+                  "/api/product/agents", "/api/v1/operations/runs", "OPS_MESSAGE",
+                  "enable_ip_masquerade", "Operations Console"):  # fmt: skip
         assert check in script, check
     # CI-only throwaway values: generated per run, never literal secrets in the repository.
     assert "APP_DEFAULT_MODEL_PROVIDER=disabled" in script
@@ -360,12 +368,15 @@ def test_documentation_states_the_current_limitations() -> None:
                    "forbidden for a real deployment", "backup and restore automation",
                    "reverse proxy", "UID 10001 / GID 10001", "The API never migrates itself",
                    "127.0.0.1", "never commit it", "docker build -f apps/api/Dockerfile",
-                   "a failed migration keeps the API down"):  # fmt: skip
+                   "docker build -f apps/web/Dockerfile", "UID 10002 / GID 10002",
+                   "The API is not published on the host", "http://api:8000",
+                   "a failed migration keeps the API and the Web down"):  # fmt: skip
         assert phrase in template, phrase
     assert "LOCAL DEVELOPMENT infrastructure only" in overview
     assert "one company" in overview.lower()
     assert "not production-ready end to end" in readme
     assert "docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 ." in readme
+    assert "docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:0.1.0 ." in readme
 
 
 def test_no_secret_values_in_packaging_files() -> None:
@@ -375,5 +386,40 @@ def test_no_secret_values_in_packaging_files() -> None:
             r"(?i)(password|security_key|api_key)=[^\s$\"'{]",
             text.replace("APP_PRODUCT_API_KEYS=[]", ""),
         ), path.name
-        for token in shlex.split(text, comments=True) if path.suffix == ".sh" else []:
-            assert not token.startswith(("sk-", "ghp_", "AKIA")), token
+        assert not re.search(r"\b(sk-[A-Za-z0-9]{10,}|ghp_\w{20,}|AKIA[0-9A-Z]{16})", text)
+
+
+# ----- Task 028: the Web service and the private Product network --------------------------------
+
+
+def test_web_starts_after_a_healthy_api_with_only_its_private_origin() -> None:
+    web = service("web")
+    assert web["image"] == "${WEB_IMAGE:?WEB_IMAGE must be set (see README.md)}"
+    assert web["depends_on"] == {"api": {"condition": "service_healthy"}}
+    # Product-owned wiring, not an operator variable; no other setting or secret.
+    assert web["environment"] == {"PRODUCT_API_ORIGIN": "http://api:8000"}
+    assert "command" not in web and "entrypoint" not in web
+    assert web["restart"] == "unless-stopped"
+
+
+def test_private_network_topology() -> None:
+    networks = compose()["networks"]
+    assert networks["product"] == {"internal": True}
+    assert networks["web-publish"] == {
+        "driver_opts": {"com.docker.network.bridge.enable_ip_masquerade": "false"}
+    }
+    assert service("postgres")["networks"] == ["database"]
+    assert service("migrate")["networks"] == ["database"]
+    assert service("api")["networks"] == ["database", "product", "egress"]
+    assert service("web")["networks"] == ["product", "web-publish"]  # never database/egress
+
+
+def test_env_example_exposes_the_web_port_and_images_but_not_the_origin() -> None:
+    values = env_example()
+    assert values["WEB_IMAGE"] == "commerce-ai-platform-web:0.1.0"
+    assert values["PRODUCT_WEB_PORT"] == "3000"
+    for removed in ("PRODUCT_API_PORT", "PRODUCT_API_ORIGIN"):
+        assert removed not in values, removed
+        assert removed not in TEMPLATE_COMPOSE.read_text().replace(
+            "PRODUCT_API_ORIGIN: http://api:8000", ""
+        ), removed

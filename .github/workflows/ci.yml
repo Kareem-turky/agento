@@ -109,14 +109,18 @@ jobs:
         run: docker compose exec -T redis redis-cli ping | grep -x PONG
       - name: Build the API deployment image (build context = repository root)
         run: docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:ci .
+      - name: Build the Web deployment image (build context = repository root)
+        run: docker build -f apps/web/Dockerfile -t commerce-ai-platform-web:ci .
       - name: Validate the deployment template requires its secrets
         run: |
           if docker compose -f deployments/template/compose.yaml \
                --env-file deployments/template/.env.example config --quiet 2>/dev/null; then
             echo "deployment template rendered without required secrets" >&2; exit 1
           fi
-      - name: Deployment package smoke test (CI-only throwaway values, no model/provider)
-        run: .github/scripts/deployment-smoke.sh commerce-ai-platform-api:ci
+      - name: Deployment package smoke test, four services (CI-only values, no model/provider)
+        run: >-
+          .github/scripts/deployment-smoke.sh
+          commerce-ai-platform-api:ci commerce-ai-platform-web:ci
       - name: Show service status and logs
         if: always()
         run: |
