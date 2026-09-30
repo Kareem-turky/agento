@@ -39,8 +39,8 @@ backend suite (unit and PostgreSQL integration tests, lint, format) remain requi
 
 ## Business scenario (certified, steps 1–10)
 
-An operator of one company checks yesterday's operations for one store and follows up on
-a problem:
+An operator of one company reviews the deterministic operations snapshot of one store on
+the canonical acceptance business date (`2026-03-03`) and follows up on a problem:
 
 1. The Product answers `GET /health` without credentials.
 2. The operator requests the daily operations report for the store and `2026-03-03`

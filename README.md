@@ -8,8 +8,13 @@ A general-purpose, installable **AI operating layer for commerce and business op
 It is designed to be deployed by any business and connected to arbitrary external business
 systems through API contracts and adapters.
 
-This repository currently contains the **technical foundation only**: no business features,
-no production agents, no integrations.
+This repository contains the **MVP technical baseline**: the Product Core, the Operations
+Agent, the deterministic Daily Operations Report, explicit governed operational ticket
+writes with durable commands and audit, the Operations Console, and isolated deployment
+packaging. Business behaviour runs only against the deterministic mock business backend:
+**a real production business-system backend or integration is not implemented yet**, so
+staging and production intentionally fail closed (see
+[MVP release acceptance](#mvp-release-acceptance)).
 
 Core principles:
 
