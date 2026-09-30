@@ -291,12 +291,15 @@ def test_every_template_variable_is_documented_in_the_env_example() -> None:
 # ----- repository scope -------------------------------------------------------------------------
 
 
-def test_deployments_hold_only_the_generic_template() -> None:
-    # An operator's own (git-ignored) .env is not repository content.
+def test_deployments_hold_only_the_generic_template_and_the_local_demo() -> None:
+    # An operator's own (git-ignored) .env and the demo launcher's git-ignored runtime
+    # state (deployments/demo/.runtime/) are not repository content.
     tracked = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "deployments").rglob("*")
-                     if p.is_file() and p.name != ".env")  # fmt: skip
+                     if p.is_file() and p.name != ".env" and ".runtime" not in p.parts)  # fmt: skip
     assert tracked == [
         "deployments/README.md",
+        "deployments/demo/README.md",
+        "deployments/demo/compose.override.yaml",
         "deployments/template/.env.example",
         "deployments/template/README.md",
         "deployments/template/compose.yaml",

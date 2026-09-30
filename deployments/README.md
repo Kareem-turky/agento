@@ -10,6 +10,7 @@ central control plane or shared SaaS deployment.
 | `../apps/api/Dockerfile` | The immutable Product API image: API runtime **and** Product migrations. |
 | `../apps/web/Dockerfile` | The immutable Product Web image: the Operations Console and its same-origin BFF. |
 | `template/` | The generic deployment template (Docker Compose): PostgreSQL → explicit migration job → private Product API → Product Web, the only host-facing service (127.0.0.1). See [`template/README.md`](template/README.md). |
+| `demo/` | The LOCAL Product demo only (`./scripts/demo.sh up`): a Compose override layered on `template/` with the mock backend, the local deterministic demo model and generated local credentials. Never a deployment; refused in staging/production. See [`demo/README.md`](demo/README.md). |
 
 Topology: Browser → localhost Web (Operations Console + BFF) → private Product network
 → Product API (and AgentOS inside it, never host-published) → private PostgreSQL.

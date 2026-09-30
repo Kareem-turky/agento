@@ -2,6 +2,32 @@
 
 > Temporary name. Repository: `agento`.
 
+## Run the Product demo
+
+With Docker and Docker Compose installed, one command runs the whole Product locally.
+That covers the Operations Console, the Product API, the Operations Agent and PostgreSQL.
+It runs on internal deterministic demo data and needs no external accounts or API keys:
+
+```bash
+./scripts/demo.sh up
+```
+
+Then open **http://127.0.0.1:3000** and paste the printed **Product API key** and
+**Store UUID**. Things to try:
+
+- **Analysis:** `Analyze operations for 2026-03-03.`
+- **Daily report:** business date `2026-03-03`
+- **Ticket:** title `Investigate failed shipment`, description `Review the failed
+  shipment found in the demo operations report.`, then look up its command status.
+
+Stop with `./scripts/demo.sh down` (keeps the demo data). Reset with
+`./scripts/demo.sh reset` (deletes the demo data and credentials). `./scripts/demo.sh
+credentials` and `./scripts/demo.sh status` show the details again.
+
+The demo uses the existing mock commerce backend and a LOCAL-DEMO-ONLY deterministic
+model. Both are refused in staging and production. It is **not** a production
+integration. See [`deployments/demo/README.md`](deployments/demo/README.md).
+
 ## 1. What this is
 
 A general-purpose, installable **AI operating layer for commerce and business operations**.
@@ -125,6 +151,13 @@ generic-reasoning Agent(model=...) → AgentOS(agents=[...])
 - **Fail fast:** selecting a provider without `APP_DEFAULT_MODEL_ID` or without its key
   stops startup with a `ModelConfigurationError` naming the missing variable; unsupported
   provider values are rejected by settings validation. `disabled` (the default) is valid.
+- **`demo` (LOCAL-DEMO-ONLY, Task 030):** a deterministic native Agno model
+  (`app/runtime/demo_model.py`) for the local Product demo. It needs no key and makes no
+  network call. It asks the real Daily Operations Report tool for an explicit
+  `YYYY-MM-DD` date, formats that tool result and never calls a write tool.
+  - It is **refused outside `local`/`test`**, by settings validation and again by the
+    model factory.
+  - It is never a default: only `deployments/demo` selects it.
 - **Adding a provider** (e.g. Google, OpenRouter, a local model) means adding one entry to
   `_PROVIDERS` in the factory and its Agno extra — no agent or domain code changes.
 - **Default, not only:** this is the deployment-default model for generic agents; later

@@ -103,6 +103,22 @@ This is the intended, fail-closed state, not a defect. It ends only when a real 
 is supplied and a reviewed adapter for it passes the commerce integration conformance
 harness.
 
+## Local runnable demo is available
+
+**Production business use is blocked because there is no real backend.** Separately, a
+**local runnable demo is fully available using deterministic internal demo data**:
+`./scripts/demo.sh up` (see [`deployments/demo/README.md`](../deployments/demo/README.md)).
+
+- The demo runs the same Product images, services, authentication, governance, workflow,
+  Agent, durable commands and audit.
+- It uses the existing `mock` commerce backend and a LOCAL-DEMO-ONLY deterministic model
+  (`APP_DEFAULT_MODEL_PROVIDER=demo`).
+- It is pinned to `APP_ENVIRONMENT=local`. Both the mock backend and the demo model are
+  refused in staging and production.
+- It is **not** a production integration and does not change the blocker above.
+- CI exercises it through the Web port (`.github/scripts/demo-smoke.sh`, Infrastructure
+  job, after the deployment smoke).
+
 ## Not blocking this baseline (future work)
 
 **Outside the MVP scope:**
