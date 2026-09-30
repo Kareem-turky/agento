@@ -575,11 +575,13 @@ def test_no_secret_files_or_deployment_layouts_in_the_repository() -> None:
     for path in tracked:
         name = path.rsplit("/", 1)[-1]
         assert name not in ("API_TOKEN", "BASE_URL", "ACCOUNT_ID", "PASSWORD", "SECRET"), path
-        # Only the layout README and the generic template (Task 026); no per-deployment
-        # directories, backend input files or secrets.
+        # Only the layout README, the generic template (Task 026) and the local demo
+        # override (Task 030, no values: its credentials are generated, git-ignored runtime
+        # state); no per-deployment directories, backend input files or secrets.
         assert not path.startswith("deployments/") or path in (
             "deployments/README.md", "deployments/template/README.md",
             "deployments/template/compose.yaml", "deployments/template/.env.example",
+            "deployments/demo/README.md", "deployments/demo/compose.override.yaml",
         ), path  # fmt: skip
 
 

@@ -1,0 +1,33 @@
+# LOCAL PRODUCT DEMO ONLY: layered on the unchanged generic deployment template, never a
+# deployment of its own. Use ./scripts/demo.sh (it generates the runtime values):
+#
+#   docker compose -p commerce-ai-platform-demo \
+#     -f deployments/template/compose.yaml -f deployments/demo/compose.override.yaml \
+#     --env-file deployments/demo/.runtime/runtime.env <command>
+#
+# Same services (postgres -> migrate -> api -> web), same images, same private API. What
+# this override pins for the demo:
+#   - APP_ENVIRONMENT=local: the mock backend and the demo model are refused anywhere else
+#   - APP_BUSINESS_BACKEND=mock: the existing deterministic mock commerce fixture
+#   - APP_DEFAULT_MODEL_PROVIDER=demo: the LOCAL-DEMO-ONLY deterministic Agno model
+#   - Product API-key authentication stays ON (the API receives only the key's SHA-256)
+#   - no provider keys, and no outbound network at all for the API
+name: commerce-ai-platform-demo
+
+services:
+  api:
+    environment:
+      APP_ENVIRONMENT: local
+      APP_BUSINESS_BACKEND: mock
+      APP_DEFAULT_MODEL_PROVIDER: demo
+      APP_DEFAULT_MODEL_ID: ""
+      APP_PRODUCT_AUTH_MODE: api_key
+      APP_BACKEND_CONFIG_DIR: ""
+      APP_BACKEND_SECRETS_DIR: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+    # The demo makes no model/provider call: the API keeps only its private networks
+    # (database, and product for the Web BFF), without the template's egress network.
+    networks: !override
+      - database
+      - product

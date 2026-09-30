@@ -30,7 +30,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-ModelProvider = Literal["disabled", "openai", "anthropic"]
+ModelProvider = Literal["disabled", "openai", "anthropic", "demo"]
+# LOCAL-DEMO-ONLY deterministic model (``app.runtime.demo_model``): never a provider for a
+# deployment, so it is refused outside the development environments (fail closed).
+DEMO_MODEL_PROVIDER = "demo"
 ProductAuthMode = Literal["disabled", "api_key"]
 # Which business backend the deployment composition root (``app.bootstrap``) selects:
 # a stable, Product-owned backend plugin IDENTIFIER, never a module, class, import path,
@@ -148,6 +151,15 @@ class Settings(BaseSettings):
                 raise ValueError("APP_PRODUCT_API_KEYS needs at least one principal")
         elif self.environment not in DEVELOPMENT_ENVIRONMENTS:
             raise ValueError("Product authentication cannot be disabled in staging/production")
+        return self
+
+    @model_validator(mode="after")
+    def _demo_model_is_development_only(self) -> Self:
+        if (
+            self.default_model_provider == DEMO_MODEL_PROVIDER
+            and self.environment not in DEVELOPMENT_ENVIRONMENTS
+        ):
+            raise ValueError("the demo model provider is not allowed in staging/production")
         return self
 
     @field_validator("default_model_id", mode="before")
