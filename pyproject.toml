@@ -25,12 +25,13 @@ dependencies = [
     # Product observability: OpenTelemetry API only (traces + metrics). No SDK is
     # configured and no exporter is installed by the Product: nothing leaves the host.
     "opentelemetry-api==1.45.0",
+    # Secure outbound HTTP transport for integration adapters (app.integrations.http).
+    "httpx==0.28.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
-    "httpx==0.28.1",
     "ruff==0.16.9",
     "pyyaml==6.0.3",
     # In-memory span/metric readers for observability tests only (no exporter).

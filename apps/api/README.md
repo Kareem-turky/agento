@@ -49,6 +49,14 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   persistence, APIs or adapters yet; depends only on Pydantic and the standard library).
 - `app/company/operating_model/` — immutable company configuration (SLAs, escalation
   rules, KPIs, reporting, capabilities); pure config, nothing is evaluated or loaded yet.
+- `app/integrations/http/` — the Product-owned secure outbound HTTP transport for future
+  provider adapters (`IntegrationHttpTransport`, `HttpxIntegrationTransport`,
+  `IntegrationHttpPolicy`). It has one trusted HTTPS origin and relative paths only.
+  TLS verification is on, and redirects, environment proxies and cookies are disabled.
+  Timeouts, connection limits and request and decoded-response size caps are explicit.
+  Only GET/HEAD are retried (bounded, deterministic); writes are sent exactly once.
+  Errors are fixed and carry `request_may_have_been_sent`. It does no logging. Nothing
+  in the Product imports it yet, and agents, workflows and models never receive it.
 - `app/integrations/commerce/` — product-owned async `CommerceIntegration` contract
   (read-only), the `TicketingIntegration` write contract, queries, capabilities and
   errors; `mock/` holds a deterministic in-memory mock provider, its adapter and the

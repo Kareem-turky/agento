@@ -160,6 +160,7 @@ dependencies = [
     { name = "agno", extra = ["anthropic", "openai", "os", "postgres"] },
     { name = "alembic" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
@@ -172,7 +173,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "opentelemetry-sdk" },
     { name = "pytest" },
     { name = "pyyaml" },
@@ -184,6 +184,7 @@ requires-dist = [
     { name = "agno", extras = ["os", "postgres", "openai", "anthropic"], specifier = "==3.0.11" },
     { name = "alembic", specifier = "==1.20.0" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "opentelemetry-api", specifier = "==1.45.0" },
     { name = "pgvector", specifier = "==0.5.0" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
@@ -196,7 +197,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = "==0.28.1" },
     { name = "opentelemetry-sdk", specifier = "==1.45.0" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pyyaml", specifier = "==6.0.3" },

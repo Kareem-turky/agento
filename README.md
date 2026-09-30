@@ -522,6 +522,64 @@ provider authentication, rate limits, retries, pagination, idempotency and
 operational security still require provider-specific review. No real provider
 adapter exists yet; none is added without its authoritative API contract.
 
+#### Secure outbound integration transport (for future provider adapters)
+
+`app/integrations/http/` is the Product-owned outbound HTTP transport that future,
+reviewed provider adapters may use:
+
+    Product core -> CommerceIntegration / TicketingIntegration -> provider adapter
+                 -> IntegrationHttpTransport -> trusted external API origin
+
+- **Contract:** `IntegrationHttpTransport.request(IntegrationHttpRequest) ->
+  IntegrationHttpResponse` and `close()`. The request is an immutable method (fixed
+  enum: GET, HEAD, POST, PUT, PATCH, DELETE), a relative path, ordered query and header
+  pairs and raw bytes. The response is status, read-only headers and body bytes. No
+  client-library type crosses the contract.
+- **One trusted, fixed origin per transport**, set in code by the adapter's composition
+  (never by a user, prompt, model or request): `https://host[:port]` only. There is no
+  userinfo, query, fragment or path; adapters put `/v1/...` in each request's path.
+  Plain HTTP needs an explicit `allow_insecure_http=True` code decision (no setting).
+  - A request can never choose another destination. Absolute and protocol-relative
+    URLs, traversal (also percent-encoded), embedded query or fragment, backslashes and
+    control characters are rejected.
+  - The built URL is re-checked against the origin before sending.
+- **Hardened client:**
+  - TLS verification is always on.
+  - Redirects are never followed; a 3xx is returned as is, so credentials never cross
+    origins.
+  - Environment proxies, netrc and ambient configuration are ignored.
+  - No cookies are kept.
+  - Host, Proxy-Authorization, hop-by-hop, framing and encoding headers cannot be set
+    by a request, and CR/LF header injection is rejected.
+  - `Authorization` and other adapter headers are sent but never logged, repr'd or
+    placed in errors or responses.
+- **Explicit limits** in the immutable `IntegrationHttpPolicy`:
+  - connect/read/write/pool timeouts of 5/15/15/5 s;
+  - 20 connections, of which 10 keep-alive;
+  - request bodies up to 2 MiB, rejected before any network use when larger;
+  - responses up to 8 MiB **decoded**, streamed and decoded with a bounded
+    gzip/deflate decoder so compression cannot expand past the cap. A Content-Length
+    over the cap aborts early.
+- **Retries only for GET/HEAD:** transient network failures and 429/502/503/504, up to
+  3 attempts. The deterministic backoff is 0.25 s, then 0.5 s. A numeric `Retry-After`
+  is capped at 5 s. **POST, PUT, PATCH and DELETE are never retried automatically**,
+  even with an idempotency header.
+- **Safe errors:** fixed `IntegrationHttp*Error` codes, never a URL, header, body or
+  exception text, and never chained.
+  - `request_may_have_been_sent` is `False` only when the request provably never left
+    (validation, size, closed, no connection).
+  - It is `True` otherwise, including timeouts after sending and oversized responses.
+  - An adapter must keep uncertain writes uncertain (`IntegrationWriteUncertainError`),
+    and may report `IntegrationWriteRejectedError` only when nothing was sent.
+- **Adapters own the meaning:** the transport never interprets HTTP statuses or parses
+  provider data.
+- **Not reachable from agents or models:** the transport is never exposed to
+  workflows, routes or models, and is not wired into any deployment or the backend
+  registry. It logs nothing and is not part of Product observability.
+- **No real provider is implemented yet.** A future adapter must pass its own
+  transport, mapping and security tests *and* the CommerceIntegration conformance
+  harness.
+
 ### Governance: actions, permissions and baseline policy (decision only)
 
 `app/governance/` decides whether a trusted actor may take an action, and on what
