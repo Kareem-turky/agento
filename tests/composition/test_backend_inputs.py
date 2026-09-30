@@ -474,6 +474,146 @@ def test_read_failures_are_unavailable_and_close_the_file(roots, monkeypatch) ->
     assert len(closed) == 1
 
 
+CLOSE_ERROR_TEXT = (
+    f"close failed at /srv/{PATH_MARKER}/API_TOKEN holding {SECRET_MARKER.decode()} "
+    f"{CONFIG_MARKER} BASE_URL"
+)
+RAW_CLOSE_MESSAGE = "close failed at"
+
+
+def failing_close(record: list[int], error: BaseException | None = None):
+    """Closes the real descriptor (no leak in the test process), records the attempt,
+    then fails like a broken filesystem would."""
+    real_close = os.close
+
+    def close(fd: int) -> None:
+        record.append(fd)
+        real_close(fd)
+        raise error if error is not None else OSError(5, CLOSE_ERROR_TEXT)
+
+    return close
+
+
+def assert_close_error_is_safe(error: BaseException) -> None:
+    assert type(error) is BusinessBackendInputUnavailableError
+    assert error.args == ("business_backend_input_unavailable",)
+    text = f"{error!s} {error!r} {error.args!r}"
+    for leaked in (*MARKERS, "API_TOKEN", "BASE_URL", "/", "Errno", RAW_CLOSE_MESSAGE,
+                   "I/O error", "OSError"):  # fmt: skip
+        assert leaked not in text, leaked
+    assert error.__cause__ is None and error.__suppress_context__
+    assert error.__context__ is None  # the close error is not attached
+
+
+def secret_spec() -> BusinessBackendInputSpec:
+    return BusinessBackendInputSpec(secret_keys=frozenset({"API_TOKEN"}))
+
+
+def test_a_close_failure_after_a_successful_read_is_unavailable(roots, monkeypatch) -> None:
+    _, secrets = roots
+    (secrets / "API_TOKEN").write_bytes(SECRET_MARKER + b"\n")
+    closes: list[int] = []
+    monkeypatch.setattr(os, "close", failing_close(closes))
+    with pytest.raises(BusinessBackendInputUnavailableError) as caught:
+        FilesystemBusinessBackendInputSource(None, secrets).load(secret_spec())
+    assert_close_error_is_safe(caught.value)
+    assert len(closes) == 1  # attempted exactly once, never retried
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError(5, CLOSE_ERROR_TEXT), OSError(9, CLOSE_ERROR_TEXT, f"/srv/{PATH_MARKER}"),
+     PermissionError(CLOSE_ERROR_TEXT), RuntimeError(CLOSE_ERROR_TEXT)],
+)  # fmt: skip
+def test_close_errors_never_leak_path_or_secret_markers(roots, monkeypatch, error) -> None:
+    config, secrets = roots
+    populate(config, secrets)
+    closes: list[int] = []
+    monkeypatch.setattr(os, "close", failing_close(closes, error))
+    with pytest.raises(BusinessBackendInputError) as caught:
+        FilesystemBusinessBackendInputSource(config, secrets).load(SPEC)
+    assert_close_error_is_safe(caught.value)
+    # The first declared file fails on close; nothing further is opened or closed.
+    assert len(closes) == 1
+
+
+def test_a_read_failure_and_a_close_failure_stay_one_safe_error(roots, monkeypatch) -> None:
+    _, secrets = roots
+    (secrets / "API_TOKEN").write_bytes(SECRET_MARKER)
+    closes: list[int] = []
+
+    def failing_read(fd, n):
+        raise OSError(5, "read failed " + CLOSE_ERROR_TEXT)
+
+    monkeypatch.setattr(os, "read", failing_read)
+    monkeypatch.setattr(os, "close", failing_close(closes))
+    with pytest.raises(BusinessBackendInputUnavailableError) as caught:
+        FilesystemBusinessBackendInputSource(None, secrets).load(secret_spec())
+    assert_close_error_is_safe(caught.value)
+    assert len(closes) == 1
+
+
+def test_an_invalid_input_stays_invalid_when_close_also_fails(roots, monkeypatch) -> None:
+    _, secrets = roots
+    (secrets / "API_TOKEN").write_bytes(b"s" * (MAX_BACKEND_INPUT_BYTES + 1))
+    closes: list[int] = []
+    monkeypatch.setattr(os, "close", failing_close(closes))
+    with pytest.raises(BusinessBackendInputInvalidError) as caught:
+        FilesystemBusinessBackendInputSource(None, secrets).load(secret_spec())
+    error = caught.value
+    assert error.args == ("business_backend_input_invalid",)
+    assert error.__cause__ is None and error.__context__ is None
+    assert len(closes) == 1
+
+
+def test_an_unexpected_read_error_is_closed_and_translated(roots, monkeypatch) -> None:
+    _, secrets = roots
+    (secrets / "API_TOKEN").write_bytes(SECRET_MARKER)
+    closes: list[int] = []
+    real_close = os.close
+
+    def recording_close(fd):
+        closes.append(fd)
+        real_close(fd)
+
+    def broken_read(fd, n):
+        raise RuntimeError(CLOSE_ERROR_TEXT)
+
+    monkeypatch.setattr(os, "read", broken_read)
+    monkeypatch.setattr(os, "close", recording_close)
+    with pytest.raises(BusinessBackendInputUnavailableError) as caught:
+        FilesystemBusinessBackendInputSource(None, secrets).load(secret_spec())
+    assert_close_error_is_safe(caught.value)
+    assert len(closes) == 1
+
+
+def test_a_successful_load_closes_each_descriptor_exactly_once(roots, monkeypatch) -> None:
+    config, secrets = roots
+    populate(config, secrets)
+    opened: list[int] = []
+    closes: list[int] = []
+    real_open, real_close = os.open, os.close
+
+    def recording_open(*args, **kwargs):
+        fd = real_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def recording_close(fd):
+        closes.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(os, "close", recording_close)
+    inputs = FilesystemBusinessBackendInputSource(config, secrets).load(SPEC)
+    assert len(opened) == 3 and sorted(closes) == sorted(opened)  # each exactly once
+    assert dict(inputs.config) == {
+        "BASE_URL": f"https://api.example.com/{CONFIG_MARKER}",
+        "ACCOUNT_ID": f" {CONFIG_MARKER} \n",
+    }
+    assert inputs.secrets["API_TOKEN"].reveal_bytes() == SECRET_MARKER + b"\n"
+
+
 def test_the_source_never_writes_or_changes_permissions(roots) -> None:
     config, secrets = roots
     populate(config, secrets)

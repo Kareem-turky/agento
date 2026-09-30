@@ -288,10 +288,35 @@ def _read_declared_file(root: Path | None, name: str) -> bytes:
         failure = BusinessBackendInputUnavailableError
     if failure is not None:
         raise failure from None
+    # The descriptor is open: read, then attempt ONE close (no retry), whatever happened.
+    # Neither a read nor a close failure escapes as a raw error: both become fixed
+    # Product errors, raised below outside every handler so nothing is chained.
+    data = b""
+    closed = False
     try:
-        return _read_regular_file(descriptor)
+        try:
+            data = _read_regular_file(descriptor)
+        except BusinessBackendInputError as error:
+            failure = type(error)
+        except Exception:  # noqa: BLE001 - never leak raw read errors
+            failure = BusinessBackendInputUnavailableError
     finally:
+        closed = _close_once(descriptor)
+    if failure is not None:
+        raise failure from None
+    if not closed:
+        raise BusinessBackendInputUnavailableError from None
+    return data
+
+
+def _close_once(descriptor: int) -> bool:
+    """Close exactly once; report failure instead of raising (the caller maps it to a
+    fixed error). ``os.close`` is never retried: the descriptor state is unknown."""
+    try:
         os.close(descriptor)
+    except Exception:  # noqa: BLE001 - a raw close error may carry OS details
+        return False
+    return True
 
 
 def _read_regular_file(descriptor: int) -> bytes:
