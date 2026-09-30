@@ -11,11 +11,13 @@ export const MAX_DESCRIPTION_LENGTH = 4000;
 
 type Pending = { key: string; intent: string };
 
-export function TicketPanel({ apiKey, storeId, onAuthResult, onCommand }: {
+export function TicketPanel({ epoch, apiKey, storeId, onAuthResult, onCommand }: {
   apiKey: string | null;
   storeId: string;
-  onAuthResult: (result: ProductResult<unknown>) => void;
-  onCommand: (commandId: string) => void;
+  /** The session epoch this panel instance belongs to. */
+  epoch: number;
+  onAuthResult: (epoch: number, result: ProductResult<unknown>) => void;
+  onCommand: (epoch: number, commandId: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -55,10 +57,10 @@ export function TicketPanel({ apiKey, storeId, onAuthResult, onCommand }: {
     const response = await createTicket(apiKey, { storeId, title, description }, key);
     busyRef.current = false;
     setBusy(false);
-    onAuthResult(response);
+    onAuthResult(epoch, response);
     if (response.ok) {
       setResult(response.data);
-      onCommand(response.data.command_id);
+      onCommand(epoch, response.data.command_id);
     } else {
       setResult(null);
       setError(errorMessage(response.error, "ticket"));

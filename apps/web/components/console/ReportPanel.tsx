@@ -9,10 +9,12 @@ import { Badge, Card, ErrorNotice, KeyValue, Metric, Mono, NeedsSession, Timesta
 // findings, their order, severity and recommended actions) is shown as returned.
 const label = (code: string) => code.replaceAll("_", " ");
 
-export function ReportPanel({ apiKey, storeId, onAuthResult }: {
+export function ReportPanel({ epoch, apiKey, storeId, onAuthResult }: {
   apiKey: string | null;
   storeId: string;
-  onAuthResult: (result: ProductResult<unknown>) => void;
+  /** The session epoch this panel instance belongs to. */
+  epoch: number;
+  onAuthResult: (epoch: number, result: ProductResult<unknown>) => void;
 }) {
   const [businessDate, setBusinessDate] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,7 +33,7 @@ export function ReportPanel({ apiKey, storeId, onAuthResult }: {
     const response = await getDailyReport(apiKey, storeId, businessDate || undefined);
     busyRef.current = false;
     setBusy(false);
-    onAuthResult(response);
+    onAuthResult(epoch, response);
     if (response.ok) {
       setData(response.data);
     } else {

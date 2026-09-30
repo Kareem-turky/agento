@@ -192,7 +192,7 @@ def test_api_key_input_is_masked_and_never_rendered_back() -> None:
     assert "Show" not in session  # no "show API key" control
     console = component("Console.tsx")
     assert "useState<string | null>(null)" in console  # memory only
-    assert "setApiKey(null)" in console and "setGeneration" in console  # disconnect clears
+    assert "setApiKey(null)" in console and '{ type: "disconnected" }' in console
 
 
 def test_ticket_writes_are_explicit_idempotent_and_never_auto_retried() -> None:
@@ -263,6 +263,7 @@ def test_web_dependencies_and_packaging_are_unchanged_in_scope() -> None:
     assert set(package["devDependencies"]) == {"@types/node", "@types/react", "@types/react-dom",
                                                "typescript"}  # fmt: skip
     assert package["scripts"]["smoke:proxy"] == "node scripts/product-proxy-smoke.mjs"
+    assert package["scripts"]["test:session"] == "node --test scripts/session-epoch.test.mjs"
     assert not (WEB / "Dockerfile").exists()
     compose = yaml.safe_load((ROOT / "deployments" / "template" / "compose.yaml").read_text())
     assert set(compose["services"]) == {"postgres", "migrate", "api"}
@@ -294,7 +295,8 @@ def test_frontend_ci_runs_the_proxy_smoke_test() -> None:
         "Infrastructure (Docker Compose)",
     ]
     commands = [step.get("run") for step in workflow["jobs"]["frontend"]["steps"]]
-    assert commands[-4:] == ["npm ci", "npm run typecheck", "npm run build", "npm run smoke:proxy"]
+    assert commands[-5:] == ["npm ci", "npm run typecheck", "npm run build",
+                             "npm run test:session", "npm run smoke:proxy"]  # fmt: skip
 
 
 def test_smoke_test_is_offline_and_covers_the_contract() -> None:
@@ -310,3 +312,63 @@ def test_smoke_test_is_offline_and_covers_the_contract() -> None:
                   "server logs contain no key", "rendered HTML has no key",
                   "client bundles contain no server origin"):  # fmt: skip
         assert check in script, check
+
+
+# ----- session-context isolation (review fix) ---------------------------------------------------
+
+
+PANELS = ("AnalysisPanel.tsx", "ReportPanel.tsx", "TicketPanel.tsx", "CommandPanel.tsx")
+
+
+def test_panels_are_keyed_by_the_integer_session_epoch_never_the_key() -> None:
+    console = component("Console.tsx")
+    assert '<main className="layout__main" key={epoch}>' in console
+    assert not re.search(r"key=\{[^}]*apiKey", console)
+    assert "generation" not in console  # the single epoch replaced the disconnect counter
+    session = code(WEB / "components" / "console" / "session.ts")
+    assert "apiKey" not in session and "epoch: number;" in session
+    assert "epoch: state.epoch + 1" in session
+    for forbidden in ("localStorage", "sessionStorage", "indexedDB", "cookie", "sha", "digest"):
+        assert forbidden not in session.lower(), forbidden
+
+
+def test_key_store_and_disconnect_all_start_a_new_epoch() -> None:
+    session = code(WEB / "components" / "console" / "session.ts")
+    for action in ('case "keySet":', 'case "storeChanged":', 'case "disconnected":'):
+        branch = session.split(action, 1)[1].split("case ", 1)[0]
+        assert "epoch: state.epoch + 1" in branch, action
+        assert "recentCommandId: null" in branch, action
+    console = component("Console.tsx")
+    assert 'dispatch({ type: "keySet" })' in console
+    assert 'dispatch({ type: "storeChanged", storeId: value })' in console
+    assert "onStoreChange={changeStore}" in console
+
+
+def test_stale_completions_are_ignored_by_epoch() -> None:
+    session = code(WEB / "components" / "console" / "session.ts")
+    for action in ('case "authResult":', 'case "commandCreated":'):
+        branch = session.split(action, 1)[1].split("case ", 1)[0]
+        assert "action.epoch !== state.epoch" in branch, action
+    for panel in PANELS:
+        source = component(panel)
+        assert "epoch: number;" in source, panel
+        assert "onAuthResult(epoch, response);" in source, panel
+        assert "onAuthResult(response)" not in source, panel
+    ticket = component("TicketPanel.tsx")
+    assert "onCommand(epoch, response.data.command_id);" in ticket
+    assert ticket.count("createTicket(") == 1  # a context change never resubmits
+
+
+def test_session_reducer_tests_exist_and_run_offline() -> None:
+    script = (WEB / "scripts" / "session-epoch.test.mjs").read_text()
+    imports = re.findall(r'from "([^"]+)"', script)
+    assert all(i.startswith("node:") or i == "../components/console/session.ts" for i in imports)
+    for case in (
+        "replacing the Product API key",
+        "changing the Store UUID",
+        "disconnect clears",
+        "stale auth result",
+        "stale ticket completion",
+        "never holds the key",
+    ):
+        assert case in script, case

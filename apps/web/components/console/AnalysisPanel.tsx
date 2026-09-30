@@ -7,10 +7,12 @@ import { Badge, Card, ErrorNotice, KeyValue, Mono, NeedsSession, errorMessage } 
 
 export const MAX_MESSAGE_LENGTH = 8000;
 
-export function AnalysisPanel({ apiKey, storeId, onAuthResult }: {
+export function AnalysisPanel({ epoch, apiKey, storeId, onAuthResult }: {
   apiKey: string | null;
   storeId: string;
-  onAuthResult: (result: ProductResult<unknown>) => void;
+  /** The session epoch this panel instance belongs to. */
+  epoch: number;
+  onAuthResult: (epoch: number, result: ProductResult<unknown>) => void;
 }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +30,7 @@ export function AnalysisPanel({ apiKey, storeId, onAuthResult }: {
     const response = await runOperations(apiKey, storeId, message);
     busyRef.current = false;
     setBusy(false);
-    onAuthResult(response);
+    onAuthResult(epoch, response);
     if (response.ok) {
       setResult(response.data);
     } else {

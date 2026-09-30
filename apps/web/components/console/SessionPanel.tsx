@@ -2,9 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import { looksLikeUuid } from "../../lib/product-api/client";
+import type { KeyStatus } from "./session";
 import { Badge, Card } from "./ui";
 
-export type KeyStatus = "unset" | "unverified" | "accepted" | "rejected";
 export type HealthState = "checking" | "reachable" | "unavailable";
 
 const KEY_STATUS: Record<KeyStatus, [string, "neutral" | "pending" | "success" | "danger"]> = {

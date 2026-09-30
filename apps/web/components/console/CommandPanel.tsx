@@ -6,10 +6,12 @@ import type { ProductResult, TicketCommandStatusResponse } from "../../lib/produ
 import { TicketStatus, ticketStatusExplanation } from "./ticketStatus";
 import { Badge, Card, ErrorNotice, KeyValue, Mono, Timestamp, errorMessage } from "./ui";
 
-export function CommandPanel({ apiKey, recentCommandId, onAuthResult }: {
+export function CommandPanel({ epoch, apiKey, recentCommandId, onAuthResult }: {
   apiKey: string | null;
   recentCommandId: string | null;
-  onAuthResult: (result: ProductResult<unknown>) => void;
+  /** The session epoch this panel instance belongs to. */
+  epoch: number;
+  onAuthResult: (epoch: number, result: ProductResult<unknown>) => void;
 }) {
   const [commandId, setCommandId] = useState("");
   const [seenRecent, setSeenRecent] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function CommandPanel({ apiKey, recentCommandId, onAuthResult }: {
     const response = await getTicketCommand(apiKey, commandId.trim());
     busyRef.current = false;
     setBusy(false);
-    onAuthResult(response);
+    onAuthResult(epoch, response);
     if (response.ok) {
       setResult(response.data);
     } else {
