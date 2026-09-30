@@ -84,6 +84,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Product proxy (BFF) smoke test (local stub only, no external calls)
+        run: npm run smoke:proxy
 
   infrastructure:
     name: Infrastructure (Docker Compose)

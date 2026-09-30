@@ -38,7 +38,8 @@ Core principles:
 ```
 
 Implemented today: `apps/api` (Product `/health` + Agno AgentOS runtime persisted in
-PostgreSQL), `apps/web` (placeholder page) and local PostgreSQL/Redis infrastructure.
+PostgreSQL), `apps/web` (the minimal Operations Console over the Product API) and local
+PostgreSQL/Redis infrastructure.
 
 ### Agent runtime (Agno AgentOS)
 
@@ -1344,6 +1345,18 @@ reverse proxy/TLS, backup/restore automation and registry publication are not
 implemented. The root `docker-compose.yml` remains local development only. See
 [`deployments/template/README.md`](deployments/template/README.md).
 
+### Operations Console (`apps/web`)
+
+The web app is a minimal Operations Console over the existing Product API (no new
+backend endpoint): session settings (a Product API key held only in page memory and an
+explicit Store UUID), read-only Operations analysis (`POST /api/v1/operations/runs`), the
+deterministic daily report, explicit idempotent operational ticket creation (never through
+the Agent, never retried automatically) and manual ticket command status lookup. The
+browser talks only to five fixed same-origin proxy routes under `/api/product/*`, which
+forward to the server-only `PRODUCT_API_ORIGIN`; AgentOS routes are never proxied. The
+Task 026 deployment package still ships the **API only**: the Console is not part of the
+Compose template yet. See [`apps/web/README.md`](apps/web/README.md).
+
 ## 3. Technology stack
 
 | Concern | Choice |
@@ -1421,7 +1434,7 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `OPENAI_API_KEY` | Agno (OpenAI) | Required only when the provider is `openai` |
 | `ANTHROPIC_API_KEY` | Agno (Anthropic) | Required only when the provider is `anthropic` |
 | `AGNO_TELEMETRY` | Agno | Optional; unset or `false` only. Anything else (e.g. `true`) stops startup |
-| `NEXT_PUBLIC_API_BASE_URL` | web | API base URL (reserved for later use) |
+| `PRODUCT_API_ORIGIN` | web (server-only) | Product API origin for the Operations Console proxy, in `apps/web/.env.local` (see `apps/web/.env.example`); never `NEXT_PUBLIC_*` |
 
 ## 7. Start PostgreSQL / Redis
 
@@ -1526,7 +1539,8 @@ The response contains `content`, `run_id` and `session_id`; the run is stored in
 
 ```bash
 cd apps/web
-npm run dev                   # http://localhost:3000
+cp .env.example .env.local    # PRODUCT_API_ORIGIN (server-only)
+npm run dev                   # http://localhost:3000 — the Operations Console
 ```
 
 ## 10. Run tests
@@ -1536,7 +1550,7 @@ uv run pytest                 # unit tests; integration tests skip without a dat
 # With PostgreSQL running and migrated (section 7), run everything including integration tests:
 set -a; . ./.env; set +a; uv run alembic upgrade head; uv run pytest
 uv run ruff check . && uv run ruff format --check .
-cd apps/web && npm run typecheck && npm run build
+cd apps/web && npm run typecheck && npm run build && npm run smoke:proxy
 docker compose --env-file .env.example config --quiet   # validate compose
 docker build -f apps/api/Dockerfile -t commerce-ai-platform-api:0.1.0 .   # API image
 ```
