@@ -259,6 +259,53 @@ No Agno usage telemetry leaves an installation by default:
 `anthropic`, model requests go to that provider by design; an installation is only fully
 offline when the provider is `disabled` (or, later, a local model).
 
+### Product observability (operational health, not audit)
+
+Observability answers "is the Product healthy and how is it behaving?". It is separate
+from the durable audit log (governed business actions, `product.audit_events`), is
+never authorization, policy, verification or business truth, and is never stored in
+PostgreSQL. It lives in `app/observability/`:
+
+- **What is observed:** every request to the five Product HTTP routes (`http.request`,
+  by `ProductObservabilityMiddleware`), and the Product services behind them:
+  `operations.agent_run`, `operations.daily_report`, `operations.ticket_command` and
+  `operations.ticket_command_query` (transparent decorators of the service contracts,
+  applied generically by `create_app`). AgentOS routes are not Product-observed.
+- **Each observation** has a stable operation name, a stable outcome (`completed`,
+  `denied`, `invalid`, `conflict`, `not_found`, `unavailable`, `error`), a monotonic
+  duration and a few bounded details: HTTP method, fixed route and status code; for
+  ticket commands the canonical `business_status`/`business_reason`, `replayed` and
+  `persistence_complete`.
+- **Structured completion logs:** one deterministic JSON record per operation
+  (`event=product.operation.completed`, `operation`, `outcome`, `duration_ms`, UTC
+  `timestamp`, `request_id`, `trace_id`/`span_id`, bounded details) on the stdlib
+  logger `app.product.observability`. Root logging is not reconfigured.
+- **OpenTelemetry API traces and metrics:** one span per operation
+  (`product.<operation>`, scope `commerce-ai-platform.product`; the HTTP span is the
+  parent of the service span), a `product.operation.count` counter and a
+  `product.operation.duration` histogram (seconds). Only the OpenTelemetry **API** is a
+  runtime dependency (`opentelemetry-api==1.45.0`).
+- **Request correlation:** the server-generated `request_id` (the `X-Request-ID`
+  header) appears in the HTTP and the service log/span of the same request. It is never
+  a metric attribute (metrics stay low-cardinality). `trace_id`/`span_id` are logged
+  only when an OpenTelemetry SDK provides a valid span context; otherwise they are
+  `null` (never invented).
+- **No remote export by default:** the Product installs no SDK, exporter, collector or
+  global provider, opens no connection and starts no thread; without a deployment-side
+  OpenTelemetry configuration traces and metrics are no-ops and only the local logs
+  remain. There is no telemetry setting, endpoint, credential or HTTP route.
+- **No business payloads:** never company, store, actor, roles, permissions, messages,
+  ticket titles/descriptions, idempotency keys or hashes, command/ticket/order/shipment
+  or customer identifiers, business dates, report contents, provider values,
+  credentials, model prompts/output or exception text. Failures are a generic `error`;
+  exceptions are never recorded on spans.
+- **Best effort:** an observability failure (logger, tracer, meter, the observer
+  itself) is swallowed and never changes, fails or retries a Product operation, and
+  never creates a command, audit event or ticket.
+- **Deferred:** only operation count/latency/outcome are measured. Token or model-cost
+  telemetry is intentionally not implemented. Agno usage telemetry stays disabled (see
+  above); Product observability is a separate, Product-owned concern.
+
 ### Commerce domain (canonical, provider-independent)
 
 `app/commerce/domain/` is the product's business language. External systems are never our

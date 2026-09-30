@@ -87,6 +87,17 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
 - `app/runtime/non_executing_model.py` — placeholder model so the smoke agent needs no
   model provider; it raises if invoked.
 
+- `app/observability/` — Product observability (not audit): the Product-owned
+  contract (`ProductOperation`, `ObservationOutcome`, bounded details, the shielding
+  `observe` helper), the default implementation (`otel.py`: OpenTelemetry API spans,
+  `product.operation.count`/`product.operation.duration` metrics, and one JSON
+  completion log per operation on `app.product.observability`), the streaming-safe
+  `ProductObservabilityMiddleware` (the five Product paths only, inside
+  `RequestContextMiddleware`) and the observed service decorators applied by
+  `create_app(observability=...)`. The only package that imports OpenTelemetry; no
+  exporter, network, thread or database; never business payloads, identifiers or
+  exception text; failures never affect the Product.
+
 - `app/workflows/` — deterministic Product workflows (no model): the
   `DailyOperationsWorkflow` behind `GET /api/v1/operations/reports/daily`
   (governance preflight for `stores.read`/`orders.read`/`shipments.read`, store-local
