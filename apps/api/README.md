@@ -127,6 +127,16 @@ The Product API (FastAPI) with the Agno AgentOS runtime attached. Import package
   and the Operations Agent runner onto ONE deterministic `MockCommerceSystem`
   (`local_mock.py`, the only module importing the mock integration). Staging and
   production are refused: no real business backend exists yet (fail closed).
+  `backend_inputs.py` is the backend configuration/secrets boundary: a registration
+  declares input NAMES only (`BusinessBackendInputSpec`); after the backend is
+  resolved and allowed, deployment resolves exactly those names through a
+  `BusinessBackendInputSource` (initially `FilesystemBusinessBackendInputSource`:
+  `<APP_BACKEND_CONFIG_DIR>/<NAME>` and `<APP_BACKEND_SECRETS_DIR>/<NAME>`, no directory
+  scanning, no symlinks, 64 KiB per file, read only, no logging) and passes immutable
+  `BusinessBackendInputs` (config text, opaque `SecretValue` bytes revealed only by
+  `reveal_bytes()`) to the builder. Failures are one fixed message; `mock` declares
+  nothing and reads nothing. No rotation/hot reload; no zeroization guarantee.
+  Business layers never import these types, and credentials never reach prompts.
 - `app/bootstrap.py` — `create_deployment_app`, the operator entry point; disposes the
   composed engine on shutdown. Never migrates.
 - `app/main.py` — `create_app`, the LOW-LEVEL injection factory (tests, explicit

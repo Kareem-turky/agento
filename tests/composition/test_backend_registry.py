@@ -57,10 +57,14 @@ class RecordingBuilder:
 
     def __init__(self) -> None:
         self.calls: list[tuple[Settings, Any]] = []
+        self.inputs: list[Any] = []
         self.result = DeploymentComposition()
 
-    def __call__(self, settings: Settings, *, model: Any = None) -> DeploymentComposition:
+    def __call__(
+        self, settings: Settings, *, model: Any = None, inputs: Any
+    ) -> DeploymentComposition:
         self.calls.append((settings, model))
+        self.inputs.append(inputs)
         return self.result
 
 
@@ -266,9 +270,9 @@ def test_mock_in_development_goes_through_the_registered_builder(settings, monke
     calls: list[str] = []
     original = registry_module._build_mock_backend
 
-    def spy(settings_, *, model=None):
+    def spy(settings_, *, model=None, inputs):
         calls.append(settings_.environment)
-        return original(settings_, model=model)
+        return original(settings_, model=model, inputs=inputs)
 
     monkeypatch.setattr(registry_module, "_build_mock_backend", spy)
     composition = build_deployment_composition(env_settings(settings, environment, "mock"),
@@ -317,7 +321,7 @@ def test_a_production_registration_is_honoured_generically(settings) -> None:
 
 
 def test_builder_results_and_injected_registries_are_checked(settings) -> None:
-    def broken(settings: Settings, *, model: Any = None) -> Any:  # noqa: ARG001
+    def broken(settings: Settings, *, model: Any = None, inputs: Any) -> Any:  # noqa: ARG001
         return {"operations_service": None}  # not a DeploymentComposition
 
     s = env_settings(settings, "local", "test-backend")
