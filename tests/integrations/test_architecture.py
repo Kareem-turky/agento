@@ -11,7 +11,13 @@ import app.commerce
 import app.integrations
 
 INTEGRATIONS_DIR = Path(app.integrations.__file__).parent
-SOURCE_FILES = sorted(INTEGRATIONS_DIR.rglob("*.py"))
+# The secure outbound HTTP transport (Task 024) is network infrastructure for future
+# adapters: it deliberately uses httpx and has its own boundary guards in
+# tests/integration_http/test_architecture.py. Everything else stays framework-free.
+HTTP_TRANSPORT_DIR = INTEGRATIONS_DIR / "http"
+SOURCE_FILES = sorted(
+    p for p in INTEGRATIONS_DIR.rglob("*.py") if HTTP_TRANSPORT_DIR not in p.parents
+)
 DOMAIN_FILES = sorted((Path(app.commerce.__file__).parent / "domain").rglob("*.py"))
 
 ALLOWED_IMPORT_ROOTS = {
