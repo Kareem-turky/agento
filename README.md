@@ -1261,6 +1261,60 @@ services, the domain, execution, governance and persistence never import
 `app.composition`; mock integrations are imported only by
 `app/composition/local_mock.py`.
 
+### Backend configuration and secrets boundary (`app/composition/backend_inputs.py`)
+
+A backend plugin never looks for its own configuration or credentials. Its reviewed
+registration declares only the **names** of the inputs its builder needs; the Product
+resolves exactly those at startup and hands them over:
+
+```
+BusinessBackendRegistration(backend_id, allowed_environments, builder,
+                            input_spec=BusinessBackendInputSpec(
+                                config_keys=frozenset({"BASE_URL", "ACCOUNT_ID"}),
+                                secret_keys=frozenset({"API_TOKEN"})))
+  -> deployment: backend id -> disabled sentinel -> registration -> environment allowed
+     -> BusinessBackendInputSource.load(input_spec)   (ONLY the declared names)
+     -> BusinessBackendInputs(config: str, secrets: SecretValue)   (validated, immutable)
+     -> builder(settings, model=..., inputs=...)
+```
+
+- **Names only.** Input names match `^[A-Z][A-Z0-9_]{0,63}$` (not normalized); a name
+  is config or secret, never both. A registration never contains a token, password,
+  secret value, Authorization header value, database or provider credential.
+- **Values stay out of everything else.** Raw backend secrets never enter `Settings`,
+  settings JSON, `APP_PRODUCT_API_KEYS`, the registry, backend ids, Agent context,
+  prompts, audit or observability. Credentials are never asked of, or given to, an
+  Agent/LLM: the builder reveals a secret only where it builds a client.
+- **`SecretValue`** holds opaque bytes: never decoded, stripped or parsed; `str`/`repr`
+  print `SecretValue(<redacted>)`; only `reveal_bytes()` returns the value; it is not
+  picklable. Secrets are minimized and redacted, but Python cannot guarantee memory
+  zeroization and this does not claim to.
+- **Initial source: files.** `APP_BACKEND_CONFIG_DIR` and `APP_BACKEND_SECRETS_DIR`
+  hold directory **paths only** (blank = unset). For a declared name the source reads
+  exactly `<dir>/<NAME>`: no directory listing, globbing, recursion, extension guessing
+  or fallback. Symlinks, directories and other non-regular files are rejected; each
+  file is capped at 64 KiB (bounded read); config is strict UTF-8 without NUL and is
+  used exactly (no trimming); secrets keep their exact bytes (a trailing newline is
+  part of the value). The source is read only: it never creates directories, writes,
+  or changes permissions, and it does not log. Keep secret files outside the
+  repository, owned by the service account and unreadable by others.
+- **Fail closed, safely.** A missing root, file or unreadable/invalid input stops
+  startup with one fixed message, `business backend inputs are unavailable`, which
+  never names the backend, the input, a path or a value. A malformed source result
+  never reaches the builder. `disabled`, `mock`, unknown and disallowed backends read
+  nothing; `mock` declares no inputs and needs no directories.
+- **Replaceable.** `BusinessBackendInputSource` is the boundary: a vault, cloud secret
+  manager, HSM-backed service or orchestration secret store can implement `load(spec)`
+  later without changing domains, agents, workflows or registrations. Inputs are read
+  once at startup: there is no rotation or hot reload yet (restart to apply changes).
+- **With the HTTP transport (`app/integrations/http/`)**, a future builder reads e.g.
+  `inputs.config["BASE_URL"]`, reveals `inputs.secrets["API_TOKEN"]` into an
+  `Authorization` request header and builds an `HttpxIntegrationTransport`; the
+  transport redacts that header from its errors and logs.
+- **Unchanged and out of scope:** `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` (read by Agno's
+  model classes), `APP_DATABASE_URL` and `APP_PRODUCT_API_KEYS` keep their existing
+  handling. No real backend and no vendor secret-manager dependency exist yet.
+
 ## 3. Technology stack
 
 | Concern | Choice |

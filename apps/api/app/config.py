@@ -13,6 +13,7 @@ Agno's model classes read themselves. No credentials have defaults.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -110,6 +111,20 @@ class Settings(BaseSettings):
     # policy are enforced there (the registry), not here, so the low-level factory stays
     # injectable in every environment.
     business_backend: BusinessBackendId = DISABLED_BUSINESS_BACKEND
+
+    # Where the selected backend's declared inputs live (paths only, never values):
+    # ``<backend_config_dir>/<NAME>`` and ``<backend_secrets_dir>/<NAME>``. Read once at
+    # startup by ``app.composition`` and only for the names the selected backend's
+    # registration declares; a backend that declares nothing needs neither directory.
+    backend_config_dir: Path | None = None
+    backend_secrets_dir: Path | None = None
+
+    @field_validator("backend_config_dir", "backend_secrets_dir", mode="before")
+    @classmethod
+    def _blank_backend_dir_is_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("company_id", mode="before")
     @classmethod

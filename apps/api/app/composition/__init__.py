@@ -8,6 +8,17 @@ never import it. Mock integrations are imported only by ``app.composition.local_
 lazily and only for local/test.
 """
 
+from app.composition.backend_inputs import (
+    MAX_BACKEND_INPUT_BYTES,
+    BusinessBackendInputError,
+    BusinessBackendInputInvalidError,
+    BusinessBackendInputs,
+    BusinessBackendInputSource,
+    BusinessBackendInputSpec,
+    BusinessBackendInputUnavailableError,
+    FilesystemBusinessBackendInputSource,
+    SecretValue,
+)
 from app.composition.contracts import (
     BusinessBackendBuilder,
     DeploymentComposition,
@@ -21,11 +32,20 @@ from app.composition.registry import (
 )
 
 __all__ = [
+    "MAX_BACKEND_INPUT_BYTES",
     "BusinessBackendBuilder",
+    "BusinessBackendInputError",
+    "BusinessBackendInputInvalidError",
+    "BusinessBackendInputSource",
+    "BusinessBackendInputSpec",
+    "BusinessBackendInputUnavailableError",
+    "BusinessBackendInputs",
     "BusinessBackendRegistration",
     "BusinessBackendRegistry",
     "DeploymentComposition",
     "DeploymentCompositionError",
+    "FilesystemBusinessBackendInputSource",
+    "SecretValue",
     "build_default_backend_registry",
     "build_deployment_composition",
 ]
