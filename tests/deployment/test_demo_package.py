@@ -151,6 +151,25 @@ def test_demo_smoke_covers_the_demo_contract() -> None:
     ):  # fmt: skip
         assert check in script, check
     assert "OPENAI_API_KEY=sk" not in script and "ANTHROPIC_API_KEY=sk" not in script
+    # The authoritative CI demo smoke runs the launcher's DEFAULT path: `up` builds both
+    # images itself. The skip-build optimization is never enabled in executable lines.
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    assert "DEMO_SKIP_BUILD=1" not in code and "DEMO_SKIP_BUILD=" not in code
+    assert "unset DEMO_SKIP_BUILD" in code
+    for evidence in ('"demo: building the Product API image ($API_IMAGE)"',
+                     '"demo: building the Product Web image ($WEB_IMAGE)"',
+                     '"Commerce AI Product Demo is ready"'):  # fmt: skip
+        assert evidence in code, evidence
+
+
+def test_launcher_keeps_skip_build_as_an_optional_optimization_only() -> None:
+    script = LAUNCHER.read_text()
+    assert 'if [[ "${DEMO_SKIP_BUILD:-0}" == 1 ]]; then' in script  # opt-in, default builds
+    build = script.split("build_images() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'docker build -f "$ROOT/apps/api/Dockerfile" -t "$API_IMAGE" "$ROOT"' in build
+    assert 'docker build -f "$ROOT/apps/web/Dockerfile" -t "$WEB_IMAGE" "$ROOT"' in build
+    assert "building the Product API image" in build and "building the Product Web image" in build
+    assert "  build_images\n" in script.split("cmd_up() {", 1)[1].split("\n}\n", 1)[0]
 
 
 def test_demo_documentation_is_explicitly_non_production() -> None:

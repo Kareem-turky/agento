@@ -19,7 +19,10 @@ API_IMAGE="${1:?usage: demo-smoke.sh <api-image> <web-image>}"
 WEB_IMAGE="${2:?usage: demo-smoke.sh <api-image> <web-image>}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
-export DEMO_API_IMAGE="$API_IMAGE" DEMO_WEB_IMAGE="$WEB_IMAGE" DEMO_SKIP_BUILD=1
+# The launcher's DEFAULT path, exactly as a person runs it: `up` builds both images itself
+# (the supplied tags; the Docker layer cache makes it cheap after the CI build steps).
+export DEMO_API_IMAGE="$API_IMAGE" DEMO_WEB_IMAGE="$WEB_IMAGE"
+unset DEMO_SKIP_BUILD
 export DEMO_PROJECT="cap-demo-smoke" DEMO_WEB_PORT="13081" DEMO_RUNTIME_DIR="$WORK/runtime"
 PROJECT="$DEMO_PROJECT"
 WEB="http://127.0.0.1:$DEMO_WEB_PORT"
@@ -62,6 +65,13 @@ write_count() {
 
 step "./scripts/demo.sh up: one command starts the whole demo"
 "$DEMO" up > "$WORK/up.out" 2> "$WORK/up.err" || { cat "$WORK/up.err" >&2; fail "demo up failed"; }
+# Evidence that `up` ran its own build path, then became ready (non-secret lines only).
+grep -F "demo: building the Product" "$WORK/up.err" || true
+grep -qF "demo: building the Product API image ($API_IMAGE)" "$WORK/up.err" \
+  || fail "demo up did not build the API image itself"
+grep -qF "demo: building the Product Web image ($WEB_IMAGE)" "$WORK/up.err" \
+  || fail "demo up did not build the Web image itself"
+grep -xF "Commerce AI Product Demo is ready" "$WORK/up.out" || fail "demo up did not report ready"
 CREDENTIALS="$DEMO_RUNTIME_DIR/credentials"
 KEY="$(value_of "$CREDENTIALS" PRODUCT_API_KEY)"
 STORE="$(value_of "$CREDENTIALS" STORE_ID)"
