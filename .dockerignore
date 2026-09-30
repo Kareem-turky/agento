@@ -1,0 +1,49 @@
+# Docker build context (repository root). The API Dockerfile COPYs an explicit
+# whitelist; this file additionally keeps secrets and local state out of the context.
+
+# VCS / editors / OS
+.git
+.gitignore
+.github
+.idea
+.vscode
+.DS_Store
+**/.DS_Store
+
+# Environment files and key material (never in a build context)
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# Python local state
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+*.egg-info
+build
+dist
+
+# Tests and tooling
+tests
+pyrightconfig.json
+
+# Frontend (not part of the API image)
+apps/web/node_modules
+apps/web/.next
+apps/web/out
+
+# Deployment material and local data
+deployments
+infra
+**/*.sql.gz
+**/*.dump
+data
+postgres-data

@@ -1,0 +1,103 @@
+# Generic Product deployment template: ONE installation = ONE company, with its own
+# physically isolated PostgreSQL. Not the local development stack (that is the root
+# docker-compose.yml). Run from this directory of a checked-out Product repository:
+#
+#   cp .env.example .env        # then fill in real values (never commit .env)
+#   docker compose up -d        # postgres -> migrate (exits 0) -> api
+#
+# The API image is built separately (see README.md) and referenced by API_IMAGE.
+# Secrets are runtime inputs only; nothing here or in the image contains one.
+# Distinct from the local development project so volumes are never shared.
+name: commerce-ai-platform-deployment
+
+x-api-runtime: &api-runtime
+  image: ${API_IMAGE:?API_IMAGE must be set (see README.md)}
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    # pgvector/pgvector:0.8.6-pg17 (same family as local development), pinned by digest.
+    image: pgvector/pgvector:0.8.6-pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-platform}
+      POSTGRES_USER: ${POSTGRES_USER:-platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # No host port: only the migration job and the API reach it, on the private network.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Same bootstrap SQL as local development (enables pgvector on first init).
+      - ../../infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  migrate:
+    # The SAME API image, running ONLY the explicit Product migrations, then exiting.
+    <<: *api-runtime
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    restart: "no"
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-platform}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - database
+    healthcheck:
+      disable: true
+
+  api:
+    <<: *api-runtime
+    restart: unless-stopped
+    # Starts only after the migration job exited 0; a failed migration keeps it down.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT must be set}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-platform}
+      APP_AGNO_DB_SCHEMA: ${APP_AGNO_DB_SCHEMA:-agno_runtime}
+      APP_PRODUCT_AUTH_MODE: ${APP_PRODUCT_AUTH_MODE:?APP_PRODUCT_AUTH_MODE must be set}
+      APP_COMPANY_ID: ${APP_COMPANY_ID:-}
+      APP_PRODUCT_API_KEYS: ${APP_PRODUCT_API_KEYS:-[]}
+      APP_BUSINESS_BACKEND: ${APP_BUSINESS_BACKEND:?APP_BUSINESS_BACKEND must be set}
+      APP_BACKEND_CONFIG_DIR: ${APP_BACKEND_CONFIG_DIR:-}
+      APP_BACKEND_SECRETS_DIR: ${APP_BACKEND_SECRETS_DIR:-}
+      APP_DEFAULT_MODEL_PROVIDER: ${APP_DEFAULT_MODEL_PROVIDER:-disabled}
+      APP_DEFAULT_MODEL_ID: ${APP_DEFAULT_MODEL_ID:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OS_SECURITY_KEY: ${OS_SECURITY_KEY:?OS_SECURITY_KEY must be set}
+      AGNO_TELEMETRY: "false"
+    # Localhost only: AgentOS routes must never be directly internet-exposed.
+    ports:
+      - "127.0.0.1:${PRODUCT_API_PORT:-8000}:8000"
+    networks:
+      - database
+      - egress
+    stop_grace_period: 30s
+
+networks:
+  # Private: no external connectivity, no host exposure (PostgreSQL lives only here).
+  database:
+    internal: true
+  # API only: localhost port publication and outbound calls (e.g. a model provider).
+  egress: {}
+
+volumes:
+  postgres-data:
