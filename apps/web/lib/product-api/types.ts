@@ -1,0 +1,99 @@
+// Narrow types for the EXISTING Product HTTP contracts only. They name the Product's
+// canonical vocabulary; they do not encode any policy, permission, report rule or
+// command-transition logic (the backend is authoritative for all of that).
+
+export type HealthResponse = {
+  status: string;
+  agent_runtime?: { status?: string };
+};
+
+export type OperationsRunResponse = {
+  request_id: string;
+  message: string;
+};
+
+export type OrderStatus =
+  | "draft" | "pending" | "confirmed" | "processing" | "fulfilled" | "cancelled"
+  | "completed" | "unknown";
+
+export type ShipmentStatus =
+  | "pending" | "ready" | "shipped" | "in_transit" | "delivered" | "failed" | "returned"
+  | "cancelled" | "unknown";
+
+export type DailyOperationsFinding = {
+  code: string;
+  severity: string;
+  entity_type: string;
+  entity_id: string;
+  order_id: string;
+  canonical_status: string;
+  recommended_action: string;
+};
+
+export type DailyOperationsReport = {
+  store_id: string;
+  business_date: string;
+  timezone: string;
+  window_start: string;
+  window_end: string;
+  generated_at: string;
+  metrics: {
+    orders_created: number;
+    order_status_counts: { status: OrderStatus | string; count: number }[];
+    shipments_shipped: number;
+    shipment_status_counts: { status: ShipmentStatus | string; count: number }[];
+    affected_orders: number;
+  };
+  findings: DailyOperationsFinding[];
+  findings_total: number;
+  findings_truncated: boolean;
+  coverage: {
+    orders: string;
+    shipments: string;
+    inventory: string;
+    inventory_reason: string;
+  };
+};
+
+export type DailyOperationsReportResponse = {
+  request_id: string;
+  report: DailyOperationsReport;
+};
+
+export type TicketCommandStatus =
+  | "in_progress" | "denied" | "awaiting_approval" | "failed" | "requires_human" | "verified";
+
+export type TicketCreateResponse = {
+  request_id: string;
+  command_id: string;
+  status: TicketCommandStatus | string;
+  reason: string | null;
+  ticket_id: string | null;
+  replayed: boolean;
+  persistence_complete: boolean;
+};
+
+export type TicketCommandStatusResponse = {
+  request_id: string;
+  command_id: string;
+  status: TicketCommandStatus | string;
+  reason: string | null;
+  ticket_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Fixed, UI-level classification of a failed Product request (never raw details). */
+export type ProductErrorKind =
+  | "unauthenticated" // 401
+  | "forbidden" // 403
+  | "not_found" // 404
+  | "conflict" // 409
+  | "too_large" // 413
+  | "invalid" // 400 / 422
+  | "service_unavailable" // 503
+  | "unavailable"; // BFF 502, network failure, unexpected response
+
+export type ProductResult<T> =
+  | { ok: true; status: number; data: T }
+  | { ok: false; status: number | null; error: ProductErrorKind };

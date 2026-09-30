@@ -84,6 +84,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Session-context reducer tests (Node standard library)
+        run: npm run test:session
+      - name: Product proxy (BFF) smoke test (local stub only, no external calls)
+        run: npm run smoke:proxy
 
   infrastructure:
     name: Infrastructure (Docker Compose)
