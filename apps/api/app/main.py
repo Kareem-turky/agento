@@ -21,6 +21,17 @@ from app import __version__
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
+from app.observability import (
+    ProductObservability,
+    ProductObservabilityMiddleware,
+    build_default_observability,
+)
+from app.observability.services import (
+    observed_daily_operations_service,
+    observed_operations_service,
+    observed_ticket_query_service,
+    observed_ticket_service,
+)
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
 from app.routes.operations_reports import (
@@ -54,6 +65,7 @@ def create_app(
     operations_ticket_query_service: OperationsTicketCommandQueryService | None = None,
     daily_operations_service: DailyOperationsReportService | None = None,
     shutdown_callback: Callable[[], Awaitable[None]] | None = None,
+    observability: ProductObservability | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -66,8 +78,15 @@ def create_app(
 
     ``shutdown_callback`` is a generic hook awaited once when the application lifespan
     ends (e.g. the caller releasing resources it composed); nothing is called without
-    one."""
+    one.
+
+    ``observability`` is the Product observability (structured completion logs,
+    OpenTelemetry API traces and metrics; nothing is exported over the network). By
+    default the Product's own implementation is used; tests inject recording or failing
+    ones. Composed services are wrapped in their observed decorators generically; a
+    missing service stays missing."""
     settings = settings or get_settings()
+    observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
     # An explicitly injected resolver is used exactly; otherwise Product authentication
     # comes from settings (API keys), and staging/production refuse to start without it.
@@ -104,10 +123,23 @@ def create_app(
     )
     app.state.settings = settings
     app.state.runtime_started = False
-    setattr(app.state, OPERATIONS_SERVICE_STATE_KEY, operations_service)
-    setattr(app.state, OPERATIONS_TICKET_SERVICE_STATE_KEY, operations_ticket_service)
-    setattr(app.state, OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY, operations_ticket_query_service)
-    setattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY, daily_operations_service)
+    setattr(
+        app.state,
+        OPERATIONS_SERVICE_STATE_KEY,
+        observed_operations_service(operations_service, observer),
+    )
+    setattr(
+        app.state,
+        OPERATIONS_TICKET_SERVICE_STATE_KEY,
+        observed_ticket_service(operations_ticket_service, observer),
+    )
+    setattr(
+        app.state,
+        OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY,
+        observed_ticket_query_service(operations_ticket_query_service, observer),
+    )
+    setattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY,
+            observed_daily_operations_service(daily_operations_service, observer))  # fmt: skip
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -139,7 +171,10 @@ def create_app(
             OPERATIONS_TICKET_COMMANDS_PATH,
         ),
     )
-    # Added after AgentOS so it is the outermost middleware: every response, including
-    # AgentOS auth rejections, carries the server-generated X-Request-ID.
+    # Product HTTP observability sits just inside the request context: it observes only
+    # the exact Product paths (never AgentOS) and sees the server-generated request id.
+    app.add_middleware(ProductObservabilityMiddleware, observability=observer)
+    # Added last so it is the outermost middleware: every response, including AgentOS
+    # auth rejections, carries the server-generated X-Request-ID.
     app.add_middleware(RequestContextMiddleware, resolver=resolver)
     return app

@@ -118,7 +118,8 @@ def test_agent_explains_the_daily_report_read_only(settings, runtime_settings, m
     ((workflow, _, wf_kwargs),) = observed.calls["DailyOperationsWorkflow"]
     ((_, _, agent_kwargs),) = observed.calls["build_operations_agent"]
     assert agent_kwargs["daily_operations"] is workflow
-    assert getattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY) is workflow
+    # (The HTTP slot holds the Product observability decorator of that same workflow.)
+    assert getattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY).delegate is workflow
     # ... on the same adapter and gate as the agent, and only one mock system.
     ((adapter, _, _),) = observed.calls["MockCommerceAdapter"]
     ((gate, _, _),) = observed.calls["GovernanceGate"]
