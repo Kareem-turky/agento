@@ -46,6 +46,8 @@ jobs:
           uv run alembic check
       - name: Tests (unit + PostgreSQL integration)
         run: uv run pytest
+      - name: MVP business acceptance (mock/test only, no external calls)
+        run: uv run pytest tests/acceptance/test_mvp_operations_e2e.py -q
       - name: Boot API and check health and AgentOS auth
         run: |
           uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api \

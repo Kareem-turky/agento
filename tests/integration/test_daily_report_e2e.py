@@ -15,6 +15,7 @@ from app.bootstrap import create_deployment_app
 from app.composition import local_mock
 from app.integrations.commerce.mock import EntityType, canonical_id
 from tests.conftest import TEST_OS_SECURITY_KEY
+from tests.support.canonical_mock import REPORT_NEVER_CONTAINS
 from tests.support.product_auth import TEST_PRODUCT_KEY, deployment_settings, principal
 from tests.support.scripted_tool_model import ScriptedToolModel
 
@@ -32,12 +33,7 @@ PRODUCT = {"Authorization": f"Bearer {TEST_PRODUCT_KEY}"}
 LIMITED = {"Authorization": f"Bearer {NO_STORES_KEY}"}
 OS = {"Authorization": f"Bearer {TEST_OS_SECURITY_KEY}"}
 PARAMS = {"store_id": SOUTH, "business_date": "2026-03-03"}
-NEVER_IN_REPORT = (
-    "ord_2002", "ship_507", "delivery_failed", "SE000507", "Sample Express", "cus_005",
-    "Robin Demo", "shop_south", "South Storefront", "acct_demo", COMPANY, "deploy-report-actor",
-    "source_status", "external_refs", "tracking", "courier", "customer", "company_id",
-    "actor_id", "permissions", "role", "@", "mock-commerce",
-)  # fmt: skip
+NEVER_IN_REPORT = (*REPORT_NEVER_CONTAINS, "deploy-report-actor")
 
 
 class Observed:

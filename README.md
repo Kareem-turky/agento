@@ -8,8 +8,13 @@ A general-purpose, installable **AI operating layer for commerce and business op
 It is designed to be deployed by any business and connected to arbitrary external business
 systems through API contracts and adapters.
 
-This repository currently contains the **technical foundation only**: no business features,
-no production agents, no integrations.
+This repository contains the **MVP technical baseline**: the Product Core, the Operations
+Agent, the deterministic Daily Operations Report, explicit governed operational ticket
+writes with durable commands and audit, the Operations Console, and isolated deployment
+packaging. Business behaviour runs only against the deterministic mock business backend:
+**a real production business-system backend or integration is not implemented yet**, so
+staging and production intentionally fail closed (see
+[MVP release acceptance](#mvp-release-acceptance)).
 
 Core principles:
 
@@ -19,6 +24,18 @@ Core principles:
   permissions, approvals, verification, audit, integration contracts, and so on.
 - **No company-specific business logic belongs in the core.** Per-installation behaviour is
   supplied as configuration (`company/`) and adapters (`integrations/adapters/`).
+
+### MVP release acceptance
+
+The current state is an **MVP technical release candidate** (MVP acceptance baseline). See
+[`docs/MVP_RELEASE_ACCEPTANCE.md`](docs/MVP_RELEASE_ACCEPTANCE.md). The acceptance gate
+(`tests/acceptance/`, run in CI) proves the first MVP use case end to end through
+Product HTTP, against the deterministic mock backend and a real PostgreSQL, with no
+external calls. That use case is the daily operations report, read-only Agent analysis,
+and an explicit, idempotent, durable and audited operational ticket, with authentication,
+store scoping and command privacy. **Production business use is still blocked**: no real
+business-system API contract and no reviewed real backend adapter exist yet, so
+staging and production refuse to start.
 
 ## 2. High-level architecture
 
@@ -1560,6 +1577,7 @@ npm run dev                   # http://localhost:3000 — the Operations Console
 uv run pytest                 # unit tests; integration tests skip without a database
 # With PostgreSQL running and migrated (section 7), run everything including integration tests:
 set -a; . ./.env; set +a; uv run alembic upgrade head; uv run pytest
+uv run pytest tests/acceptance/test_mvp_operations_e2e.py -q   # MVP business acceptance
 uv run ruff check . && uv run ruff format --check .
 cd apps/web && npm run typecheck && npm run build && npm run smoke:proxy
 docker compose --env-file .env.example config --quiet   # validate compose
@@ -1571,7 +1589,7 @@ CI (`.github/workflows/ci.yml`) runs the backend, frontend and infrastructure ch
 every pull request and on pushes to `main`. The backend job starts PostgreSQL via Compose,
 runs the product migrations and proves they are reversible on the disposable database
 (`alembic upgrade head`, `downgrade -1`, `upgrade head`), runs the integration tests (they must
-not skip in CI), then boots the API with a CI-only
+not skip in CI) and then the MVP business acceptance gate on its own, then boots the API with a CI-only
 `OS_SECURITY_KEY` and checks `/health` and AgentOS authentication. The infrastructure job starts
 PostgreSQL/Redis and verifies they are healthy and that pgvector is enabled; it then builds
 the API and Web images and runs the deployment smoke test
