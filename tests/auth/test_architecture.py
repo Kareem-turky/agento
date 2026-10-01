@@ -101,11 +101,14 @@ def test_no_auth_persistence_jwt_sessions_or_key_management() -> None:
                  "session_cookie", "api_keys_table", "/api-keys", "/auth/"):  # fmt: skip
         assert word not in source, word
     migrations = sorted((ROOT / "apps" / "api" / "migrations" / "versions").glob("*.py"))
-    # Product migrations only (no auth tables): exactly these two files.
+    # Product migrations only (no auth tables): exactly these files.
     assert [m.name for m in migrations] == [
         "0001_create_write_commands.py",
         "0002_create_audit_events.py",
+        "0003_create_native_commerce_store.py",
     ]
+    for word in ("api_key", "credential", "session", "token", "password", "jwt"):
+        assert word not in migrations[-1].read_text().lower(), word
 
 
 def test_no_raw_secret_in_env_example_or_docs() -> None:

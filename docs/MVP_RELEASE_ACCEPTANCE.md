@@ -103,6 +103,28 @@ This is the intended, fail-closed state, not a defect. It ends only when a real 
 is supplied and a reviewed adapter for it passes the commerce integration conformance
 harness.
 
+## Native Commerce Store foundation (not yet usable for business data)
+
+A Product-owned persistent **Native Commerce Store foundation** now exists. It is made
+up of:
+
+- migration `0003`, with nine `product.commerce_*` tables;
+- `PostgresCommerceStore`;
+- `NativeCommerceAdapter`, which passes the generic commerce conformance harness on real
+  PostgreSQL.
+
+It does **not** lift the blocker above:
+
+- It is **not** exposed through any ingestion API. There is no way to load real
+  business data yet.
+- It is **not** registered as a selectable deployment business backend. The registry
+  is still `{"mock"}`.
+- The Operations runtime and the local demo still use their current backend behaviour
+  and the deterministic mock data.
+
+Production business use stays blocked until a supported business-data ingestion and
+onboarding path exists.
+
 ## Local runnable demo is available
 
 **Production business use is blocked because there is no real backend.** Separately, a

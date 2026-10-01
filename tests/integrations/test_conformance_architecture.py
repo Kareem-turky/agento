@@ -64,7 +64,14 @@ def test_importing_the_harness_loads_no_adapter() -> None:
     assert result.stdout.strip() == "[]"
 
 
-def test_no_provider_adapter_beyond_the_mock_exists() -> None:
+def test_no_provider_adapter_beyond_the_mock_and_native_exists() -> None:
+    """Exactly two adapter packages, and neither is an external provider:
+
+    - ``mock``: a deterministic SIMULATION of an external commerce system (dev/tests);
+    - ``native``: the Product-owned adapter over the Product's OWN PostgreSQL store.
+
+    No real provider adapter exists; adding one is a reviewed, deliberate change here.
+    """
     commerce = ROOT / "apps" / "api" / "app" / "integrations" / "commerce"
     packages = sorted(p.name for p in commerce.iterdir() if p.is_dir() and p.name != "__pycache__")
-    assert packages == ["mock"]  # no real provider adapter exists (none may be guessed)
+    assert packages == ["mock", "native"]

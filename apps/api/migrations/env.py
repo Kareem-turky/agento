@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, pool, text
 
 from app.config import Settings
 from app.persistence.audit import audit_events  # noqa: F401 - registers the table
+from app.persistence.commerce import COMMERCE_TABLES  # noqa: F401 - registers the tables
 from app.persistence.database import PRODUCT_SCHEMA, product_metadata
 from app.persistence.write_commands import write_commands  # noqa: F401 - registers the table
 

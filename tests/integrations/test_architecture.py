@@ -24,7 +24,10 @@ ALLOWED_IMPORT_ROOTS = {
     "__future__", "collections", "dataclasses", "datetime", "decimal", "enum", "typing",
     "uuid", "pydantic",
 }  # fmt: skip
-ALLOWED_APP_MODULES = ("app.integrations", "app.commerce.domain")
+# ``app.commerce.store``: the Product-owned commerce store PORT (pure Protocol and
+# errors) through which the native adapter reads the Product's own data (Task 031). The
+# adapter never imports the persistence implementation, SQLAlchemy or a driver.
+ALLOWED_APP_MODULES = ("app.integrations", "app.commerce.domain", "app.commerce.store")
 FORBIDDEN_NAMES = {
     "shopify", "woocommerce", "woo", "fulfly", "agno", "fastapi", "sqlalchemy", "httpx",
     "eval", "exec", "environ", "getenv", "importlib", "actor", "policy", "permission",
@@ -92,11 +95,13 @@ def test_code_never_names_providers_frameworks_env_or_policy() -> None:
 
 def test_importing_integrations_loads_no_framework_runtime_or_network_client() -> None:
     code = (
-        "import sys; import app.integrations.commerce, app.integrations.commerce.mock; "
+        "import sys; import app.integrations.commerce, app.integrations.commerce.mock, "
+        "app.integrations.commerce.native; "
         "roots = {m.split('.')[0] for m in sys.modules}; "
         f"bad = sorted(roots & set({FORBIDDEN_MODULES!r})); "
         "bad += sorted(m for m in sys.modules if m.startswith("
-        "('app.context', 'app.runtime', 'app.core', 'app.agents', 'app.company', 'app.main'))); "
+        "('app.context', 'app.runtime', 'app.core', 'app.agents', 'app.company', 'app.main', "
+        "'app.persistence', 'app.composition'))); "
         "print(bad)"
     )
     result = subprocess.run(  # noqa: S603 - fixed interpreter and code
@@ -107,3 +112,14 @@ def test_importing_integrations_loads_no_framework_runtime_or_network_client() -
         cwd=INTEGRATIONS_DIR.parents[1],
     )
     assert result.stdout.strip() == "[]"
+
+
+def test_native_adapter_reads_only_through_the_store_port() -> None:
+    native = INTEGRATIONS_DIR / "commerce" / "native"
+    files = sorted(native.glob("*.py"))
+    assert {p.name for p in files} == {"__init__.py", "adapter.py"}
+    for path in files:
+        for module in imports(path):
+            forbidden = ("app.persistence", "app.integrations.commerce.mock",
+                         "app.composition", "app.config")  # fmt: skip
+            assert not module.startswith(forbidden), (path.name, module)

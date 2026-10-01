@@ -136,18 +136,24 @@ def test_no_module_global_engine_or_session() -> None:
 
 def test_no_real_provider_backend_was_invented() -> None:
     # Task 022: the allowlist holds exactly the mock plugin; no real backend exists yet.
+    # Task 031 adds the Product-owned ``native`` adapter package, deliberately NOT
+    # registered as a deployment backend (selection is a later task).
     from app.composition import build_default_backend_registry
 
     assert build_default_backend_registry().backend_ids == frozenset({"mock"})
     assert sorted(p.name for p in (APP_DIR / "integrations" / "commerce").iterdir()
-                  if p.is_dir() and p.name != "__pycache__") == ["mock"]  # fmt: skip
+                  if p.is_dir() and p.name != "__pycache__") == ["mock", "native"]  # fmt: skip
+    composition = "\n".join(p.read_text() for p in sorted((APP_DIR / "composition").glob("*.py")))
+    assert "native" not in composition.lower()
 
 
 def test_no_new_product_migration() -> None:
+    # Composition (Task 022) added none; Task 031 adds exactly the native commerce store.
     versions = ROOT / "apps" / "api" / "migrations" / "versions"
     assert sorted(p.name for p in versions.glob("*.py")) == [
         "0001_create_write_commands.py",
         "0002_create_audit_events.py",
+        "0003_create_native_commerce_store.py",
     ]
 
 

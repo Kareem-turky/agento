@@ -573,6 +573,48 @@ provider authentication, rate limits, retries, pagination, idempotency and
 operational security still require provider-specific review. No real provider
 adapter exists yet; none is added without its authoritative API contract.
 
+#### Native Commerce Store (Product-owned canonical data, foundation only)
+
+The Product owns its canonical commerce data. External systems (shops, ERP/OMS) are
+optional integrations, not the Product core. Task 031 adds the persistent foundation.
+
+- **Tables:** migration `0003` adds nine `product.commerce_*` tables (companies, stores,
+  products, variants, warehouses, orders, order items, shipments, inventory levels).
+  - They have explicit foreign keys and no cascading deletes.
+  - The canonical UUID is the identity.
+  - Decimals are stored as exact text, never through a float or a fixed scale.
+  - External references are stored as deterministic JSONB, and `source_status` is
+    persisted.
+  - Inventory may be negative.
+- **`PostgresCommerceStore`** (`app/persistence/commerce.py`) provides canonical upserts.
+  - `upsert_order` replaces the order's whole item collection atomically, preserving
+    its order.
+  - Reads are strict: every row is rebuilt through the canonical models, and invalid
+    stored data fails closed.
+  - Each call is one short transaction.
+  - Errors are Product-owned (`app/commerce/store.py`). SQL, URLs and stored values
+    never leak.
+- **`NativeCommerceAdapter`** (`app/integrations/commerce/native/`, descriptor
+  `native-commerce`, read capabilities only) implements the existing
+  `CommerceIntegration` contract over that store.
+  - It reads through the `CommerceStoreReader` port, so the integration layer never
+    imports persistence.
+  - Filters, ordering and `limit` run in SQL. A shipment's store is its parent order's
+    store, and that is enforced in SQL.
+  - Order items load in one batched query.
+  - It passes the same generic conformance harness as the mock, against real
+    PostgreSQL. That includes corrupted rows and an unavailable store.
+
+What it is **not** yet:
+
+- It has **no ingestion API** (planned for Task 032).
+- It is **not registered as a selectable deployment business backend**: the registry is
+  still exactly `{"mock"}` (selection is planned for Task 033).
+- The Operations runtime keeps its configured backend behaviour.
+- The Task 030 local demo still uses the deterministic mock data.
+- Production business use stays blocked until a supported business-data ingestion and
+  onboarding path exists.
+
 #### Secure outbound integration transport (for future provider adapters)
 
 `app/integrations/http/` is the Product-owned outbound HTTP transport that future,
