@@ -87,7 +87,26 @@ the canonical acceptance business date (`2026-03-03`) and follows up on a proble
 - Product API-key authentication, store scoping and command privacy.
 - The packaged installation (API and Web images, four-service Compose template), as
   proven by the deployment smoke.
-- The Operations Console builds and its BFF forwards only the five Product routes.
+- The Operations Console builds, and its BFF forwards only fixed Product routes: the five
+  above plus the integration-management routes below.
+
+## Integration foundation (framework only)
+
+A provider-agnostic integration foundation exists (see
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md)):
+
+- a static integration catalog;
+- connection metadata in PostgreSQL (migration `0003`);
+- a filesystem secret store (`APP_INTEGRATION_SECRETS_DIR`), whose protection depends on
+  volume security (no KMS/HSM);
+- a governed, audited Connections API (`/api/v1/integrations/*`);
+- the `/settings/integrations` UI.
+
+It is proven with deterministic fake definitions and drivers only. **No real provider is
+connected or installed**: the production catalog is empty. Business data is not
+ingested or mirrored, and source systems remain the source of truth. OAuth is not
+implemented. The demo still uses mock data. This foundation does **not** lift the
+production blocker below.
 
 ## Production business use is still blocked
 

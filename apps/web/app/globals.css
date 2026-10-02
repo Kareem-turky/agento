@@ -212,3 +212,16 @@ input:disabled, textarea:disabled { background: var(--surface-muted); color: var
 .table--compact th, .table--compact td { padding: 0.35rem 0.6rem; }
 .nowrap .mono { overflow-wrap: normal; white-space: nowrap; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ----- integrations (settings) ---------------------------------------------------- */
+
+.topbar__nav a { color: #d6e2f5; font-weight: 600; font-size: 0.9rem; }
+.integration-list { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.integration-list__item {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; background: var(--surface-muted);
+}
+.integration-list__body { min-width: 0; flex: 1 1 22rem; overflow-wrap: anywhere; }
+.integration-list__title { margin: 0; }
+.integration-list__body .field__hint { display: block; margin: 0.15rem 0 0; }
+.field--checkbox { flex-direction: column; }

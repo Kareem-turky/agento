@@ -21,6 +21,7 @@ from app import __version__
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
+from app.integration_management.service import IntegrationManagementService
 from app.observability import (
     ProductObservability,
     ProductObservabilityMiddleware,
@@ -32,6 +33,8 @@ from app.observability.services import (
     observed_ticket_query_service,
     observed_ticket_service,
 )
+from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
+from app.routes.integrations import router as integrations_router
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
 from app.routes.operations import router as operations_router
 from app.routes.operations_reports import (
@@ -66,6 +69,7 @@ def create_app(
     daily_operations_service: DailyOperationsReportService | None = None,
     shutdown_callback: Callable[[], Awaitable[None]] | None = None,
     observability: ProductObservability | None = None,
+    integration_service: IntegrationManagementService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -84,7 +88,11 @@ def create_app(
     OpenTelemetry API traces and metrics; nothing is exported over the network). By
     default the Product's own implementation is used; tests inject recording or failing
     ones. Composed services are wrapped in their observed decorators generically; a
-    missing service stays missing."""
+    missing service stays missing.
+
+    ``integration_service`` is the provider-independent integration management (Task
+    031), composed independently of the business backend; without one the integration
+    routes answer 503."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -140,6 +148,7 @@ def create_app(
     )
     setattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY,
             observed_daily_operations_service(daily_operations_service, observer))  # fmt: skip
+    setattr(app.state, INTEGRATIONS_SERVICE_STATE_KEY, integration_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -157,6 +166,7 @@ def create_app(
     app.include_router(operations_router)
     app.include_router(operations_reports_router)
     app.include_router(operations_tickets_router)
+    app.include_router(integrations_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -169,6 +179,7 @@ def create_app(
             OPERATIONS_DAILY_REPORT_PATH,
             OPERATIONS_TICKETS_PATH,
             OPERATIONS_TICKET_COMMANDS_PATH,
+            *INTEGRATIONS_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

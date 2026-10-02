@@ -22,14 +22,18 @@ npm run typecheck && npm run build && npm run smoke:proxy
 | Daily report | `GET /api/v1/operations/reports/daily` | The deterministic backend report as returned: business date, timezone, generated time, metrics, every status count (zeros included), findings in API order, `findings_total`/truncation and coverage (inventory is shown as **not analyzed**). A blank date is omitted so the Product decides the store’s business day. |
 | Operational ticket | `POST /api/v1/operations/tickets` | Explicit write (title ≤ 160, description ≤ 4000), never through the Agent. |
 | Command status | `GET /api/v1/operations/tickets/commands` | Manual lookup (auto-filled from the latest ticket), no polling. A 404 is only “Ticket command not found”. |
+| Settings → Integrations (`/settings/integrations`) | `/api/v1/integrations/*` | Generic Connections UI: installed integration types grouped by category (this build installs none, and says so), connections with enabled state and last-known test result, a generic form (text/URL/boolean/write-only secret fields), Test, Enable/Disable, Edit settings, Replace credentials, Delete. Secret inputs are never pre-filled. See [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md). |
 
 ## Security model
 
-- **Same-origin proxy (BFF) only.** The browser calls five fixed routes and nothing else:
+- **Same-origin proxy (BFF) only.** The browser calls fixed routes and nothing else:
   `GET /api/product/health`, `POST /api/product/operations/runs`,
   `GET /api/product/operations/reports/daily`, `POST /api/product/operations/tickets`,
-  `GET /api/product/operations/tickets/commands`. Each maps to exactly one Product API
-  route (`lib/product-api/server.ts`). There is no catch-all route, no client-supplied
+  `GET /api/product/operations/tickets/commands`, and the integration-management routes
+  under `/api/product/integrations/` (`catalog`, `connections`, `connection`,
+  `connection/credentials`, `connection/test`, `connection/enable`,
+  `connection/disable`). Each exported method maps to exactly one Product API method and
+  path (`lib/product-api/server.ts`). There is no catch-all route, no client-supplied
   path or origin, and **AgentOS routes (`/agents`, `/info`, `/sessions`, …) are never
   proxied**.
 - **`PRODUCT_API_ORIGIN` is server-only** (never `NEXT_PUBLIC_*`) and must be a bare
@@ -38,7 +42,8 @@ npm run typecheck && npm run build && npm run smoke:proxy
 - The proxy forwards only `Authorization` (not for health) and, for ticket creation,
   `Idempotency-Key`, plus its own `Content-Type`. Browser cookies, `Host`,
   `X-Forwarded-*`, `X-Request-ID`, `Referer`, `Origin` and custom headers are dropped.
-  Only `store_id`/`business_date` (daily report) and `command_id` (command status) pass,
+  Only `store_id`/`business_date` (daily report), `command_id` (command status) and
+  `connection_id` (single-connection integration routes) pass,
   each at most once; any other or repeated query parameter is rejected with 422. Request bodies are capped at 16 KiB (413),
   responses at 1 MiB; redirects are never followed; only `Content-Type`,
   `Cache-Control: no-store` and the Product `X-Request-ID` are returned. Timeouts,

@@ -130,7 +130,7 @@ only. The API is not reachable from the host, so do not try to browse it directl
 - **Exposure.** Only the Web is published, on `127.0.0.1:${PRODUCT_WEB_PORT}`. The API is not published on the host: the
   API, and the AgentOS routes inside it (`/agents`, `/info`, `/sessions`, …), are
   reachable only from the private `product` network, and the Web BFF forwards only its
-  five fixed Product routes. **AgentOS must never be directly internet-exposed**; remote
+  fixed Product routes. **AgentOS must never be directly internet-exposed**; remote
   or public access requires a later, reviewed TLS / reverse-proxy design (not part of
   this template).
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { getHealth } from "../../lib/product-api/client";
 import type { ProductResult } from "../../lib/product-api/types";
@@ -84,6 +85,9 @@ export function Console() {
             <p className="topbar__subtitle">Store operations over the Product API</p>
           </div>
         </div>
+        <nav className="topbar__nav" aria-label="Pages">
+          <Link href="/settings/integrations">Integrations</Link>
+        </nav>
         <span className={`pill pill--${health}`} role="status">
           {health === "checking" ? "Checking API…" : health === "reachable" ? "API reachable" : "API unavailable"}
         </span>

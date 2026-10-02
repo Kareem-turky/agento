@@ -122,7 +122,14 @@ class Settings(BaseSettings):
     backend_config_dir: Path | None = None
     backend_secrets_dir: Path | None = None
 
-    @field_validator("backend_config_dir", "backend_secrets_dir", mode="before")
+    # Integration credentials (Task 031): the root directory of the filesystem
+    # integration secret store. No default path: unset means no secret storage, and
+    # connections that need credentials are refused (fail closed). Values never live in
+    # PostgreSQL; protection relies on this directory's deployment/volume security.
+    integration_secrets_dir: Path | None = None
+
+    @field_validator("backend_config_dir", "backend_secrets_dir", "integration_secrets_dir",
+                     mode="before")  # fmt: skip
     @classmethod
     def _blank_backend_dir_is_unset(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():

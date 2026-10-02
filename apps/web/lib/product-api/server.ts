@@ -16,13 +16,23 @@ export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
 export const UPSTREAM_TIMEOUT_MS = 120_000;
 
-/** The five exact Product API routes this BFF can reach. Nothing else. */
+/** The exact Product API routes (method + path) this BFF can reach. Nothing else. */
 export const UPSTREAM = {
   health: { method: "GET", path: "/health" },
   operationsRuns: { method: "POST", path: "/api/v1/operations/runs" },
   dailyReport: { method: "GET", path: "/api/v1/operations/reports/daily" },
   tickets: { method: "POST", path: "/api/v1/operations/tickets" },
   ticketCommands: { method: "GET", path: "/api/v1/operations/tickets/commands" },
+  integrationsCatalog: { method: "GET", path: "/api/v1/integrations/catalog" },
+  integrationConnections: { method: "GET", path: "/api/v1/integrations/connections" },
+  integrationConnectionCreate: { method: "POST", path: "/api/v1/integrations/connections" },
+  integrationConnection: { method: "GET", path: "/api/v1/integrations/connection" },
+  integrationConnectionUpdate: { method: "PUT", path: "/api/v1/integrations/connection" },
+  integrationConnectionDelete: { method: "DELETE", path: "/api/v1/integrations/connection" },
+  integrationCredentials: { method: "PUT", path: "/api/v1/integrations/connection/credentials" },
+  integrationTest: { method: "POST", path: "/api/v1/integrations/connection/test" },
+  integrationEnable: { method: "POST", path: "/api/v1/integrations/connection/enable" },
+  integrationDisable: { method: "POST", path: "/api/v1/integrations/connection/disable" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;
@@ -32,9 +42,9 @@ type ProxyOptions = {
   authorization: boolean;
   /** Forward exactly one Idempotency-Key (ticket creation only). */
   idempotencyKey?: boolean;
-  /** Query parameters allowed through, each at most once (GET routes). */
+  /** Query parameters allowed through, each at most once. */
   query?: readonly string[];
-  /** Forward the JSON request body (POST routes). */
+  /** Forward the JSON request body (POST/PUT routes). */
   body?: boolean;
 };
 

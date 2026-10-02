@@ -26,10 +26,12 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0002"]
+    assert script.get_heads() == ["0003"]
     (base,) = script.get_bases()
     assert base == "0001"
     assert script.get_revision("0002").down_revision == "0001"
+    assert script.get_revision("0003").down_revision == "0002"
+    assert [r.revision for r in script.walk_revisions()] == ["0003", "0002", "0001"]
 
 
 def alembic_config_for_scripts():
@@ -43,41 +45,66 @@ def alembic_config_for_scripts():
 def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine) -> None:
     config = alembic_config(migrated)
     agno_before = agno_snapshot(engine)
-    both = {"alembic_version", "write_commands", "audit_events"}
+    before = {"alembic_version", "write_commands", "audit_events"}
+    head = before | {"integration_connections"}
 
     command.upgrade(config, "head")
-    assert tables(engine, "product") == both
+    assert tables(engine, "product") == head
     with engine.connect() as connection:
         commands_before = connection.execute(
             sa.text("SELECT count(*) FROM product.write_commands")
         ).scalar_one()
+        audits_before = connection.execute(
+            sa.text("SELECT count(*) FROM product.audit_events")
+        ).scalar_one()
 
     command.downgrade(config, "-1")
-    # 0002 -> 0001 drops only audit_events: the schema, its version table and
-    # write_commands (with its rows) stay.
-    assert tables(engine, "product") == {"alembic_version", "write_commands"}
+    # 0003 -> 0002 drops only integration_connections (and its index/constraints): the
+    # schema, its version table, write_commands and audit_events (with their rows) stay.
+    assert tables(engine, "product") == before
     assert "product" in sa.inspect(engine).get_schema_names()
     with engine.connect() as connection:
         assert (
             connection.execute(sa.text("SELECT count(*) FROM product.write_commands")).scalar_one()
             == commands_before
         )
-        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
-        assert version.scalar_one() == "0001"
-
-    command.upgrade(config, "head")
-    assert tables(engine, "product") == both
-    with engine.connect() as connection:
+        assert (
+            connection.execute(sa.text("SELECT count(*) FROM product.audit_events")).scalar_one()
+            == audits_before
+        )
         version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
         assert version.scalar_one() == "0002"
+        leftover = connection.execute(sa.text(
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'product' "
+            "AND indexname LIKE '%integration%'")).scalar_one()  # fmt: skip
+        assert leftover == 0
+
+    command.upgrade(config, "head")
+    assert tables(engine, "product") == head
+    with engine.connect() as connection:
+        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
+        assert version.scalar_one() == "0003"
 
     # Agno's schema is byte-for-byte the same shape and holds no product table.
     assert agno_snapshot(engine) == agno_before
-    assert "write_commands" not in agno_before and "audit_events" not in agno_before
+    assert not head & set(agno_before)
 
 
 # SHA-256 of migration 0001 as merged in Task 013: it must never change.
 MIGRATION_0001_SHA256 = "66a1f14e4fcae5f6c17802cda7499591c9cb00693dbd5244cc3f464ea89297f2"
+
+
+# SHA-256 of migration 0002 as merged in Task 017: it must never change either.
+MIGRATION_0002_SHA256 = "b0512d7f743451349f22f77d5b7e079e37ce49c00cba77f05cbd1c861e449ca9"
+
+
+def test_migration_0002_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0002_create_audit_events.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0002_SHA256
 
 
 def test_migration_0001_is_byte_for_byte_unchanged() -> None:
@@ -115,3 +142,62 @@ def test_schema_constraints(migrated: str, engine: sa.Engine) -> None:
     assert columns["store_id"]["nullable"] is True
     assert columns["created_at"]["type"].timezone is True
     assert columns["updated_at"]["type"].timezone is True
+
+
+def test_migration_0003_vocabularies_match_the_contracts() -> None:
+    """0003 freezes the test-state vocabularies (it never imports app enums)."""
+    import ast
+    import importlib.util
+
+    from app.integration_management import ConnectionErrorCode, ConnectionTestResult
+    from tests.integration.product_db import ROOT
+
+    versions = ROOT / "apps" / "api" / "migrations" / "versions"
+    path = versions / "0003_create_integration_connections.py"
+    spec = importlib.util.spec_from_file_location("migration_0003", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.TEST_RESULTS == tuple(r.value for r in ConnectionTestResult)
+    assert module.TEST_ERRORS == tuple(c.value for c in ConnectionErrorCode)
+    imported = [
+        node.module if isinstance(node, ast.ImportFrom) else alias.name
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    ]
+    assert not [m for m in imported if (m or "").split(".")[0] == "app"]
+
+
+def test_integration_connections_schema(migrated: str, engine: sa.Engine) -> None:
+    inspector = sa.inspect(engine)
+    columns = {c["name"]: c for c in inspector.get_columns("integration_connections",
+                                                           schema="product")}  # fmt: skip
+    assert set(columns) == {
+        "connection_id", "company_id", "integration_id", "display_name", "config",
+        "secret_fields", "enabled", "created_at", "updated_at", "last_tested_at",
+        "last_test_result", "last_test_error",
+    }  # fmt: skip
+    # Secret VALUES have no column: only the configured field NAMES.
+    for name in columns:
+        assert not any(word in name for word in ("password", "token", "credential", "value"))
+    assert inspector.get_pk_constraint("integration_connections", schema="product")[
+        "constrained_columns"] == ["connection_id"]  # fmt: skip
+    assert inspector.get_foreign_keys("integration_connections", schema="product") == []
+    indexes = [
+        (i["name"], i["column_names"])
+        for i in inspector.get_indexes("integration_connections", schema="product")
+    ]
+    assert indexes == [("ix_integration_connections_company_id_created_at",
+                        ["company_id", "created_at", "connection_id"])]  # fmt: skip
+    checks = {c["name"] for c in inspector.get_check_constraints("integration_connections",
+                                                                  schema="product")}  # fmt: skip
+    assert checks == {
+        "ck_integration_connections_integration_id", "ck_integration_connections_display_name",
+        "ck_integration_connections_config", "ck_integration_connections_secret_fields",
+        "ck_integration_connections_last_test_result",
+        "ck_integration_connections_last_test_error", "ck_integration_connections_tested_at",
+        "ck_integration_connections_test_error",
+    }  # fmt: skip
+    # No business-data (commerce mirror) table exists in the Product schema.
+    assert not [t for t in inspector.get_table_names(schema="product") if "commerce" in t]
