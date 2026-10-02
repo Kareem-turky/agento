@@ -5,6 +5,7 @@ VALUE ever reaches PostgreSQL. Deterministic fake definitions/drivers; no networ
 
 import socket
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -21,7 +22,9 @@ pytestmark = pytest.mark.integration
 
 MANAGER_KEY = "test-integrations-pg-manager-key-" + "m" * 20
 SECRET = "test-only-pg-credential-" + "q" * 24  # noqa: S105 - test fixture
-COMPANY = "test-integrations-company"
+# The audit trail is append-only and shared across tests and runs: each application gets
+# its own company so assertions only ever see this test's events.
+COMPANY_PREFIX = "test-integrations-company-"
 CONNECTIONS = "/api/v1/integrations/connections"
 CONNECTION = "/api/v1/integrations/connection"
 TEST = "/api/v1/integrations/connection/test"
@@ -45,9 +48,14 @@ def secrets_dir(tmp_path: Path) -> Path:
     return path
 
 
-def app_for(settings, secrets_dir: Path):
+@pytest.fixture
+def company() -> str:
+    return COMPANY_PREFIX + uuid4().hex
+
+
+def app_for(settings, secrets_dir: Path, company: str):
     configured = deployment_settings(
-        settings, "test", company_id=COMPANY, integration_secrets_dir=secrets_dir,
+        settings, "test", company_id=company, integration_secrets_dir=secrets_dir,
         product_api_keys=(principal(MANAGER_KEY, key_id="pg-manager", actor_id="pg-manager",
                           permissions=frozenset({"integrations.read", "integrations.manage"})),),
     )  # fmt: skip
@@ -75,9 +83,9 @@ def product_dump(engine: sa.Engine) -> str:
 
 
 def test_lifecycle_persists_metadata_audits_and_never_stores_secret_values(
-    settings, migrated, engine: sa.Engine, secrets_dir: Path
+    settings, migrated, engine: sa.Engine, secrets_dir: Path, company: str
 ) -> None:
-    with TestClient(app_for(settings, secrets_dir)) as client:
+    with TestClient(app_for(settings, secrets_dir, company)) as client:
         created = client.post(CONNECTIONS, headers=HEADERS, json={
             "integration_id": "example-commerce", "display_name": "PG store",
             "config": {"store_url": "https://pg.example.test"},
@@ -102,10 +110,10 @@ def test_lifecycle_persists_metadata_audits_and_never_stores_secret_values(
         audit = connection.execute(sa.text(
             "SELECT action_name, event_type, actor_id, company_id, store_id, verification_code "
             "FROM product.audit_events WHERE action_name LIKE 'integrations.%' "
-            "AND company_id = :c ORDER BY occurred_at, event_id"), {"c": COMPANY}
+            "AND company_id = :c ORDER BY occurred_at, event_id"), {"c": company}
         ).mappings().all()  # fmt: skip
     assert dict(row) == {
-        "company_id": COMPANY, "integration_id": "example-commerce",
+        "company_id": company, "integration_id": "example-commerce",
         "config": {"store_url": "https://pg.example.test"}, "secret_fields": ["api_key"],
         "enabled": True, "last_test_result": "success", "last_test_error": None, "tested": True,
     }  # fmt: skip
@@ -127,14 +135,14 @@ def test_lifecycle_persists_metadata_audits_and_never_stores_secret_values(
 
 
 def test_metadata_survives_a_new_application_and_delete_removes_secrets(
-    settings, migrated, engine: sa.Engine, secrets_dir: Path
+    settings, migrated, engine: sa.Engine, secrets_dir: Path, company: str
 ) -> None:
-    with TestClient(app_for(settings, secrets_dir)) as client:
+    with TestClient(app_for(settings, secrets_dir, company)) as client:
         cid = client.post(CONNECTIONS, headers=HEADERS, json={
             "integration_id": "example-commerce", "display_name": "Durable",
             "config": {"store_url": "https://durable.example.test"},
             "credentials": {"api_key": SECRET}}).json()["connection"]["connection_id"]  # fmt: skip
-    with TestClient(app_for(settings, secrets_dir)) as client:  # a brand-new application
+    with TestClient(app_for(settings, secrets_dir, company)) as client:  # a brand-new application
         again = client.get(CONNECTION, params={"connection_id": cid}, headers=HEADERS)
         assert again.status_code == 200
         assert again.json()["connection"]["configured_secret_fields"] == ["api_key"]
@@ -148,9 +156,9 @@ def test_metadata_survives_a_new_application_and_delete_removes_secrets(
 
 
 def test_corrupted_metadata_fails_closed_without_leaking(
-    settings, migrated, engine: sa.Engine, secrets_dir: Path
+    settings, migrated, engine: sa.Engine, secrets_dir: Path, company: str
 ) -> None:
-    with TestClient(app_for(settings, secrets_dir)) as client:
+    with TestClient(app_for(settings, secrets_dir, company)) as client:
         cid = client.post(CONNECTIONS, headers=HEADERS, json={
             "integration_id": "example-messaging", "display_name": "Corrupt me",
             "config": {"mode": "fine"}}).json()["connection"]["connection_id"]  # fmt: skip
