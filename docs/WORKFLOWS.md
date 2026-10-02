@@ -328,7 +328,13 @@ and no JSON or code editor. The unified Control Center comes later (Task 038).
 
 ## Observability and logs
 
-Through the existing Product observability, the platform records two operations:
+A deployed application has exactly **one** Product observability. `app.bootstrap` chooses
+it once (the Product default, or an explicitly injected one) and hands the same instance
+to the business composition, which gives it to the `WorkflowEngine`, and to
+`create_app`. The engine never builds an observability of its own: without one, Workflow
+runs are simply not observed.
+
+Through that observability, the platform records two operations:
 
 - `workflow.run`: one per execute or resume;
 - `workflow.step_attempt`: one per attempt.

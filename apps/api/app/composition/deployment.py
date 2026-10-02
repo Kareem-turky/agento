@@ -40,6 +40,7 @@ from app.composition.contracts import (
 )
 from app.composition.registry import BusinessBackendRegistry, build_default_backend_registry
 from app.config import DEVELOPMENT_ENVIRONMENTS, DISABLED_BUSINESS_BACKEND, Settings
+from app.observability.contracts import ProductObservability
 
 
 def build_deployment_composition(
@@ -48,6 +49,7 @@ def build_deployment_composition(
     model: Model | None = None,
     registry: BusinessBackendRegistry | None = None,
     input_source: BusinessBackendInputSource | None = None,
+    observability: ProductObservability | None = None,
 ) -> DeploymentComposition:
     """Compose the Product services for ``settings.business_backend``.
 
@@ -56,6 +58,8 @@ def build_deployment_composition(
     direct composition tests only (the operator-facing factory never exposes it).
     ``input_source`` likewise defaults to the filesystem source over
     ``APP_BACKEND_CONFIG_DIR``/``APP_BACKEND_SECRETS_DIR`` and is a test seam only.
+    ``observability`` is the application's one Product observability, handed unchanged to
+    the selected builder (``app.bootstrap`` passes the instance it gives ``create_app``).
     """
     backend_id = settings.business_backend
     if backend_id == DISABLED_BUSINESS_BACKEND:
@@ -74,7 +78,8 @@ def build_deployment_composition(
         # Checked before the builder runs: nothing is imported, built or modelled.
         raise DeploymentCompositionError(BACKEND_NOT_ALLOWED)
     inputs = _resolve_inputs(settings, registration.input_spec, input_source)
-    composition = registration.builder(settings, model=model, inputs=inputs)
+    composition = registration.builder(settings, model=model, inputs=inputs,
+                                       observability=observability)  # fmt: skip
     if not isinstance(composition, DeploymentComposition):
         raise DeploymentCompositionError(INVALID_COMPOSITION)
     return composition

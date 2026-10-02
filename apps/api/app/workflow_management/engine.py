@@ -49,7 +49,6 @@ from pydantic import BaseModel, ValidationError
 
 from app.context.models import ActorContext, RequestContext
 from app.governance import ActionScope
-from app.observability import build_default_observability
 from app.observability.contracts import (
     ObservationDetails,
     ObservationOutcome,
@@ -236,11 +235,10 @@ class WorkflowEngine:
         self._catalog = catalog
         self._registry = registry
         self._repository = repository
-        # Default: the Product observability (OpenTelemetry API + structured logs; nothing
-        # is exported unless the deployment configures an SDK itself).
-        self._observability = (
-            observability if observability is not None else build_default_observability()
-        )
+        # The application's ONE Product observability, injected by the composition root
+        # (``app.bootstrap`` passes the instance ``create_app`` uses). ``None``: Workflow
+        # runs are not observed. The engine never builds an observability of its own.
+        self._observability = observability
         self._clock = clock
         self._new_id = new_id
         self._margin = timedelta(seconds=lease_margin_seconds)

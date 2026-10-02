@@ -12,7 +12,8 @@
       -> WriteCommandTicketService / WriteCommandTicketQueryService(store)
     DailyOperationsWorkflow(commerce=<the SAME MockCommerceAdapter>, gate=<the SAME gate>)
       -> WorkflowRuntimeRegistry(catalog, [daily_report_registration(<that workflow>)])
-      -> WorkflowEngine(catalog, registry, PostgresWorkflowRunRepository(sessions))
+      -> WorkflowEngine(catalog, registry, PostgresWorkflowRunRepository(sessions),
+                        observability=<the application's ONE Product observability>)
       -> WorkflowBackedDailyOperationsReportService(engine)
       -> the HTTP report service AND the agent's report tool (one instance): every report
          is a durable ``operations.daily_report`` Workflow run (Task 034)
@@ -53,6 +54,7 @@ from app.integrations.commerce.mock import (
     MockTicketDesk,
     MockTicketingAdapter,
 )
+from app.observability.contracts import ProductObservability
 from app.operations import OPERATIONS_ACTIONS, CreateOperationalTicketHandler
 from app.persistence import (
     PostgresAuditSink,
@@ -100,7 +102,10 @@ class _EngineLifecycle:
 
 
 def build_local_mock_composition(
-    settings: Settings, *, model: Model | None = None
+    settings: Settings,
+    *,
+    model: Model | None = None,
+    observability: ProductObservability | None = None,
 ) -> DeploymentComposition:
     # Defense in depth: the registry already refused other environments.
     if settings.environment not in DEVELOPMENT_ENVIRONMENTS:
@@ -137,7 +142,10 @@ def build_local_mock_composition(
         # still computes every report; the platform only orchestrates it.
         report = DailyOperationsWorkflow(commerce=commerce, gate=gate)
         bindings = WorkflowRuntimeRegistry(workflows, [daily_report_registration(report)])
-        platform = WorkflowEngine(workflows, bindings, PostgresWorkflowRunRepository(sessions))
+        # Workflow runs are observed through the SAME Product observability the
+        # application uses (never a second default instance).
+        platform = WorkflowEngine(workflows, bindings, PostgresWorkflowRunRepository(sessions),
+                                  observability=observability)  # fmt: skip
         daily_operations = WorkflowBackedDailyOperationsReportService(platform)
         agent = build_operations_agent(
             operations_model, commerce=commerce, gate=gate, coordinator=coordinator,

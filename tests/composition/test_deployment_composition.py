@@ -26,6 +26,7 @@ from app.composition import (
 from app.config import Settings
 from app.operations import OPERATIONS_ACTIONS
 from tests.conftest import TEST_OS_SECURITY_KEY
+from tests.support.observability import RecordingObservability
 from tests.support.product_auth import TEST_PRODUCT_KEY, deployment_settings, principal
 from tests.support.scripted_tool_model import ScriptedToolModel
 
@@ -189,7 +190,8 @@ def test_provider_credentials_never_appear_in_model_errors(settings, monkeypatch
 @pytest.mark.parametrize("environment", ["local", "test"])
 def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, environment):
     s, model = mock_settings(settings, environment), ScriptedToolModel()
-    composition = build_deployment_composition(s, model=model)
+    observer = RecordingObservability()  # the application's ONE Product observability
+    composition = build_deployment_composition(s, model=model, observability=observer)
 
     engine, args, _ = built.one("create_product_engine")
     assert args == (str(s.database_url),)
@@ -235,7 +237,8 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     runs, args, _ = built.one("PostgresWorkflowRunRepository")
     assert args == (sessions,)
     platform, args, kwargs = built.one("WorkflowEngine")
-    assert args == (catalog, bindings, runs) and kwargs == {}
+    # Workflow runs are observed by the application's observability, never a default one.
+    assert args == (catalog, bindings, runs) and kwargs == {"observability": observer}
     daily, args, _ = built.one("WorkflowBackedDailyOperationsReportService")
     assert args == (platform,)
 
@@ -369,8 +372,11 @@ def test_bootstrap_takes_no_auth_or_service_overrides() -> None:
     import inspect
 
     params = inspect.signature(create_deployment_app).parameters
-    assert list(params) == ["settings", "runtime_settings", "model"]
+    # Task 034: plus the application's ONE Product observability (never an auth or
+    # service override).
+    assert list(params) == ["settings", "runtime_settings", "model", "observability"]
     assert params["model"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["observability"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
 # ----- low-level factory -------------------------------------------------------------

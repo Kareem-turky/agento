@@ -56,7 +56,31 @@ def test_only_the_observability_package_imports_opentelemetry() -> None:
 )  # fmt: skip
 def test_business_layers_do_not_depend_on_observability(layer: str) -> None:
     for path in modules(APP / layer):
-        assert not any(n.startswith("app.observability") for n in imported(path)), path
+        names = imported(path)
+        if layer == "composition":
+            # Task 034: the composition boundary CARRIES the application's one Product
+            # observability (chosen by app.bootstrap) to the services it composes. It may
+            # name only the contract, never the implementation, and never build one.
+            names = names - {"app.observability.contracts"}
+            source = path.read_text()
+            for forbidden in ("build_default_observability", "OpenTelemetryObservability"):
+                assert forbidden not in source, (path, forbidden)
+        assert not any(n.startswith("app.observability") for n in names), path
+
+
+def test_one_product_observability_per_application() -> None:
+    """Task 034: app.bootstrap chooses the observability ONCE and hands the same instance
+    to the business composition and to create_app; the Workflow engine never builds one."""
+    bootstrap = (APP / "bootstrap.py").read_text()
+    assert bootstrap.count("build_default_observability()") == 1
+    assert "build_deployment_composition(settings, model=model, observability=observer)" in (
+        bootstrap
+    )
+    assert "observability=observer," in bootstrap
+    engine = APP / "workflow_management" / "engine.py"
+    assert "build_default_observability" not in engine.read_text()
+    assert "app.observability" not in imported(engine)  # the contracts module only
+    assert "app.observability.contracts" in imported(engine)
 
 
 def test_observability_depends_on_no_backend_provider_model_or_storage() -> None:
@@ -117,8 +141,10 @@ def test_no_observability_configuration_or_credentials_exist() -> None:
 
 
 def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option() -> None:
+    # Task 034: the operator factory chooses the ONE Product observability of the
+    # application (keyword-only, default: the Product's own) for create_app AND Workflows.
     assert list(inspect.signature(create_deployment_app).parameters) == [
-        "settings", "runtime_settings", "model",
+        "settings", "runtime_settings", "model", "observability",
     ]  # fmt: skip
     parameters = inspect.signature(create_app).parameters
     # Task 031 appended ``integration_service`` after ``observability``; Task 032
