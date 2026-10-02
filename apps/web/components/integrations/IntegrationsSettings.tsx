@@ -112,6 +112,7 @@ export function IntegrationsSettings() {
         <nav className="topbar__nav" aria-label="Pages">
           <Link href="/">Operations Console</Link>
           <Link href="/settings/agents">Agents</Link>
+          <Link href="/settings/workflows">Workflows</Link>
         </nav>
       </header>
 

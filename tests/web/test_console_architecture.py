@@ -47,6 +47,11 @@ EXPECTED_ROUTES = {
     "agent-management/skill/route.ts": {"GET": "skillDetail"},
     "agent-management/tasks/route.ts": {"GET": "tasksCatalog"},
     "agent-management/task/route.ts": {"GET": "taskDetail"},
+    # Task 034: read-only Workflow inspection (there is no run endpoint to proxy).
+    "workflows/catalog/route.ts": {"GET": "workflowsCatalog"},
+    "workflows/workflow/route.ts": {"GET": "workflowDetail"},
+    "workflows/runs/route.ts": {"GET": "workflowRuns"},
+    "workflows/run/route.ts": {"GET": "workflowRun"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -75,6 +80,10 @@ UPSTREAM_PATHS = {
     "skillDetail": ("GET", "/api/v1/skills/skill"),
     "tasksCatalog": ("GET", "/api/v1/tasks/catalog"),
     "taskDetail": ("GET", "/api/v1/tasks/task"),
+    "workflowsCatalog": ("GET", "/api/v1/workflows/catalog"),
+    "workflowDetail": ("GET", "/api/v1/workflows/workflow"),
+    "workflowRuns": ("GET", "/api/v1/workflows/runs"),
+    "workflowRun": ("GET", "/api/v1/workflows/run"),
 }
 
 
@@ -222,7 +231,9 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "testIntegrationConnection", "setIntegrationConnectionEnabled",
                         "deleteIntegrationConnection", "getAgentCatalog", "getAgent",
                         "listAgents", "setAgentEnabled", "resetAgentConfiguration",
-                        "getSkillCatalog", "getSkill", "getTaskCatalog", "getTask"}  # fmt: skip
+                        "getSkillCatalog", "getSkill", "getTaskCatalog", "getTask",
+                        "getWorkflowCatalog", "getWorkflow", "listWorkflowRuns",
+                        "getWorkflowRun"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -484,6 +495,7 @@ def test_console_links_to_integrations_settings() -> None:
     console = component("Console.tsx")
     assert '<Link href="/settings/integrations">Integrations</Link>' in console
     assert '<Link href="/settings/agents">Agents</Link>' in console
+    assert '<Link href="/settings/workflows">Workflows</Link>' in console
     settings = code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")
     assert '<Link href="/">Operations Console</Link>' in settings
 
@@ -540,3 +552,38 @@ def test_skills_and_tasks_are_read_only_in_the_ui() -> None:
         assert control not in section, control
     assert "Task limits are contract metadata" in section
     assert "acceptance_criteria" in section and "allowed_write_actions" in section
+
+
+# ----- Task 034: the read-only Workflows settings page -----------------------------------------
+
+
+WORKFLOWS_UI = WEB / "components" / "workflows"
+
+
+def test_workflows_page_is_read_only_inspection() -> None:
+    page = code(WEB / "app" / "settings" / "workflows" / "page.tsx")
+    assert "<WorkflowsSettings />" in page
+    assert {p.name for p in WORKFLOWS_UI.glob("*.tsx")} == {"WorkflowsSettings.tsx"}
+    settings = code(WORKFLOWS_UI / "WorkflowsSettings.tsx")
+    calls = set(re.findall(r"\b(getWorkflowCatalog|getWorkflow|listWorkflowRuns|getWorkflowRun"
+                           r")\(", settings))  # fmt: skip
+    assert calls == {"getWorkflowCatalog", "listWorkflowRuns", "getWorkflowRun"}
+    assert "fetch(" not in settings and "/api/" not in settings
+    # No Run / Retry / Resume control, no input form, no JSON or code editor.
+    inputs = re.findall(r"<input[^>]*>", settings, flags=re.S)
+    assert len(inputs) == 1 and 'name="product-api-key"' in inputs[0]
+    assert "<textarea" not in settings and "contentEditable" not in settings
+    assert "<select" not in settings
+    assert settings.count("<button") == 4  # Use key, Disconnect, Refresh, Details
+    for label in ("Use key", "Disconnect and clear session", "Refresh", "Details"):
+        assert label in settings, label
+    labels = sorted(t.strip() for t in re.findall(r">\s*([^<>{}]+?)\s*</button>", settings))
+    assert labels == ["Details", "Disconnect and clear session", "Refresh", "Use key"]
+    for word in ("resume", "retry(", "execute", "runWorkflow", "dangerouslySetInnerHTML",
+                 "innerHTML", "JSON.parse", "checkpoint\"]", "input_state"):  # fmt: skip
+        assert word.lower() not in settings.lower(), word
+    for forbidden in ("setInterval", "setTimeout", "while ("):
+        assert forbidden not in settings, forbidden
+    assert "useState<string | null>(null)" in settings  # the key lives in memory only
+    for path in ("Console.tsx",):
+        assert '<Link href="/settings/workflows">Workflows</Link>' in component(path)

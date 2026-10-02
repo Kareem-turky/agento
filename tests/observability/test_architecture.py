@@ -122,11 +122,13 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
     ]  # fmt: skip
     parameters = inspect.signature(create_app).parameters
     # Task 031 appended ``integration_service`` after ``observability``; Task 032
-    # appended ``agent_service``.
-    assert list(parameters)[-3:] == ["observability", "integration_service", "agent_service"]
+    # appended ``agent_service`` and Task 034 ``workflow_service``.
+    assert list(parameters)[-4:] == ["observability", "integration_service", "agent_service",
+                                     "workflow_service"]  # fmt: skip
     assert parameters["observability"].default is None
     assert parameters["integration_service"].default is None
     assert parameters["agent_service"].default is None
+    assert parameters["workflow_service"].default is None
 
 
 def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
@@ -138,7 +140,8 @@ def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
         (method, path) for method, path in effective_api_routes(app.routes)
         if (path.startswith("/api/")
             and not path.startswith(("/api/v1/integrations/", "/api/v1/agents",
-                                     "/api/v1/skills/", "/api/v1/tasks/")))
+                                     "/api/v1/skills/", "/api/v1/tasks/",
+                                     "/api/v1/workflows/")))
         or path == "/health"
     )  # fmt: skip
     assert product == [

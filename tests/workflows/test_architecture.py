@@ -15,8 +15,10 @@ SERVICE = APP_DIR / "services" / "operations_reports.py"
 WORKFLOW_ALLOWED_APP = (
     "app.workflows", "app.context.models", "app.governance", "app.commerce.domain",
     "app.integrations.commerce", "app.operations.actions", "app.services.operations_reports",
+    # Task 034: the Product Workflow Platform (the daily report's Step handler/adapter).
+    "app.workflow_management",
 )  # fmt: skip
-WORKFLOW_ALLOWED_ROOTS = {"collections", "datetime", "uuid", "zoneinfo", "typing"}
+WORKFLOW_ALLOWED_ROOTS = {"collections", "datetime", "uuid", "zoneinfo", "typing", "pydantic"}
 
 
 def imports(path: Path) -> list[str]:

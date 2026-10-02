@@ -10,6 +10,10 @@ not a new security boundary and grants nothing. The authoritative boundaries rem
 trusted run context, GovernanceGate, ExecutionCoordinator and the Agent's runtime
 tool-call limit. A Task claiming a write never authorizes that write.
 
+A Task MAY name the deterministic Product Workflow that performs it (``workflow_id``,
+Task 034). Only a Task that really runs as a Product Workflow names one; the reference is
+validated against the Workflow catalog when the capability graph is built.
+
 ``ProductTaskCatalog`` is the immutable, explicit list of Tasks in this build.
 """
 
@@ -99,6 +103,7 @@ class TaskDefinition(BaseModel):
     inputs: tuple[TaskInputField, ...] = ()
     acceptance_criteria: tuple[TaskAcceptanceCriterion, ...] = Field(min_length=1)
     limits: TaskLimits
+    workflow_id: DottedId | None = None
 
     @model_validator(mode="after")
     def _unique(self) -> "TaskDefinition":
@@ -197,6 +202,8 @@ ANALYZE_DAILY_TASK = TaskDefinition(
                                          "reconstructed from individual tools."),
     ),
     limits=_read_only(2),
+    # The daily report is the deterministic Product Workflow operations.daily_report.
+    workflow_id="operations.daily_report",
 )  # fmt: skip
 ESCALATE_ISSUE_TASK = TaskDefinition(
     task_id="operations.escalate_issue",

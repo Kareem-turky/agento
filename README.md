@@ -113,6 +113,31 @@ inspected at `/api/v1/skills/*` and `/api/v1/tasks/*` (`agents.read`, read-only)
 **Settings → Agents**. Task limits are contract metadata, not a security boundary. There
 is no Task executor yet. See [`docs/SKILLS_AND_TASKS.md`](docs/SKILLS_AND_TASKS.md).
 
+### Product Workflows: deterministic Workflow Platform
+
+Deterministic processes are **Product Workflows**, not model reasoning. The Workflow
+Platform (`app/workflow_management/`) runs immutable, statically registered Workflow
+definitions as ordered Steps. Every run is durable (migration `0005`:
+`product.workflow_runs`, `product.workflow_step_runs` and the append-only
+`product.workflow_events`). The platform provides:
+
+- bounded retries, real timeouts and mandatory verification;
+- safe, size-bounded checkpoints;
+- crash/restart recovery that never re-runs a completed Step;
+- compare-and-set execution claims;
+- write safety: a governed write runs once, only through the `ExecutionCoordinator`, and
+  stops as `requires_human` or `awaiting_approval` instead of retrying.
+
+The only installed Workflow is **`operations.daily_report`**. The existing daily report
+(`GET /api/v1/operations/reports/daily` and the Operations Agent's report tool) now runs
+as this Workflow around the unchanged `DailyOperationsWorkflow`. The report itself is
+never persisted.
+
+The platform makes no model call and has no public run endpoint and no background
+worker. The catalog and run history are read-only at `/api/v1/workflows/*`
+(`workflows.read`) and on **Settings → Workflows** (`/settings/workflows`). See
+[`docs/WORKFLOWS.md`](docs/WORKFLOWS.md).
+
 ## 2. High-level architecture
 
 ```

@@ -91,6 +91,7 @@ export function AgentsSettings() {
         <nav className="topbar__nav" aria-label="Pages">
           <Link href="/">Operations Console</Link>
           <Link href="/settings/integrations">Integrations</Link>
+          <Link href="/settings/workflows">Workflows</Link>
         </nav>
       </header>
 
@@ -329,6 +330,12 @@ function AgentCapabilities({ definition, skills, tasks }: {
                   ? ` · writes ${limits.allowed_write_actions.join(", ")}${limits.requires_explicit_write_intent ? " (explicit write intent required)" : ""}`
                   : ""}
               </span>
+              {task.workflow_id ? (
+                <span className="field__hint capabilities__line">
+                  Performed by the deterministic Product Workflow <Mono>{task.workflow_id}</Mono>
+                  {" "}(<Link href="/settings/workflows">Workflows</Link>)
+                </span>
+              ) : null}
               <details className="manifest">
                 <summary>Acceptance criteria ({task.acceptance_criteria.length})</summary>
                 <ul className="manifest__tools">

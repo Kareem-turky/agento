@@ -17,6 +17,11 @@ from app.persistence.database import PRODUCT_SCHEMA, product_metadata
 from app.persistence.integration_connections import (  # noqa: F401 - registers the table
     integration_connections,
 )
+from app.persistence.workflow_runs import (  # noqa: F401 - registers the tables
+    workflow_events,
+    workflow_runs,
+    workflow_step_runs,
+)
 from app.persistence.write_commands import write_commands  # noqa: F401 - registers the table
 
 VERSION_TABLE = "alembic_version"

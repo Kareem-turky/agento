@@ -21,6 +21,10 @@ import type {
   TaskResponse,
   TicketCommandStatusResponse,
   TicketCreateResponse,
+  WorkflowCatalogResponse,
+  WorkflowResponse,
+  WorkflowRunListResponse,
+  WorkflowRunResponse,
 } from "./types";
 
 const PATHS = {
@@ -46,6 +50,10 @@ const PATHS = {
   skillDetail: "/api/product/agent-management/skill",
   taskCatalog: "/api/product/agent-management/tasks",
   taskDetail: "/api/product/agent-management/task",
+  workflowCatalog: "/api/product/workflows/catalog",
+  workflowDetail: "/api/product/workflows/workflow",
+  workflowRuns: "/api/product/workflows/runs",
+  workflowRun: "/api/product/workflows/run",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -208,7 +216,7 @@ const isTask = (v: unknown): boolean => {
   return (
     isString(v.task_id) && isString(v.name) && isString(v.description) && isString(v.category) &&
     isString(v.lifecycle) && isStringArray(v.skill_ids) && isStringArray(v.agent_ids) &&
-    Array.isArray(v.inputs) &&
+    isNullableString(v.workflow_id) && Array.isArray(v.inputs) &&
     v.inputs.every((f) => isObject(f) && isString(f.name) && isString(f.label) && isString(f.kind) &&
       typeof f.required === "boolean" && isString(f.description) &&
       (f.max_length === null || isNumber(f.max_length))) &&
@@ -230,6 +238,46 @@ const isTaskCatalog: Guard<TaskCatalogResponse> = (v): v is TaskCatalogResponse 
 
 const isTaskResponse: Guard<TaskResponse> = (v): v is TaskResponse =>
   isObject(v) && isString(v.request_id) && isTask(v.task);
+
+const isNullableNumber = (v: unknown): v is number | null => v === null || isNumber(v);
+
+const isWorkflow = (v: unknown): boolean =>
+  isObject(v) && isString(v.workflow_id) && isString(v.name) && isString(v.description) &&
+  isString(v.category) && isNumber(v.version) && isString(v.lifecycle) &&
+  Array.isArray(v.inputs) &&
+  v.inputs.every((f) => isObject(f) && isString(f.name) && isString(f.label) && isString(f.kind) &&
+    typeof f.required === "boolean" && isString(f.description)) &&
+  Array.isArray(v.steps) &&
+  v.steps.every((s) => isObject(s) && isString(s.step_id) && isString(s.name) &&
+    isString(s.description) && isString(s.handler_id) && isString(s.side_effect) &&
+    isNumber(s.timeout_seconds) && isNumber(s.max_attempts) && isString(s.checkpoint_policy));
+
+const isWorkflowRun = (v: unknown): boolean =>
+  isObject(v) && isString(v.run_id) && isString(v.workflow_id) && isNumber(v.workflow_version) &&
+  isString(v.request_id) && isString(v.status) && isNullableString(v.current_step_id) &&
+  isNullableString(v.failure_code) && isNumber(v.attempt_count) && isString(v.created_at) &&
+  isString(v.updated_at) && isNullableString(v.completed_at);
+
+const isWorkflowCatalog: Guard<WorkflowCatalogResponse> = (v): v is WorkflowCatalogResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.workflows) && v.workflows.every(isWorkflow);
+
+const isWorkflowResponse: Guard<WorkflowResponse> = (v): v is WorkflowResponse =>
+  isObject(v) && isString(v.request_id) && isWorkflow(v.workflow);
+
+const isWorkflowRunList: Guard<WorkflowRunListResponse> = (v): v is WorkflowRunListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.runs) && v.runs.every(isWorkflowRun);
+
+const isWorkflowRunResponse: Guard<WorkflowRunResponse> = (v): v is WorkflowRunResponse =>
+  isObject(v) && isString(v.request_id) && isWorkflowRun(v.run) &&
+  Array.isArray(v.attempts) &&
+  v.attempts.every((a) => isObject(a) && isString(a.step_id) && isNumber(a.attempt) &&
+    isString(a.handler_id) && isString(a.status) && isNullableString(a.failure_code) &&
+    isNullableString(a.verification_code) && isString(a.started_at) &&
+    isNullableString(a.completed_at)) &&
+  Array.isArray(v.events) &&
+  v.events.every((e) => isObject(e) && isNumber(e.sequence) && isString(e.event_type) &&
+    isNullableString(e.step_id) && isNullableNumber(e.attempt) && isNullableString(e.status) &&
+    isNullableString(e.failure_code) && isString(e.occurred_at));
 
 // ----- the Product functions ---------------------------------------------------------------
 
@@ -432,6 +480,27 @@ export function getTaskCatalog(apiKey: string): Promise<ProductResult<TaskCatalo
 export function getTask(apiKey: string, taskId: string): Promise<ProductResult<TaskResponse>> {
   const path = `${PATHS.taskDetail}?${new URLSearchParams({ task_id: taskId }).toString()}`;
   return send(path, { method: "GET", headers: authorized(apiKey) }, isTaskResponse);
+}
+
+// ----- Product Workflows (read-only inspection; there is no run endpoint) --------------------
+
+export function getWorkflowCatalog(apiKey: string): Promise<ProductResult<WorkflowCatalogResponse>> {
+  return send(PATHS.workflowCatalog, { method: "GET", headers: authorized(apiKey) }, isWorkflowCatalog);
+}
+
+export function getWorkflow(apiKey: string, workflowId: string): Promise<ProductResult<WorkflowResponse>> {
+  const path = `${PATHS.workflowDetail}?${new URLSearchParams({ workflow_id: workflowId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isWorkflowResponse);
+}
+
+export function listWorkflowRuns(apiKey: string, limit = 25): Promise<ProductResult<WorkflowRunListResponse>> {
+  const path = `${PATHS.workflowRuns}?${new URLSearchParams({ limit: String(limit) }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isWorkflowRunList);
+}
+
+export function getWorkflowRun(apiKey: string, runId: string): Promise<ProductResult<WorkflowRunResponse>> {
+  const path = `${PATHS.workflowRun}?${new URLSearchParams({ run_id: runId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isWorkflowRunResponse);
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

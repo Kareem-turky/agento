@@ -17,7 +17,8 @@ PRODUCTION_FILES = sorted(APP_DIR.rglob("*.py")) + sorted(
     (ROOT / "apps" / "api" / "migrations").rglob("*.py")
 )
 
-ALLOWED_ROOTS = {"__future__", "collections", "hmac", "typing", "uuid", "pydantic", "sqlalchemy"}
+ALLOWED_ROOTS = {"__future__", "collections", "datetime", "hmac", "typing", "uuid", "pydantic",
+                 "sqlalchemy"}  # fmt: skip
 # The command store contracts, the audit event contract PostgresAuditSink persists, and
 # the contract vocabularies its CHECK constraints are derived from (pure models/enums).
 # Task 031: the integration connection METADATA contract only (never the secret store,
@@ -25,7 +26,10 @@ ALLOWED_ROOTS = {"__future__", "collections", "hmac", "typing", "uuid", "pydanti
 ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                "app.execution.models", "app.governance.policy", "app.context.models",
                "app.integration_management.connections",
-               "app.agent_management.configuration")  # fmt: skip
+               "app.agent_management.configuration",
+               # Task 034: the Workflow CONTROL-state contract, records and vocabularies.
+               "app.workflow_management.contracts", "app.workflow_management.records",
+               "app.workflow_management.state")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -137,9 +141,11 @@ def test_no_business_data_mirror_tables() -> None:
     from app.persistence import product_metadata
 
     names = set(product_metadata.tables)
+    # Task 034: Workflow execution CONTROL state only (no definition, no business data).
     assert names == {"product.write_commands", "product.audit_events",
                      "product.integration_connections",
-                     "product.agent_configurations"}  # fmt: skip
+                     "product.agent_configurations", "product.workflow_runs",
+                     "product.workflow_step_runs", "product.workflow_events"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

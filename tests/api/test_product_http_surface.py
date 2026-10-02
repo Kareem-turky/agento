@@ -74,8 +74,14 @@ CAPABILITY_ROUTES = {
     ("GET", "/api/v1/tasks/catalog"),
     ("GET", "/api/v1/tasks/task"),
 }
+WORKFLOW_ROUTES = {
+    ("GET", "/api/v1/workflows/catalog"),
+    ("GET", "/api/v1/workflows/workflow"),
+    ("GET", "/api/v1/workflows/runs"),
+    ("GET", "/api/v1/workflows/run"),
+}
 MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
-                       "/api/v1/tasks/")  # fmt: skip
+                       "/api/v1/tasks/", "/api/v1/workflows/")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -95,6 +101,9 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     # Task 033: Skill/Task inspection is exactly these READ-ONLY routes.
     capability = ("/api/v1/skills/", "/api/v1/tasks/")
     assert {(m, p) for m, p in routes if p.startswith(capability)} == CAPABILITY_ROUTES
+    # Task 034: Workflow inspection is exactly these READ-ONLY routes (no run endpoint).
+    workflows = {(m, p) for m, p in routes if p.startswith("/api/v1/workflows")}
+    assert workflows == WORKFLOW_ROUTES
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),

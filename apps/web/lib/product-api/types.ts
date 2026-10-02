@@ -254,9 +254,88 @@ export type TaskView = {
   acceptance_criteria: AcceptanceCriterionView[];
   limits: TaskLimitsView;
   agent_ids: string[];
+  /** The deterministic Product Workflow that performs this Task (null: none). */
+  workflow_id: string | null;
 };
 
 export type SkillCatalogResponse = { request_id: string; skills: SkillView[] };
 export type SkillResponse = { request_id: string; skill: SkillView };
 export type TaskCatalogResponse = { request_id: string; tasks: TaskView[] };
 export type TaskResponse = { request_id: string; task: TaskView };
+
+// ----- Product Workflows (Task 034; read-only inspection) ------------------------------------
+
+export type WorkflowInputFieldView = {
+  name: string;
+  label: string;
+  kind: string;
+  required: boolean;
+  description: string;
+};
+
+export type WorkflowStepView = {
+  step_id: string;
+  name: string;
+  description: string;
+  handler_id: string;
+  side_effect: string; // read_only | governed_write
+  timeout_seconds: number;
+  max_attempts: number;
+  checkpoint_policy: string; // none | state
+};
+
+export type WorkflowDefinitionView = {
+  workflow_id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: number;
+  lifecycle: string;
+  inputs: WorkflowInputFieldView[];
+  steps: WorkflowStepView[];
+};
+
+export type WorkflowRunView = {
+  run_id: string;
+  workflow_id: string;
+  workflow_version: number;
+  request_id: string;
+  status: string;
+  current_step_id: string | null;
+  failure_code: string | null;
+  attempt_count: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type StepAttemptView = {
+  step_id: string;
+  attempt: number;
+  handler_id: string;
+  status: string;
+  failure_code: string | null;
+  verification_code: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type WorkflowEventView = {
+  sequence: number;
+  event_type: string;
+  step_id: string | null;
+  attempt: number | null;
+  status: string | null;
+  failure_code: string | null;
+  occurred_at: string;
+};
+
+export type WorkflowCatalogResponse = { request_id: string; workflows: WorkflowDefinitionView[] };
+export type WorkflowResponse = { request_id: string; workflow: WorkflowDefinitionView };
+export type WorkflowRunListResponse = { request_id: string; runs: WorkflowRunView[] };
+export type WorkflowRunResponse = {
+  request_id: string;
+  run: WorkflowRunView;
+  attempts: StepAttemptView[];
+  events: WorkflowEventView[];
+};

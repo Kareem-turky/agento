@@ -42,10 +42,16 @@ def test_operations_agent_tools_and_workflow_are_unchanged() -> None:
 
 
 def test_no_task_033_migration() -> None:
+    # Task 033 added no migration; 0005 is Task 034's Workflow runtime state (no Skill or
+    # Task table).
     versions = sorted(p.name for p in (ROOT / "apps/api/migrations/versions").glob("*.py"))
     assert versions == ["0001_create_write_commands.py", "0002_create_audit_events.py",
                         "0003_create_integration_connections.py",
-                        "0004_create_agent_configurations.py"]  # fmt: skip
+                        "0004_create_agent_configurations.py",
+                        "0005_create_workflow_runtime.py"]  # fmt: skip
+    for name in versions:
+        text = (ROOT / "apps/api/migrations/versions" / name).read_text().lower()
+        assert "skill" not in text, name
 
 
 def test_skill_and_task_domain_is_pure_product_metadata() -> None:
@@ -54,9 +60,11 @@ def test_skill_and_task_domain_is_pure_product_metadata() -> None:
         source = (package / name).read_text()
         for module in imports(package / name):
             root = module.split(".")[0]
-            assert root in {"__future__", "collections", "dataclasses", "enum", "types",
-                            "typing", "pydantic"} or module.startswith(
-                "app.agent_management."), (name, module)  # fmt: skip
+            # Task 034: the graph also validates Task -> Workflow references against the
+            # static Product Workflow CATALOG (metadata only, never the engine).
+            allowed = ("app.agent_management.", "app.workflow_management.catalog")
+            stdlib = {"__future__", "collections", "dataclasses", "enum", "types", "typing"}
+            assert root in stdlib | {"pydantic"} or module.startswith(allowed), (name, module)
         for word in ("agno", "sqlalchemy", "importlib", "entry_points", "__import__", "exec(",
                      "eval(", "open(", "glob(", "requests", "httpx"):  # fmt: skip
             assert word not in source, (name, word)

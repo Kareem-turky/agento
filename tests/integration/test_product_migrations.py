@@ -26,13 +26,16 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0004"]
+    assert script.get_heads() == ["0005"]
     (base,) = script.get_bases()
     assert base == "0001"
     assert script.get_revision("0002").down_revision == "0001"
     assert script.get_revision("0003").down_revision == "0002"
     assert script.get_revision("0004").down_revision == "0003"
-    assert [r.revision for r in script.walk_revisions()] == ["0004", "0003", "0002", "0001"]
+    assert script.get_revision("0005").down_revision == "0004"
+    assert [r.revision for r in script.walk_revisions()] == [
+        "0005", "0004", "0003", "0002", "0001",
+    ]  # fmt: skip
 
 
 def alembic_config_for_scripts():
@@ -43,57 +46,64 @@ def alembic_config_for_scripts():
     return Config(str(ROOT / "alembic.ini"))
 
 
+PRESERVED = ("write_commands", "audit_events", "integration_connections", "agent_configurations")
+WORKFLOW_TABLES = {"workflow_runs", "workflow_step_runs", "workflow_events"}
+
+
+def _counts(engine: sa.Engine) -> dict[str, int]:
+    with engine.connect() as connection:
+        return {
+            table: connection.execute(
+                sa.text(f"SELECT count(*) FROM product.{table}")  # noqa: S608 - fixed names
+            ).scalar_one()
+            for table in PRESERVED
+        }
+
+
 def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine) -> None:
     config = alembic_config(migrated)
     agno_before = agno_snapshot(engine)
-    before = {"alembic_version", "write_commands", "audit_events", "integration_connections"}
-    head = before | {"agent_configurations"}
+    before = {"alembic_version", *PRESERVED}
+    head = before | WORKFLOW_TABLES
 
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
-    with engine.connect() as connection:
-        commands_before = connection.execute(
-            sa.text("SELECT count(*) FROM product.write_commands")
-        ).scalar_one()
-        audits_before = connection.execute(
-            sa.text("SELECT count(*) FROM product.audit_events")
-        ).scalar_one()
-        connections_before = connection.execute(
-            sa.text("SELECT count(*) FROM product.integration_connections")
-        ).scalar_one()
+    with engine.begin() as connection:  # a preserved row that must survive the downgrade
+        connection.execute(sa.text(
+            "INSERT INTO product.agent_configurations VALUES "
+            "('roundtrip-company', 'operations', false, now(), now()) ON CONFLICT DO NOTHING"
+        ))  # fmt: skip
+    rows_before = _counts(engine)
+    assert rows_before["agent_configurations"] >= 1
 
     command.downgrade(config, "-1")
-    # 0004 -> 0003 drops only agent_configurations: the schema, its version table,
-    # write_commands, audit_events and integration_connections (with their rows) stay.
+    # 0005 -> 0004 drops only the Workflow runtime state (tables, trigger, function): the
+    # schema, its version table and every other Product table (with its rows) stay.
     assert tables(engine, "product") == before
     assert "product" in sa.inspect(engine).get_schema_names()
-    with engine.connect() as connection:
-        assert (
-            connection.execute(sa.text("SELECT count(*) FROM product.write_commands")).scalar_one()
-            == commands_before
-        )
-        assert (
-            connection.execute(sa.text("SELECT count(*) FROM product.audit_events")).scalar_one()
-            == audits_before
-        )
-        assert (
-            connection.execute(
-                sa.text("SELECT count(*) FROM product.integration_connections")
-            ).scalar_one()
-            == connections_before
-        )
-        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
-        assert version.scalar_one() == "0003"
-        leftover = connection.execute(sa.text(
-            "SELECT count(*) FROM pg_constraint WHERE conname LIKE '%agent_configurations%'"
-        )).scalar_one()  # fmt: skip
-        assert leftover == 0
-
-    command.upgrade(config, "head")
-    assert tables(engine, "product") == head
+    assert _counts(engine) == rows_before
     with engine.connect() as connection:
         version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
         assert version.scalar_one() == "0004"
+        leftover = connection.execute(sa.text(
+            "SELECT count(*) FROM pg_constraint WHERE conname LIKE '%workflow%'"
+        )).scalar_one()  # fmt: skip
+        assert leftover == 0
+        functions = connection.execute(sa.text(
+            "SELECT count(*) FROM pg_proc WHERE proname = 'workflow_events_append_only'"
+        )).scalar_one()  # fmt: skip
+        assert functions == 0
+
+    command.upgrade(config, "head")
+    assert tables(engine, "product") == head
+    assert _counts(engine) == rows_before
+    with engine.connect() as connection:
+        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
+        assert version.scalar_one() == "0005"
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            "DELETE FROM product.agent_configurations WHERE company_id = 'roundtrip-company'"
+        ))  # fmt: skip
 
     # Agno's schema is byte-for-byte the same shape and holds no product table.
     assert agno_snapshot(engine) == agno_before
@@ -110,6 +120,20 @@ MIGRATION_0002_SHA256 = "b0512d7f743451349f22f77d5b7e079e37ce49c00cba77f05cbd1c8
 
 # SHA-256 of migration 0003 as merged in Task 031: it must never change either.
 MIGRATION_0003_SHA256 = "e5aab3a40f51835f8a3c4606eb521fa53fc772627cd05853551fc7d72fad4ad5"
+
+
+# SHA-256 of migration 0004 as merged in Task 032: it must never change either.
+MIGRATION_0004_SHA256 = "22436e6a09a51a5bc031f3eece6994ed5dd9c02eb8f650731c2f254675a01786"
+
+
+def test_migration_0004_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    versions = ROOT / "apps" / "api" / "migrations" / "versions"
+    path = versions / "0004_create_agent_configurations.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0004_SHA256
 
 
 def test_migration_0003_is_byte_for_byte_unchanged() -> None:
@@ -225,3 +249,64 @@ def test_integration_connections_schema(migrated: str, engine: sa.Engine) -> Non
     }  # fmt: skip
     # No business-data (commerce mirror) table exists in the Product schema.
     assert not [t for t in inspector.get_table_names(schema="product") if "commerce" in t]
+
+
+def test_migration_0005_vocabularies_match_the_contracts() -> None:
+    """0005 freezes the Workflow vocabularies (it never imports app enums)."""
+    import importlib.util
+
+    from app.workflow_management.records import MAX_CHECKPOINT_BYTES, MAX_INPUT_BYTES
+    from app.workflow_management.state import (
+        TERMINAL_RUN_STATUSES,
+        StepAttemptStatus,
+        VerificationCode,
+        WorkflowEventType,
+        WorkflowFailureCode,
+        WorkflowRunStatus,
+    )
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0005_create_workflow_runtime.py"
+    spec = importlib.util.spec_from_file_location("migration_0005", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.RUN_STATUSES == tuple(s.value for s in WorkflowRunStatus)
+    assert set(module.TERMINAL_RUN_STATUSES) == {s.value for s in TERMINAL_RUN_STATUSES}
+    assert module.STEP_STATUSES == tuple(s.value for s in StepAttemptStatus)
+    assert module.FAILURE_CODES == tuple(c.value for c in WorkflowFailureCode)
+    assert module.EVENT_TYPES == tuple(e.value for e in WorkflowEventType)
+    assert module.VERIFICATION_CODES == tuple(c.value for c in VerificationCode)
+    assert (module.MAX_INPUT_BYTES, module.MAX_CHECKPOINT_BYTES) == (
+        MAX_INPUT_BYTES,
+        MAX_CHECKPOINT_BYTES,
+    )
+
+
+def test_workflow_runtime_schema(migrated: str, engine: sa.Engine) -> None:
+    inspector = sa.inspect(engine)
+    pk = {t: inspector.get_pk_constraint(t, schema="product")["constrained_columns"]
+          for t in ("workflow_runs", "workflow_step_runs", "workflow_events")}  # fmt: skip
+    assert pk == {"workflow_runs": ["run_id"],
+                  "workflow_step_runs": ["run_id", "step_id", "attempt"],
+                  "workflow_events": ["run_id", "sequence"]}  # fmt: skip
+    for table in ("workflow_step_runs", "workflow_events"):
+        (fk,) = inspector.get_foreign_keys(table, schema="product")
+        assert (fk["referred_table"], fk["constrained_columns"]) == ("workflow_runs", ["run_id"])
+        assert not fk.get("options", {}).get("ondelete")  # never a cascading delete
+    indexes = [(i["name"], i["column_names"])
+               for i in inspector.get_indexes("workflow_runs", schema="product")]  # fmt: skip
+    assert indexes == [("ix_workflow_runs_company_id_created_at",
+                        ["company_id", "created_at", "run_id"])]  # fmt: skip
+    with engine.connect() as connection:
+        triggers = connection.execute(sa.text(
+            "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND "
+            "tgrelid = 'product.workflow_events'::regclass")).scalars().all()  # fmt: skip
+    assert triggers == ["trg_workflow_events_append_only"]
+    # No definition, Skill, Task or business-data table.
+    names = set(inspector.get_table_names(schema="product"))
+    assert not [
+        t
+        for t in names
+        if any(w in t for w in ("definition", "skill", "task", "commerce", "order", "report"))
+    ]

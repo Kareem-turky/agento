@@ -11,7 +11,8 @@ invalid reference:
 * a Task's write envelope matches its Skills' tools: allowed write actions are governed
   actions of WRITE tools of those Skills, declared by the manifest; a read-only Task uses
   no write tool;
-* a Task's tool-call limit never exceeds an owning Agent's manifest limit.
+* a Task's tool-call limit never exceeds an owning Agent's manifest limit;
+* a Task's Workflow reference (Task 034) names a Workflow of the Product Workflow catalog.
 
 The AgentManifest stays the single source of truth for tool access and actions.
 """
@@ -30,6 +31,7 @@ from app.agent_management.tasks import (
     TaskDefinition,
     build_default_task_catalog,
 )
+from app.workflow_management.catalog import ProductWorkflowCatalog, build_default_workflow_catalog
 
 
 class CapabilityGraphError(ValueError):
@@ -96,28 +98,44 @@ def _task_problems(agent, task: TaskDefinition, skills, installed, tools) -> lis
     return problems
 
 
+def _workflow_problems(tasks: ProductTaskCatalog, workflows: ProductWorkflowCatalog) -> list[str]:
+    return [f"task {task.task_id}: unknown workflow {task.workflow_id}"
+            for task in tasks.definitions()
+            if task.workflow_id is not None and task.workflow_id not in workflows]  # fmt: skip
+
+
 @dataclass(frozen=True, slots=True)
 class ProductCapabilityGraph:
     agents: ProductAgentCatalog
     skills: ProductSkillCatalog
     tasks: ProductTaskCatalog
+    workflows: ProductWorkflowCatalog
 
     @classmethod
     def build(
-        cls, agents: ProductAgentCatalog, skills: ProductSkillCatalog, tasks: ProductTaskCatalog
+        cls,
+        agents: ProductAgentCatalog,
+        skills: ProductSkillCatalog,
+        tasks: ProductTaskCatalog,
+        workflows: ProductWorkflowCatalog | None = None,
     ) -> "ProductCapabilityGraph":
+        """``workflows`` defaults to the static Product Workflow catalog of this build."""
+        if workflows is None:
+            workflows = build_default_workflow_catalog()
         if (
             not isinstance(agents, ProductAgentCatalog)
             or not isinstance(skills, ProductSkillCatalog)
             or not isinstance(tasks, ProductTaskCatalog)
+            or not isinstance(workflows, ProductWorkflowCatalog)
         ):
             raise TypeError("the capability graph is built from Product catalogs only")
         problems: list[str] = []
         for agent in agents.definitions():
             problems += _agent_problems(agent, skills, tasks)
+        problems += _workflow_problems(tasks, workflows)
         if problems:
             raise CapabilityGraphError(tuple(problems))
-        return cls(agents, skills, tasks)
+        return cls(agents, skills, tasks, workflows)
 
     def agents_with_skill(self, skill_id: str) -> tuple[str, ...]:
         return tuple(a.agent_id for a in self.agents.definitions() if skill_id in a.skill_ids)

@@ -107,9 +107,10 @@ def test_no_auth_persistence_jwt_sessions_or_key_management() -> None:
         "0002_create_audit_events.py",
         "0003_create_integration_connections.py",
         "0004_create_agent_configurations.py",
+        "0005_create_workflow_runtime.py",
     ]
-    # 0003 stores integration connection metadata and 0004 Agent enable/disable overrides:
-    # no user, key, session or token table.
+    # 0003 stores integration connection metadata, 0004 Agent enable/disable overrides and
+    # 0005 Workflow execution control state: no user, key, session or token table.
     for migration in migrations[2:]:
         for word in ("api_key", "session", "token", "password", "jwt"):
             assert word not in migration.read_text().lower(), (migration.name, word)

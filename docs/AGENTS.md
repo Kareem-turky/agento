@@ -154,7 +154,7 @@ closed, against the immutable Skill and Task catalogs; see
 
 ## Not in this task
 
-These are not implemented: a Task executor (the Workflow Platform comes later), knowledge, company operating
+These are not implemented: a Task executor, knowledge, company operating
 context, Agent-specific model policy, controlled tool bindings and new business Agents.
 The domain keeps these separate (definition, configuration, runtime) so they can be added
 later without rewriting Agent management. Agent-management routes are not yet part of

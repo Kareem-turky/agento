@@ -36,6 +36,9 @@ BUILT_NAMES = (
     "CreateOperationalTicketHandler", "ActionHandlerRegistry", "ExecutionCoordinator",
     "WriteCommandCoordinator", "build_operations_agent", "OperationsAgentRunner",
     "WriteCommandTicketService", "WriteCommandTicketQueryService", "DailyOperationsWorkflow",
+    # Task 034: the daily report runs as the operations.daily_report Product Workflow.
+    "build_default_workflow_catalog", "daily_report_registration", "WorkflowRuntimeRegistry",
+    "PostgresWorkflowRunRepository", "WorkflowEngine", "WorkflowBackedDailyOperationsReportService",
 )  # fmt: skip
 MOCK_PROVIDER_NAMES = ("MockCommerceSystem", "MockCommerceAdapter", "MockTicketDesk",
                        "MockTicketingAdapter")  # fmt: skip
@@ -222,11 +225,25 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     # The report reads through the SAME adapter and gate (no second mock system).
     assert args == () and kwargs == {"commerce": commerce, "gate": gate}
 
+    # Task 034: that workflow is the ONE Step of operations.daily_report, executed by the
+    # Workflow Platform over the SAME session factory (no second engine).
+    catalog, args, _ = built.one("build_default_workflow_catalog")
+    registration, args, _ = built.one("daily_report_registration")
+    assert args == (workflow,)
+    bindings, args, _ = built.one("WorkflowRuntimeRegistry")
+    assert args == (catalog, [registration])
+    runs, args, _ = built.one("PostgresWorkflowRunRepository")
+    assert args == (sessions,)
+    platform, args, kwargs = built.one("WorkflowEngine")
+    assert args == (catalog, bindings, runs) and kwargs == {}
+    daily, args, _ = built.one("WorkflowBackedDailyOperationsReportService")
+    assert args == (platform,)
+
     agent, args, kwargs = built.one("build_operations_agent")
     assert args == (model,)
-    # The agent's report tool is bound to that SAME workflow instance.
+    # The agent's report tool is bound to that SAME report service.
     assert kwargs == {"commerce": commerce, "gate": gate, "coordinator": coordinator,
-                      "daily_operations": workflow}  # fmt: skip
+                      "daily_operations": daily}  # fmt: skip
     runner, args, _ = built.one("OperationsAgentRunner")
     assert args == (agent,)
     ticket_service, args, _ = built.one("WriteCommandTicketService")
@@ -234,7 +251,7 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     query_service, args, _ = built.one("WriteCommandTicketQueryService")
     assert args == (store,)  # the same store is the durable reader
 
-    assert composition.daily_operations_service is workflow  # HTTP and agent share it
+    assert composition.daily_operations_service is daily  # HTTP and agent share it
 
     assert composition.operations_service is runner
     assert composition.operations_ticket_service is ticket_service

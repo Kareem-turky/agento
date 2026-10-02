@@ -43,6 +43,10 @@ export const UPSTREAM = {
   skillDetail: { method: "GET", path: "/api/v1/skills/skill" },
   tasksCatalog: { method: "GET", path: "/api/v1/tasks/catalog" },
   taskDetail: { method: "GET", path: "/api/v1/tasks/task" },
+  workflowsCatalog: { method: "GET", path: "/api/v1/workflows/catalog" },
+  workflowDetail: { method: "GET", path: "/api/v1/workflows/workflow" },
+  workflowRuns: { method: "GET", path: "/api/v1/workflows/runs" },
+  workflowRun: { method: "GET", path: "/api/v1/workflows/run" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;

@@ -123,6 +123,16 @@ write do not depend on it.
 There is no prompt editing, no Agent creation and no dynamic code loading, and this does
 not lift the production blocker below.
 
+## Product Workflows (deterministic Workflow Platform)
+
+The daily operations report now runs as the durable Product Workflow
+`operations.daily_report` (see [`docs/WORKFLOWS.md`](WORKFLOWS.md)). Its execution control
+state (run, Step attempts, append-only events) is stored by migration `0005`. The report
+itself is never persisted, and its HTTP contract and the Operations Agent's report tool are
+unchanged. The Workflow catalog and run history are read-only (`workflows.read`); there is
+no Workflow run endpoint and no background worker. This does not lift the production
+blocker below.
+
 ## Product Skills and Tasks (metadata only)
 
 The Operations Agent's capabilities are described by three Skills and three Tasks with
