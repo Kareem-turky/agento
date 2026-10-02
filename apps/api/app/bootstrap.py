@@ -18,9 +18,11 @@ management (Task 032, ``app.composition.agents``) is composed the same way: Agen
 enable/disable overrides in PostgreSQL, gating the Operations run boundary. Workflow
 inspection (Task 034, ``app.composition.workflows``) is composed the same way: read-only
 Workflow catalog and run history; Workflows themselves run inside the business backend.
+Product Knowledge (Task 035, ``app.composition.knowledge``) is composed the same way:
+the versioned operating model and Knowledge documents in PostgreSQL.
 
 ONE Product observability per application: chosen here, then handed to the business
-composition (the Workflow engine) and to ``create_app`` alike.
+composition (the Workflow engine), the Knowledge composition and ``create_app`` alike.
 
 The composition-owned resources are released when the application shuts down, or
 immediately if the application cannot be built. Startup never migrates the database.
@@ -35,6 +37,7 @@ from fastapi import FastAPI
 from app.composition import build_deployment_composition
 from app.composition.agents import build_agent_management
 from app.composition.integrations import build_integration_management
+from app.composition.knowledge import build_knowledge
 from app.composition.workflows import build_workflow_inspection
 from app.config import Settings, get_settings
 from app.main import create_app
@@ -76,6 +79,8 @@ def create_deployment_app(
         discards.append(agents.discard)
         workflows = build_workflow_inspection(settings)
         discards.append(workflows.discard)
+        knowledge = build_knowledge(settings, observability=observer)
+        discards.append(knowledge.discard)
     except BaseException:
         discard_all()
         raise
@@ -90,7 +95,10 @@ def create_deployment_app(
                 try:
                     await agents.close()
                 finally:
-                    await workflows.close()
+                    try:
+                        await workflows.close()
+                    finally:
+                        await knowledge.close()
 
     try:
         return create_app(
@@ -104,6 +112,7 @@ def create_deployment_app(
             integration_service=integrations.service,
             agent_service=agents.service,
             workflow_service=workflows.service,
+            knowledge_service=knowledge.service,
             shutdown_callback=close,
             observability=observer,
         )

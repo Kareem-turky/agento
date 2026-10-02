@@ -29,7 +29,13 @@ ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                "app.agent_management.configuration",
                # Task 034: the Workflow CONTROL-state contract, records and vocabularies.
                "app.workflow_management.contracts", "app.workflow_management.records",
-               "app.workflow_management.state")  # fmt: skip
+               "app.workflow_management.state",
+               # Task 035: the Knowledge repository contracts and pure domain modules
+               # (never the service, handlers, routes or composition).
+               "app.knowledge.contracts", "app.knowledge.documents",
+               "app.knowledge.chunking", "app.knowledge.context",
+               "app.knowledge.errors", "app.knowledge.limits",
+               "app.knowledge.operating_context")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -145,7 +151,13 @@ def test_no_business_data_mirror_tables() -> None:
     assert names == {"product.write_commands", "product.audit_events",
                      "product.integration_connections",
                      "product.agent_configurations", "product.workflow_runs",
-                     "product.workflow_step_runs", "product.workflow_events"}  # fmt: skip
+                     "product.workflow_step_runs", "product.workflow_events",
+                     # Task 035: Product-owned operating model and operator-authored
+                     # Knowledge text (never mirrored source-system business data).
+                     "product.company_operating_model_versions",
+                     "product.company_operating_model_current",
+                     "product.knowledge_documents", "product.knowledge_document_versions",
+                     "product.knowledge_chunks"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

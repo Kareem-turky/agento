@@ -133,6 +133,17 @@ unchanged. The Workflow catalog and run history are read-only (`workflows.read`)
 no Workflow run endpoint and no background worker. This does not lift the production
 blocker below.
 
+## Product Knowledge & company operating context
+
+The company operating model has versioned persistence, and operator-authored Knowledge
+documents can be retrieved with bounded, company-scoped full-text search (see
+[`docs/KNOWLEDGE.md`](KNOWLEDGE.md)). Both are stored by migration `0006`.
+
+Knowledge is untrusted reference data. No Agent consumes it in this release, and it grants
+no permission. Writes are governed and audited (`knowledge.manage`, never granted to an
+Agent actor), and a company with zero Knowledge rows works unchanged. This does not lift
+the production blocker below.
+
 ## Product Skills and Tasks (metadata only)
 
 The Operations Agent's capabilities are described by three Skills and three Tasks with

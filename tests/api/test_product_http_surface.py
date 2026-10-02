@@ -80,8 +80,21 @@ WORKFLOW_ROUTES = {
     ("GET", "/api/v1/workflows/runs"),
     ("GET", "/api/v1/workflows/run"),
 }
+KNOWLEDGE_ROUTES = {
+    ("GET", "/api/v1/knowledge/operating-model"),
+    ("GET", "/api/v1/knowledge/operating-model/versions"),
+    ("GET", "/api/v1/knowledge/operating-model/version"),
+    ("POST", "/api/v1/knowledge/operating-model/publish"),
+    ("GET", "/api/v1/knowledge/documents"),
+    ("GET", "/api/v1/knowledge/document"),
+    ("GET", "/api/v1/knowledge/document/version"),
+    ("POST", "/api/v1/knowledge/document/create"),
+    ("POST", "/api/v1/knowledge/document/version"),
+    ("POST", "/api/v1/knowledge/document/archive"),
+    ("POST", "/api/v1/knowledge/query"),
+}
 MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
-                       "/api/v1/tasks/", "/api/v1/workflows/")  # fmt: skip
+                       "/api/v1/tasks/", "/api/v1/workflows/", "/api/v1/knowledge/")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -104,6 +117,9 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     # Task 034: Workflow inspection is exactly these READ-ONLY routes (no run endpoint).
     workflows = {(m, p) for m, p in routes if p.startswith("/api/v1/workflows")}
     assert workflows == WORKFLOW_ROUTES
+    # Task 035: Knowledge is exactly these fixed routes (no delete, upload or raw store).
+    knowledge = {(m, p) for m, p in routes if p.startswith("/api/v1/knowledge")}
+    assert knowledge == KNOWLEDGE_ROUTES
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),

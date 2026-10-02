@@ -13,6 +13,8 @@
 import "server-only";
 
 export const MAX_REQUEST_BYTES = 16 * 1024;
+/** Knowledge document text (Task 035): at most 50,000 characters, sent as JSON. */
+export const MAX_KNOWLEDGE_REQUEST_BYTES = 256 * 1024;
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
 export const UPSTREAM_TIMEOUT_MS = 120_000;
 
@@ -47,6 +49,16 @@ export const UPSTREAM = {
   workflowDetail: { method: "GET", path: "/api/v1/workflows/workflow" },
   workflowRuns: { method: "GET", path: "/api/v1/workflows/runs" },
   workflowRun: { method: "GET", path: "/api/v1/workflows/run" },
+  knowledgeOperatingModel: { method: "GET", path: "/api/v1/knowledge/operating-model" },
+  knowledgeOperatingModelVersions: { method: "GET", path: "/api/v1/knowledge/operating-model/versions" },
+  knowledgeOperatingModelVersion: { method: "GET", path: "/api/v1/knowledge/operating-model/version" },
+  knowledgeDocuments: { method: "GET", path: "/api/v1/knowledge/documents" },
+  knowledgeDocument: { method: "GET", path: "/api/v1/knowledge/document" },
+  knowledgeDocumentVersion: { method: "GET", path: "/api/v1/knowledge/document/version" },
+  knowledgeDocumentPublishVersion: { method: "POST", path: "/api/v1/knowledge/document/version" },
+  knowledgeDocumentCreate: { method: "POST", path: "/api/v1/knowledge/document/create" },
+  knowledgeDocumentArchive: { method: "POST", path: "/api/v1/knowledge/document/archive" },
+  knowledgeQuery: { method: "POST", path: "/api/v1/knowledge/query" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;
@@ -60,6 +72,8 @@ type ProxyOptions = {
   query?: readonly string[];
   /** Forward the JSON request body (POST/PUT routes). */
   body?: boolean;
+  /** A larger request cap for Knowledge document text only (default MAX_REQUEST_BYTES). */
+  maxRequestBytes?: typeof MAX_REQUEST_BYTES | typeof MAX_KNOWLEDGE_REQUEST_BYTES;
 };
 
 const NO_STORE = "no-store";
@@ -171,9 +185,10 @@ export async function proxyToProduct(request: Request, route: UpstreamRoute, opt
 
   let body: Uint8Array | undefined;
   if (options.body) {
+    const limit = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
     const declared = Number(request.headers.get("content-length") ?? "0");
-    if (!Number.isFinite(declared) || declared > MAX_REQUEST_BYTES) return tooLarge();
-    const read = await readBounded(request.body, MAX_REQUEST_BYTES).catch(() => null);
+    if (!Number.isFinite(declared) || declared > limit) return tooLarge();
+    const read = await readBounded(request.body, limit).catch(() => null);
     if (read === null) return tooLarge();
     body = read;
     headers.set("Content-Type", "application/json");

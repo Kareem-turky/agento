@@ -52,6 +52,17 @@ EXPECTED_ROUTES = {
     "workflows/workflow/route.ts": {"GET": "workflowDetail"},
     "workflows/runs/route.ts": {"GET": "workflowRuns"},
     "workflows/run/route.ts": {"GET": "workflowRun"},
+    # Task 035: Knowledge (operating-model PUBLISH is API-first and is not proxied).
+    "knowledge/operating-model/route.ts": {"GET": "knowledgeOperatingModel"},
+    "knowledge/operating-model/versions/route.ts": {"GET": "knowledgeOperatingModelVersions"},
+    "knowledge/operating-model/version/route.ts": {"GET": "knowledgeOperatingModelVersion"},
+    "knowledge/documents/route.ts": {"GET": "knowledgeDocuments"},
+    "knowledge/document/route.ts": {"GET": "knowledgeDocument"},
+    "knowledge/document/version/route.ts": {"GET": "knowledgeDocumentVersion",
+                                            "POST": "knowledgeDocumentPublishVersion"},
+    "knowledge/document/create/route.ts": {"POST": "knowledgeDocumentCreate"},
+    "knowledge/document/archive/route.ts": {"POST": "knowledgeDocumentArchive"},
+    "knowledge/query/route.ts": {"POST": "knowledgeQuery"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -84,6 +95,16 @@ UPSTREAM_PATHS = {
     "workflowDetail": ("GET", "/api/v1/workflows/workflow"),
     "workflowRuns": ("GET", "/api/v1/workflows/runs"),
     "workflowRun": ("GET", "/api/v1/workflows/run"),
+    "knowledgeOperatingModel": ("GET", "/api/v1/knowledge/operating-model"),
+    "knowledgeOperatingModelVersions": ("GET", "/api/v1/knowledge/operating-model/versions"),
+    "knowledgeOperatingModelVersion": ("GET", "/api/v1/knowledge/operating-model/version"),
+    "knowledgeDocuments": ("GET", "/api/v1/knowledge/documents"),
+    "knowledgeDocument": ("GET", "/api/v1/knowledge/document"),
+    "knowledgeDocumentVersion": ("GET", "/api/v1/knowledge/document/version"),
+    "knowledgeDocumentPublishVersion": ("POST", "/api/v1/knowledge/document/version"),
+    "knowledgeDocumentCreate": ("POST", "/api/v1/knowledge/document/create"),
+    "knowledgeDocumentArchive": ("POST", "/api/v1/knowledge/document/archive"),
+    "knowledgeQuery": ("POST", "/api/v1/knowledge/query"),
 }
 
 
@@ -158,6 +179,8 @@ def test_proxy_security_controls_are_in_place() -> None:
         'cache: "no-store"',
         '"Cache-Control": NO_STORE',
         "MAX_REQUEST_BYTES = 16 * 1024",
+        "MAX_KNOWLEDGE_REQUEST_BYTES = 256 * 1024",
+        "const limit = options.maxRequestBytes ?? MAX_REQUEST_BYTES;",
         "MAX_RESPONSE_BYTES = 1024 * 1024",
         "UPSTREAM_TIMEOUT_MS = 120_000",
         "AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)",
@@ -233,7 +256,12 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "listAgents", "setAgentEnabled", "resetAgentConfiguration",
                         "getSkillCatalog", "getSkill", "getTaskCatalog", "getTask",
                         "getWorkflowCatalog", "getWorkflow", "listWorkflowRuns",
-                        "getWorkflowRun"}  # fmt: skip
+                        "getWorkflowRun", "getKnowledgeOperatingModel",
+                        "listKnowledgeOperatingModelVersions",
+                        "getKnowledgeOperatingModelVersion", "listKnowledgeDocuments",
+                        "getKnowledgeDocument", "getKnowledgeDocumentVersion",
+                        "createKnowledgeDocument", "publishKnowledgeDocumentVersion",
+                        "archiveKnowledgeDocument", "queryKnowledge"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -587,3 +615,60 @@ def test_workflows_page_is_read_only_inspection() -> None:
     assert "useState<string | null>(null)" in settings  # the key lives in memory only
     for path in ("Console.tsx",):
         assert '<Link href="/settings/workflows">Workflows</Link>' in component(path)
+
+
+# ----- Task 035: the Knowledge settings page -----------------------------------------------------
+
+
+KNOWLEDGE_UI = WEB / "components" / "knowledge"
+
+
+def test_only_knowledge_document_writes_get_the_larger_request_cap() -> None:
+    larger = sorted(str(p.relative_to(API_ROUTES)) for p in API_ROUTES.rglob("route.ts")
+                    if "maxRequestBytes" in code(p))  # fmt: skip
+    assert larger == ["knowledge/document/create/route.ts", "knowledge/document/version/route.ts"]
+    version = code(API_ROUTES / "knowledge" / "document" / "version" / "route.ts")
+    assert "maxRequestBytes" not in version.split("export function POST", 1)[0]
+    # Operating-model publishing is API-first: no BFF route reaches it.
+    assert "operating-model/publish" not in code(PROXY)
+    assert not (API_ROUTES / "knowledge" / "operating-model" / "publish").exists()
+
+
+def test_knowledge_page_renders_untrusted_text_inertly() -> None:
+    page = code(WEB / "app" / "settings" / "knowledge" / "page.tsx")
+    assert "<KnowledgeSettings />" in page
+    assert {p.name for p in KNOWLEDGE_UI.glob("*.tsx")} == {"KnowledgeSettings.tsx"}
+    settings = code(KNOWLEDGE_UI / "KnowledgeSettings.tsx")
+    assert "fetch(" not in settings and "/api/" not in settings
+    for forbidden in ("dangerouslySetInnerHTML", "innerHTML", "eval(", "new Function",
+                      "JSON.parse", "marked", "remark", "markdown-it", "<iframe",
+                      'type="file"', "FileReader", "localStorage", "sessionStorage"):  # fmt: skip
+        assert forbidden not in settings, forbidden
+    # Bodies and excerpts are plain text inside <pre>, labelled as untrusted references.
+    assert '<pre className="knowledge-text">{text}</pre>' in settings
+    assert "<InertText text={detail.current.body} />" in settings
+    assert "<InertText text={reference.excerpt} />" in settings
+    assert "Untrusted reference" in settings
+    # Operating model: display only (no publish call, no JSON editor).
+    calls = set(re.findall(r"\b(\w+Knowledge\w*|queryKnowledge)\(", settings))
+    assert calls == {"getKnowledgeOperatingModel", "listKnowledgeOperatingModelVersions",
+                     "getKnowledgeOperatingModelVersion", "listKnowledgeDocuments",
+                     "getKnowledgeDocument", "getKnowledgeDocumentVersion",
+                     "createKnowledgeDocument", "publishKnowledgeDocumentVersion",
+                     "archiveKnowledgeDocument", "queryKnowledge"}  # fmt: skip
+    assert settings.count("<textarea") == 1  # the document text only
+    assert "publishKnowledgeOperatingModel" not in settings
+    assert "deleteKnowledge" not in settings and '"DELETE"' not in settings
+    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    for forbidden in ("setInterval", "setTimeout", "while ("):
+        assert forbidden not in settings, forbidden
+    joined = settings.lower()
+    for provider in ("shopify", "woocommerce", "whatsapp", "f" + "ulfly"):
+        assert provider not in joined, provider
+
+
+def test_knowledge_is_linked_from_the_console_and_settings() -> None:
+    assert '<Link href="/settings/knowledge">Knowledge</Link>' in component("Console.tsx")
+    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
+                 WORKFLOWS_UI / "WorkflowsSettings.tsx"):  # fmt: skip
+        assert '<Link href="/settings/knowledge">Knowledge</Link>' in code(path), path.name

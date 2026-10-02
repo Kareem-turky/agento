@@ -89,6 +89,7 @@ export function Console() {
           <Link href="/settings/agents">Agents</Link>
           <Link href="/settings/integrations">Integrations</Link>
           <Link href="/settings/workflows">Workflows</Link>
+          <Link href="/settings/knowledge">Knowledge</Link>
         </nav>
         <span className={`pill pill--${health}`} role="status">
           {health === "checking" ? "Checking API…" : health === "reachable" ? "API reachable" : "API unavailable"}

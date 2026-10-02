@@ -339,3 +339,76 @@ export type WorkflowRunResponse = {
   attempts: StepAttemptView[];
   events: WorkflowEventView[];
 };
+
+// ----- Task 035: Product Knowledge & company operating context -----------------------------
+
+export type OperatingModelView = {
+  version: number;
+  content_hash: string;
+  created_at: string;
+  model: Record<string, unknown>; // the validated CompanyOperatingModel (rendered as text)
+};
+
+export type OperatingModelVersionView = {
+  version: number;
+  content_hash: string;
+  created_at: string;
+  current: boolean;
+};
+
+export type KnowledgeDocumentView = {
+  document_id: string;
+  category: string; // sop | policy | pricing | returns | shipping | supplier | general
+  lifecycle: string; // active | archived
+  current_version: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeDocumentVersionView = {
+  version: number;
+  title: string;
+  content_type: string; // text/plain | text/markdown
+  content_hash: string;
+  created_at: string;
+};
+
+export type KnowledgeDocumentContentView = KnowledgeDocumentVersionView & {
+  body: string; // untrusted reference text: rendered inertly, never as HTML
+  trust: string; // untrusted_reference
+};
+
+export type KnowledgeReferenceView = {
+  document_id: string;
+  document_version: number;
+  category: string;
+  title: string;
+  chunk_index: number;
+  excerpt: string; // untrusted reference text
+  relevance: number;
+  trust: string; // untrusted_reference
+};
+
+export type OperatingModelResponse = { request_id: string; operating_model: OperatingModelView | null };
+export type OperatingModelVersionsResponse = { request_id: string; versions: OperatingModelVersionView[] };
+export type KnowledgeDocumentListResponse = { request_id: string; documents: KnowledgeDocumentView[] };
+export type KnowledgeDocumentResponse = {
+  request_id: string;
+  document: KnowledgeDocumentView;
+  current: KnowledgeDocumentContentView;
+  versions: KnowledgeDocumentVersionView[];
+};
+export type KnowledgeDocumentVersionResponse = {
+  request_id: string;
+  document_id: string;
+  version: KnowledgeDocumentContentView;
+};
+export type KnowledgeQueryResponse = {
+  request_id: string;
+  precedence: string[];
+  structured: { available: boolean; authority: string; operating_model: OperatingModelView | null };
+  references_trust: string;
+  references: KnowledgeReferenceView[];
+};
+export type KnowledgeDocumentInput = { title: string; content_type: string; body: string };

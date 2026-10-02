@@ -247,3 +247,14 @@ input:disabled, textarea:disabled { background: var(--surface-muted); color: var
 .workflow-table th { color: var(--text-muted); font-weight: 600; }
 .workflow-runs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .workflow-runs__item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+
+/* Task 035: Knowledge (untrusted text is shown as plain, inert text) */
+select {
+  font: inherit; color: var(--text); background: #fff;
+  border: 1px solid #c3ccd8; border-radius: 7px; padding: 0.55rem 0.7rem; width: 100%;
+}
+.knowledge-text {
+  margin: 0.4rem 0 0; padding: 0.6rem 0.75rem; max-height: 22rem; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.85rem;
+  background: var(--surface-muted); border: 1px solid var(--border); border-radius: 6px;
+}

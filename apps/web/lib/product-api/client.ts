@@ -12,6 +12,13 @@ import type {
   IntegrationConnectionDeletedResponse,
   IntegrationConnectionListResponse,
   IntegrationConnectionResponse,
+  KnowledgeDocumentInput,
+  KnowledgeDocumentListResponse,
+  KnowledgeDocumentResponse,
+  KnowledgeDocumentVersionResponse,
+  KnowledgeQueryResponse,
+  OperatingModelResponse,
+  OperatingModelVersionsResponse,
   OperationsRunResponse,
   ProductErrorKind,
   ProductResult,
@@ -54,6 +61,15 @@ const PATHS = {
   workflowDetail: "/api/product/workflows/workflow",
   workflowRuns: "/api/product/workflows/runs",
   workflowRun: "/api/product/workflows/run",
+  knowledgeOperatingModel: "/api/product/knowledge/operating-model",
+  knowledgeOperatingModelVersions: "/api/product/knowledge/operating-model/versions",
+  knowledgeOperatingModelVersion: "/api/product/knowledge/operating-model/version",
+  knowledgeDocuments: "/api/product/knowledge/documents",
+  knowledgeDocument: "/api/product/knowledge/document",
+  knowledgeDocumentVersion: "/api/product/knowledge/document/version",
+  knowledgeDocumentCreate: "/api/product/knowledge/document/create",
+  knowledgeDocumentArchive: "/api/product/knowledge/document/archive",
+  knowledgeQuery: "/api/product/knowledge/query",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -501,6 +517,126 @@ export function listWorkflowRuns(apiKey: string, limit = 25): Promise<ProductRes
 export function getWorkflowRun(apiKey: string, runId: string): Promise<ProductResult<WorkflowRunResponse>> {
   const path = `${PATHS.workflowRun}?${new URLSearchParams({ run_id: runId }).toString()}`;
   return send(path, { method: "GET", headers: authorized(apiKey) }, isWorkflowRunResponse);
+}
+
+// ----- Product Knowledge (Task 035; Product API only) ------------------------------------------
+
+const isOperatingModel = (v: unknown): boolean =>
+  isObject(v) && isNumber(v.version) && isString(v.content_hash) && isString(v.created_at) && isObject(v.model);
+
+const isOperatingModelResponse: Guard<OperatingModelResponse> = (v): v is OperatingModelResponse =>
+  isObject(v) && isString(v.request_id) && (v.operating_model === null || isOperatingModel(v.operating_model));
+
+const isOperatingModelVersions: Guard<OperatingModelVersionsResponse> = (v): v is OperatingModelVersionsResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.versions) &&
+  v.versions.every((x) => isObject(x) && isNumber(x.version) && isString(x.created_at) && typeof x.current === "boolean");
+
+const isDocument = (v: unknown): boolean =>
+  isObject(v) && isString(v.document_id) && isString(v.category) && isString(v.lifecycle) &&
+  isNumber(v.current_version) && isString(v.title) && isString(v.updated_at);
+
+const isVersionSummary = (v: unknown): boolean =>
+  isObject(v) && isNumber(v.version) && isString(v.title) && isString(v.content_type) && isString(v.created_at);
+
+const isDocumentContent = (v: unknown): boolean => isVersionSummary(v) && isObject(v) && isString(v.body) && isString(v.trust);
+
+const isDocumentList: Guard<KnowledgeDocumentListResponse> = (v): v is KnowledgeDocumentListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.documents) && v.documents.every(isDocument);
+
+const isDocumentResponse: Guard<KnowledgeDocumentResponse> = (v): v is KnowledgeDocumentResponse =>
+  isObject(v) && isString(v.request_id) && isDocument(v.document) && isDocumentContent(v.current) &&
+  Array.isArray(v.versions) && v.versions.every(isVersionSummary);
+
+const isDocumentVersionResponse: Guard<KnowledgeDocumentVersionResponse> = (v): v is KnowledgeDocumentVersionResponse =>
+  isObject(v) && isString(v.request_id) && isString(v.document_id) && isDocumentContent(v.version);
+
+const isQueryResponse: Guard<KnowledgeQueryResponse> = (v): v is KnowledgeQueryResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.precedence) && v.precedence.every(isString) &&
+  isObject(v.structured) && typeof v.structured.available === "boolean" && isString(v.references_trust) &&
+  Array.isArray(v.references) &&
+  v.references.every((r) => isObject(r) && isString(r.document_id) && isString(r.title) && isString(r.excerpt) &&
+    isNumber(r.chunk_index) && isString(r.trust));
+
+function documentQuery(path: string, documentId: string, extra: Record<string, string> = {}): string {
+  return `${path}?${new URLSearchParams({ document_id: documentId, ...extra }).toString()}`;
+}
+
+export function getKnowledgeOperatingModel(apiKey: string): Promise<ProductResult<OperatingModelResponse>> {
+  return send(PATHS.knowledgeOperatingModel, { method: "GET", headers: authorized(apiKey) }, isOperatingModelResponse);
+}
+
+export function listKnowledgeOperatingModelVersions(apiKey: string): Promise<ProductResult<OperatingModelVersionsResponse>> {
+  return send(PATHS.knowledgeOperatingModelVersions, { method: "GET", headers: authorized(apiKey) }, isOperatingModelVersions);
+}
+
+export function getKnowledgeOperatingModelVersion(apiKey: string, version: number): Promise<ProductResult<OperatingModelResponse>> {
+  const path = `${PATHS.knowledgeOperatingModelVersion}?${new URLSearchParams({ version: String(version) }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isOperatingModelResponse);
+}
+
+export function listKnowledgeDocuments(apiKey: string): Promise<ProductResult<KnowledgeDocumentListResponse>> {
+  return send(PATHS.knowledgeDocuments, { method: "GET", headers: authorized(apiKey) }, isDocumentList);
+}
+
+export function getKnowledgeDocument(apiKey: string, documentId: string): Promise<ProductResult<KnowledgeDocumentResponse>> {
+  return send(documentQuery(PATHS.knowledgeDocument, documentId), { method: "GET", headers: authorized(apiKey) }, isDocumentResponse);
+}
+
+export function getKnowledgeDocumentVersion(
+  apiKey: string,
+  documentId: string,
+  version: number,
+): Promise<ProductResult<KnowledgeDocumentVersionResponse>> {
+  const path = documentQuery(PATHS.knowledgeDocumentVersion, documentId, { version: String(version) });
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isDocumentVersionResponse);
+}
+
+export function createKnowledgeDocument(
+  apiKey: string,
+  category: string,
+  input: KnowledgeDocumentInput,
+): Promise<ProductResult<KnowledgeDocumentResponse>> {
+  return send(
+    PATHS.knowledgeDocumentCreate,
+    {
+      method: "POST",
+      headers: authorized(apiKey, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ category, title: input.title, content_type: input.content_type, body: input.body }),
+    },
+    isDocumentResponse,
+  );
+}
+
+export function publishKnowledgeDocumentVersion(
+  apiKey: string,
+  documentId: string,
+  input: KnowledgeDocumentInput,
+): Promise<ProductResult<KnowledgeDocumentResponse>> {
+  return send(
+    documentQuery(PATHS.knowledgeDocumentVersion, documentId),
+    {
+      method: "POST",
+      headers: authorized(apiKey, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ title: input.title, content_type: input.content_type, body: input.body }),
+    },
+    isDocumentResponse,
+  );
+}
+
+export function archiveKnowledgeDocument(apiKey: string, documentId: string): Promise<ProductResult<KnowledgeDocumentResponse>> {
+  return send(documentQuery(PATHS.knowledgeDocumentArchive, documentId), { method: "POST", headers: authorized(apiKey) }, isDocumentResponse);
+}
+
+export function queryKnowledge(apiKey: string, query: string, limit = 5): Promise<ProductResult<KnowledgeQueryResponse>> {
+  return send(
+    PATHS.knowledgeQuery,
+    {
+      method: "POST",
+      headers: authorized(apiKey, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ query, limit }),
+    },
+    isQueryResponse,
+  );
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

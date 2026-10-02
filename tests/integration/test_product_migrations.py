@@ -26,15 +26,16 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0005"]
+    assert script.get_heads() == ["0006"]
     (base,) = script.get_bases()
     assert base == "0001"
     assert script.get_revision("0002").down_revision == "0001"
     assert script.get_revision("0003").down_revision == "0002"
     assert script.get_revision("0004").down_revision == "0003"
     assert script.get_revision("0005").down_revision == "0004"
+    assert script.get_revision("0006").down_revision == "0005"
     assert [r.revision for r in script.walk_revisions()] == [
-        "0005", "0004", "0003", "0002", "0001",
+        "0006", "0005", "0004", "0003", "0002", "0001",
     ]  # fmt: skip
 
 
@@ -48,58 +49,104 @@ def alembic_config_for_scripts():
 
 PRESERVED = ("write_commands", "audit_events", "integration_connections", "agent_configurations")
 WORKFLOW_TABLES = {"workflow_runs", "workflow_step_runs", "workflow_events"}
+KNOWLEDGE_TABLES = {
+    "company_operating_model_versions", "company_operating_model_current",
+    "knowledge_documents", "knowledge_document_versions", "knowledge_chunks",
+}  # fmt: skip
 
 
-def _counts(engine: sa.Engine) -> dict[str, int]:
+_PRIOR_TABLES = (*PRESERVED, *sorted(WORKFLOW_TABLES))
+
+
+def _counts(engine: sa.Engine, names: tuple[str, ...] = _PRIOR_TABLES) -> dict[str, int]:
     with engine.connect() as connection:
         return {
             table: connection.execute(
                 sa.text(f"SELECT count(*) FROM product.{table}")  # noqa: S608 - fixed names
             ).scalar_one()
-            for table in PRESERVED
+            for table in names
         }
+
+
+def _version(engine: sa.Engine) -> str:
+    with engine.connect() as connection:
+        return connection.execute(
+            sa.text("SELECT version_num FROM product.alembic_version")
+        ).scalar_one()
+
+
+def _leftovers(engine: sa.Engine, pattern: str, function: str) -> tuple[int, int]:
+    with engine.connect() as connection:
+        constraints = connection.execute(
+            sa.text(
+                "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n "
+                "ON n.oid = c.connamespace WHERE n.nspname = 'product' AND c.conname LIKE :p"
+            ),
+            {"p": pattern},
+        ).scalar_one()
+        functions = connection.execute(
+            sa.text("SELECT count(*) FROM pg_proc WHERE proname = :f"), {"f": function}
+        ).scalar_one()
+    return constraints, functions
 
 
 def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine) -> None:
     config = alembic_config(migrated)
     agno_before = agno_snapshot(engine)
-    before = {"alembic_version", *PRESERVED}
-    head = before | WORKFLOW_TABLES
+    before_workflows = {"alembic_version", *PRESERVED}
+    before_knowledge = before_workflows | WORKFLOW_TABLES  # the prior 7 Product tables
+    head = before_knowledge | KNOWLEDGE_TABLES
 
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
-    with engine.begin() as connection:  # a preserved row that must survive the downgrade
+    with engine.begin() as connection:  # preserved rows that must survive the downgrades
         connection.execute(sa.text(
             "INSERT INTO product.agent_configurations VALUES "
             "('roundtrip-company', 'operations', false, now(), now()) ON CONFLICT DO NOTHING"
         ))  # fmt: skip
+        connection.execute(sa.text(
+            "INSERT INTO product.workflow_runs (run_id, workflow_id, workflow_version, "
+            "request_id, company_id, actor_id, actor_type, channel, store_id, status, "
+            "current_step_id, failure_code, input_state, input_fingerprint, lease_owner, "
+            "lease_expires_at, created_at, updated_at, completed_at) VALUES "
+            "('00000000-0000-4000-8000-0000000000aa', 'operations.daily_report', 1, "
+            "'00000000-0000-4000-8000-0000000000ab', 'roundtrip-company', 'roundtrip-actor', "
+            "'user', 'api', NULL, 'pending', NULL, NULL, '{}'::jsonb, "
+            "repeat('a', 64), NULL, NULL, now(), now(), NULL) ON CONFLICT DO NOTHING"
+        ))  # fmt: skip
+        connection.execute(sa.text(
+            "INSERT INTO product.knowledge_documents VALUES ('00000000-0000-4000-8000-"
+            "0000000000ac', 'roundtrip-company', 'general', 'active', 1, now(), now())"
+        ))  # fmt: skip
+        connection.execute(sa.text(
+            "INSERT INTO product.knowledge_document_versions VALUES ('00000000-0000-4000-8000-"
+            "0000000000ac', 1, 'roundtrip-company', 'T', 'text/plain', 'B', repeat('b', 64), "
+            "'roundtrip-actor', now())"
+        ))  # fmt: skip
     rows_before = _counts(engine)
-    assert rows_before["agent_configurations"] >= 1
+    assert rows_before["agent_configurations"] >= 1 and rows_before["workflow_runs"] >= 1
 
     command.downgrade(config, "-1")
-    # 0005 -> 0004 drops only the Workflow runtime state (tables, trigger, function): the
-    # schema, its version table and every other Product table (with its rows) stay.
-    assert tables(engine, "product") == before
-    assert "product" in sa.inspect(engine).get_schema_names()
+    # 0006 -> 0005 drops only the Knowledge tables (with their trigger function): the
+    # schema, its version table and the prior 7 Product tables (with their rows) stay.
+    assert tables(engine, "product") == before_knowledge
     assert _counts(engine) == rows_before
-    with engine.connect() as connection:
-        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
-        assert version.scalar_one() == "0004"
-        leftover = connection.execute(sa.text(
-            "SELECT count(*) FROM pg_constraint WHERE conname LIKE '%workflow%'"
-        )).scalar_one()  # fmt: skip
-        assert leftover == 0
-        functions = connection.execute(sa.text(
-            "SELECT count(*) FROM pg_proc WHERE proname = 'workflow_events_append_only'"
-        )).scalar_one()  # fmt: skip
-        assert functions == 0
+    assert _version(engine) == "0005"
+    assert _leftovers(engine, "%knowledge%", "knowledge_reject_mutation") == (0, 0)
+    assert _leftovers(engine, "%operating_model%", "knowledge_reject_mutation") == (0, 0)
+
+    command.downgrade(config, "-1")
+    # 0005 -> 0004 drops only the Workflow runtime state (tables, trigger, function).
+    assert tables(engine, "product") == before_workflows
+    assert "product" in sa.inspect(engine).get_schema_names()
+    assert _counts(engine, PRESERVED) == {t: rows_before[t] for t in PRESERVED}
+    assert _version(engine) == "0004"
+    assert _leftovers(engine, "%workflow%", "workflow_events_append_only") == (0, 0)
 
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
-    assert _counts(engine) == rows_before
-    with engine.connect() as connection:
-        version = connection.execute(sa.text("SELECT version_num FROM product.alembic_version"))
-        assert version.scalar_one() == "0005"
+    assert _counts(engine, PRESERVED) == {t: rows_before[t] for t in PRESERVED}
+    assert _version(engine) == "0006"
     with engine.begin() as connection:
         connection.execute(sa.text(
             "DELETE FROM product.agent_configurations WHERE company_id = 'roundtrip-company'"
@@ -124,6 +171,19 @@ MIGRATION_0003_SHA256 = "e5aab3a40f51835f8a3c4606eb521fa53fc772627cd05853551fc7d
 
 # SHA-256 of migration 0004 as merged in Task 032: it must never change either.
 MIGRATION_0004_SHA256 = "22436e6a09a51a5bc031f3eece6994ed5dd9c02eb8f650731c2f254675a01786"
+
+
+# SHA-256 of migration 0005 as merged in Task 034: it must never change either.
+MIGRATION_0005_SHA256 = "3984d4a3f3a3f9318511489da49fd0035b4d7246065b05e940f5223292bee8dc"
+
+
+def test_migration_0005_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0005_create_workflow_runtime.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0005_SHA256
 
 
 def test_migration_0004_is_byte_for_byte_unchanged() -> None:
