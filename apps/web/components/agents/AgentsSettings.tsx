@@ -188,8 +188,9 @@ function AgentsWorkspace({ apiKey }: { apiKey: string }) {
                   <div className="integration-list__body">
                     <p className="integration-list__title">
                       <strong>{definition.name}</strong>{" "}
-                      <Badge tone={state.enabled ? "success" : "neutral"}>{state.enabled ? "Enabled" : "Disabled"}</Badge>{" "}
-                      <Badge tone={tone}>{label}</Badge>
+                      <Badge tone={state.enabled ? "success" : "neutral"}>{state.enabled ? "Enabled" : "Disabled"}</Badge>
+                      {/* Availability adds information only when the Agent is enabled. */}
+                      {state.enabled ? <>{" "}<Badge tone={tone}>{label}</Badge></> : null}
                     </p>
                     <p className="field__hint">
                       <Mono>{id}</Mono> · {definition.category} · {definition.lifecycle}
