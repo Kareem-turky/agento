@@ -63,6 +63,26 @@ store scoping and command privacy. **Production business use is still blocked**:
 business-system API contract and no reviewed real backend adapter exist yet, so
 staging and production refuse to start.
 
+### Integrations: provider-agnostic foundation (no provider connected)
+
+The Product is **integration-ready at the framework level**, and **no real provider is
+connected or installed.** It has:
+
+- a static, explicit-allowlist **integration catalog**, which is empty in this build;
+- a lifecycle-only **connection driver** contract;
+- **connection metadata** in PostgreSQL (`product.integration_connections`, migration
+  `0003`);
+- a **secret boundary**: credential values live only in an `IntegrationSecretStore`,
+  which is filesystem-backed via `APP_INTEGRATION_SECRETS_DIR`. They are never in
+  PostgreSQL, responses, logs, audit or error details;
+- a generic, governed and audited **Connections API**
+  (`/api/v1/integrations/*`, `integrations.read` / `integrations.manage`);
+- a **Connections UI** (`/settings/integrations`).
+
+The demo still uses mock data. Source systems remain the source of truth: business data
+is not ingested or mirrored. OAuth is not implemented. Nothing here provides production
+business connectivity. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+
 ## 2. High-level architecture
 
 ```
@@ -317,7 +337,9 @@ from the durable audit log (governed business actions, `product.audit_events`), 
 never authorization, policy, verification or business truth, and is never stored in
 PostgreSQL. It lives in `app/observability/`:
 
-- **What is observed:** every request to the five Product HTTP routes (`http.request`,
+- **What is observed:** every request to the five original Product HTTP routes
+  (`/health` and the four operations routes; the integration-management routes are not
+  Product-observed yet) (`http.request`,
   by `ProductObservabilityMiddleware`), and the Product services behind them:
   `operations.agent_run`, `operations.daily_report`, `operations.ticket_command` and
   `operations.ticket_command_query` (transparent decorators of the service contracts,
@@ -1412,9 +1434,12 @@ The web app is a minimal Operations Console over the existing Product API (no ne
 backend endpoint): session settings (a Product API key held only in page memory and an
 explicit Store UUID), read-only Operations analysis (`POST /api/v1/operations/runs`), the
 deterministic daily report, explicit idempotent operational ticket creation (never through
-the Agent, never retried automatically) and manual ticket command status lookup. The
-browser talks only to five fixed same-origin proxy routes under `/api/product/*`, which
-forward to the server-only `PRODUCT_API_ORIGIN`; AgentOS routes are never proxied. The
+the Agent, never retried automatically) and manual ticket command status lookup.
+**Settings → Integrations** (`/settings/integrations`) is the generic Connections UI
+([`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)). The browser talks only to fixed
+same-origin proxy routes under `/api/product/*`. Each one is one exported method mapped
+to one fixed Product method and path, forwarded to the server-only `PRODUCT_API_ORIGIN`.
+AgentOS routes are never proxied. The
 deployment package runs it as the `web` service, the only host-published one (see above).
 See [`apps/web/README.md`](apps/web/README.md).
 
@@ -1495,6 +1520,7 @@ cd apps/web && npm ci         # frontend deps from package-lock.json
 | `OPENAI_API_KEY` | Agno (OpenAI) | Required only when the provider is `openai` |
 | `ANTHROPIC_API_KEY` | Agno (Anthropic) | Required only when the provider is `anthropic` |
 | `AGNO_TELEMETRY` | Agno | Optional; unset or `false` only. Anything else (e.g. `true`) stops startup |
+| `APP_INTEGRATION_SECRETS_DIR` | API | Optional. Absolute path of a private directory (not group/world-writable) for integration credential values. They are unencrypted there, so protection depends on that volume. Unset: credential-bearing connections answer `503`. See `docs/INTEGRATIONS.md` |
 | `PRODUCT_API_ORIGIN` | web (server-only) | Product API origin for the Operations Console proxy, in `apps/web/.env.local` (see `apps/web/.env.example`); never `NEXT_PUBLIC_*` |
 
 ## 7. Start PostgreSQL / Redis

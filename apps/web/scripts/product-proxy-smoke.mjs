@@ -21,6 +21,8 @@ const BROWSER_REQUEST_ID = `smoke-browser-request-id-${MARK}`;
 const STORE = "0b0b0b0b-0000-4000-8000-000000000001";
 const COMMAND = "0c0c0c0c-0000-4000-8000-000000000001";
 const UPSTREAM_REQUEST_ID = "5f5f5f5f-0000-4000-8000-000000000001";
+const CONNECTION = "0d0d0d0d-0000-4000-8000-000000000001";
+const SECRET_VALUE = `smoke-integration-secret-marker-${MARK}`; // obviously test-only
 
 let failures = 0;
 function check(condition, name) {
@@ -92,9 +94,36 @@ const stub = createServer((req, res) => {
                                reason: "verified", ticket_id: STORE, created_at: "2026-01-16T08:00:00Z",
                                updated_at: "2026-01-16T08:00:01Z" });
     }
+    if (path.startsWith("/api/v1/integrations/")) return integrationReply(res, req.method, path);
     return reply(res, 404, { detail: "Not Found" });
   });
 });
+
+// Metadata only: the stub (like the Product) never returns a secret value.
+const CONNECTION_VIEW = {
+  connection_id: CONNECTION, integration_id: "example-stub", display_name: "Stub connection",
+  config: { endpoint: "https://stub.example.test", sandbox: true }, configured_secret_fields: ["api_key"],
+  enabled: true, created_at: "2026-01-16T08:00:00Z", updated_at: "2026-01-16T08:00:00Z",
+  last_tested_at: null, last_test_result: "never_tested", last_test_error: null,
+};
+
+function integrationReply(res, method, path) {
+  const connection = { request_id: UPSTREAM_REQUEST_ID, connection: CONNECTION_VIEW };
+  const routes = {
+    "GET /api/v1/integrations/catalog": [200, { request_id: UPSTREAM_REQUEST_ID, integrations: [] }],
+    "GET /api/v1/integrations/connections": [200, { request_id: UPSTREAM_REQUEST_ID, connections: [CONNECTION_VIEW] }],
+    "POST /api/v1/integrations/connections": [201, connection],
+    "GET /api/v1/integrations/connection": [200, connection],
+    "PUT /api/v1/integrations/connection": [200, connection],
+    "DELETE /api/v1/integrations/connection": [200, { request_id: UPSTREAM_REQUEST_ID, connection_id: CONNECTION, deleted: true }],
+    "PUT /api/v1/integrations/connection/credentials": [200, connection],
+    "POST /api/v1/integrations/connection/test": [200, connection],
+    "POST /api/v1/integrations/connection/enable": [200, connection],
+    "POST /api/v1/integrations/connection/disable": [200, connection],
+  };
+  const answer = routes[`${method} ${path}`];
+  return answer ? reply(res, answer[0], answer[1]) : reply(res, 405, { detail: "Method Not Allowed" });
+}
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
@@ -241,6 +270,56 @@ async function main() {
           "commands: exact path with only command_id");
     check(!("idempotency-key" in received[0].headers), "commands: no Idempotency-Key forwarded");
 
+    // 6. integration management: each BFF route reaches exactly one Product method + path;
+    // credential values pass through in the request body only and never come back.
+    const integrationCalls = [
+      ["GET", "/api/product/integrations/catalog", "/api/v1/integrations/catalog"],
+      ["GET", "/api/product/integrations/connections", "/api/v1/integrations/connections"],
+      ["POST", "/api/product/integrations/connections", "/api/v1/integrations/connections",
+       { integration_id: "example-stub", display_name: "Stub", config: {}, credentials: { api_key: SECRET_VALUE } }],
+      ["GET", `/api/product/integrations/connection?connection_id=${CONNECTION}`, `/api/v1/integrations/connection?connection_id=${CONNECTION}`],
+      ["PUT", `/api/product/integrations/connection?connection_id=${CONNECTION}`, `/api/v1/integrations/connection?connection_id=${CONNECTION}`,
+       { display_name: "Renamed" }],
+      ["DELETE", `/api/product/integrations/connection?connection_id=${CONNECTION}`, `/api/v1/integrations/connection?connection_id=${CONNECTION}`],
+      ["PUT", `/api/product/integrations/connection/credentials?connection_id=${CONNECTION}`,
+       `/api/v1/integrations/connection/credentials?connection_id=${CONNECTION}`, { credentials: { api_key: SECRET_VALUE } }],
+      ["POST", `/api/product/integrations/connection/test?connection_id=${CONNECTION}`, `/api/v1/integrations/connection/test?connection_id=${CONNECTION}`],
+      ["POST", `/api/product/integrations/connection/enable?connection_id=${CONNECTION}`, `/api/v1/integrations/connection/enable?connection_id=${CONNECTION}`],
+      ["POST", `/api/product/integrations/connection/disable?connection_id=${CONNECTION}`, `/api/v1/integrations/connection/disable?connection_id=${CONNECTION}`],
+    ];
+    for (const [method, bffPath, upstreamPath, payload] of integrationCalls) {
+      received.length = 0;
+      const sent = payload === undefined ? undefined : JSON.stringify(payload);
+      response = await fetch(`${base}${bffPath}`, {
+        method, body: sent,
+        headers: sent === undefined ? hostile : { ...hostile, "Content-Type": "application/json" },
+      });
+      const text = await response.text();
+      const call = received[0];
+      check(response.status < 300 && received.length === 1 && call.method === method && call.url === upstreamPath,
+            `integrations: ${method} ${bffPath.split("?")[0]} -> exact upstream (${response.status})`);
+      check(call?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (call?.headers ?? {})) &&
+            !("idempotency-key" in (call?.headers ?? {})),
+            `integrations: ${method} ${bffPath.split("?")[0]} forwards Authorization only`);
+      check(sent === undefined ? call?.body === "" : call?.body === sent,
+            `integrations: ${method} ${bffPath.split("?")[0]} body forwarded unchanged`);
+      check(!text.includes(SECRET_VALUE), `integrations: ${method} ${bffPath.split("?")[0]} response has no secret value`);
+      check(response.headers.get("cache-control") === "no-store", `integrations: ${method} ${bffPath.split("?")[0]} no-store`);
+    }
+    received.length = 0;
+    for (const [method, path] of [["PATCH", "/api/product/integrations/connection"], ["GET", "/api/product/integrations/connection/credentials"],
+                                  ["GET", "/api/product/integrations/connection/test"], ["DELETE", "/api/product/integrations/connections"],
+                                  ["POST", "/api/product/integrations/catalog"]]) {
+      response = await fetch(`${base}${path}?connection_id=${CONNECTION}`, { method, headers: hostile });
+      check(response.status === 405, `integrations: ${method} ${path} refused (${response.status})`);
+    }
+    for (const path of ["/api/product/integrations", "/api/product/integrations/secrets",
+                        "/api/product/integrations/connection/read", "/api/product/integrations/connection/credentials/value"]) {
+      response = await fetch(`${base}${path}`, { headers: hostile });
+      check(response.status === 404, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "integrations: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -249,9 +328,12 @@ async function main() {
       `/api/product/operations/tickets/commands?command_id=${COMMAND}&command_id=${COMMAND}`,
       `/api/product/operations/tickets/commands?command_id=${COMMAND}&path=/agents`,
       `/api/product/health?x=1`,
+      `/api/product/integrations/catalog?connection_id=${CONNECTION}`,
+      `/api/product/integrations/connection?connection_id=${CONNECTION}&connection_id=${CONNECTION}`,
+      `/api/product/integrations/connection/test?connection_id=${CONNECTION}&integration_id=x`,
     ];
     for (const path of rejected) {
-      response = await fetch(`${base}${path}`, { headers: hostile });
+      response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
       check(response.status === 422, `query rejected: ${path.split("?")[0]} (${response.status})`);
     }
     check(received.length === 0, "rejected queries never reached the upstream");
@@ -303,6 +385,11 @@ async function main() {
     check(response.status === 200 && html.includes("Operations Console"), "console page renders");
     check(!html.includes(API_KEY) && !html.includes(origin) && !html.includes(String(stubPort)),
           "rendered HTML has no key, origin or upstream port");
+    response = await fetch(`${base}/settings/integrations`);
+    const settingsHtml = await response.text();
+    check(response.status === 200 && settingsHtml.includes("Integrations"), "integrations settings page renders");
+    check(!settingsHtml.includes(API_KEY) && !settingsHtml.includes(origin) && !settingsHtml.includes(SECRET_VALUE),
+          "integrations settings HTML has no key, origin or secret value");
     const staticDir = join(WEB_ROOT, ".next", "static");
     const bundles = [];
     (function walk(dir) {
@@ -313,7 +400,8 @@ async function main() {
       }
     })(staticDir);
     const clientCode = bundles.join("\n");
-    check(bundles.length > 0 && !clientCode.includes("PRODUCT_API_ORIGIN") && !clientCode.includes("/api/v1/operations"),
+    check(bundles.length > 0 && !clientCode.includes("PRODUCT_API_ORIGIN") && !clientCode.includes("/api/v1/operations") &&
+          !clientCode.includes("/api/v1/integrations"),
           "client bundles contain no server origin variable or upstream Product path");
 
     // 14. upstream unavailable (stub stopped).
@@ -344,7 +432,8 @@ async function main() {
 
   // 20. no credential or marker in the Next server logs.
   const logs = next.logs + (secondNext ? secondNext.logs : "");
-  check(!logs.includes(API_KEY) && !logs.includes(MARK), "server logs contain no key or marker");
+  check(!logs.includes(API_KEY) && !logs.includes(MARK) && !logs.includes(SECRET_VALUE),
+        "server logs contain no key, integration secret or marker");
 
   if (failures > 0) {
     console.log(`\n${failures} check(s) failed`);

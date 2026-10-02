@@ -97,3 +97,66 @@ export type ProductErrorKind =
 export type ProductResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number | null; error: ProductErrorKind };
+
+// ----- Integration management (Task 031): metadata only, never a secret value -------------
+
+export type IntegrationCategory = "commerce" | "messaging" | "marketing" | "shipping" | "accounting";
+
+export type ConfigFieldKind = "text" | "url" | "boolean" | "secret";
+
+export type ConfigFieldView = {
+  name: string;
+  label: string;
+  kind: ConfigFieldKind | string;
+  required: boolean;
+  help_text: string | null;
+};
+
+export type IntegrationDefinitionView = {
+  integration_id: string;
+  name: string;
+  category: IntegrationCategory | string;
+  description: string;
+  auth_mode: string;
+  connectable: boolean;
+  fields: ConfigFieldView[];
+  capabilities: string[];
+};
+
+export type IntegrationCatalogResponse = {
+  request_id: string;
+  integrations: IntegrationDefinitionView[];
+};
+
+export type ConnectionTestResult = "never_tested" | "success" | "failure";
+
+export type IntegrationConnectionView = {
+  connection_id: string;
+  integration_id: string;
+  display_name: string;
+  config: Record<string, string | boolean>;
+  /** Names of the secret fields that are configured. Never their values. */
+  configured_secret_fields: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_tested_at: string | null;
+  last_test_result: ConnectionTestResult | string;
+  last_test_error: string | null;
+};
+
+export type IntegrationConnectionListResponse = {
+  request_id: string;
+  connections: IntegrationConnectionView[];
+};
+
+export type IntegrationConnectionResponse = {
+  request_id: string;
+  connection: IntegrationConnectionView;
+};
+
+export type IntegrationConnectionDeletedResponse = {
+  request_id: string;
+  connection_id: string;
+  deleted: boolean;
+};

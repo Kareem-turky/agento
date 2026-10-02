@@ -48,12 +48,32 @@ def identifiers_and_strings(path: Path) -> tuple[set[str], list[str]]:
     return names, strings
 
 
+INTEGRATION_ROUTES = {
+    ("GET", "/api/v1/integrations/catalog"),
+    ("GET", "/api/v1/integrations/connections"),
+    ("POST", "/api/v1/integrations/connections"),
+    ("GET", "/api/v1/integrations/connection"),
+    ("PUT", "/api/v1/integrations/connection"),
+    ("DELETE", "/api/v1/integrations/connection"),
+    ("PUT", "/api/v1/integrations/connection/credentials"),
+    ("POST", "/api/v1/integrations/connection/test"),
+    ("POST", "/api/v1/integrations/connection/enable"),
+    ("POST", "/api/v1/integrations/connection/disable"),
+}
+
+
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
+    routes = effective_api_routes(client.app.routes)
     product = {
         (method, path)
-        for method, path in effective_api_routes(client.app.routes)
-        if path.startswith("/api/") or path == "/health"
+        for method, path in routes
+        if (path.startswith("/api/") and not path.startswith("/api/v1/integrations/"))
+        or path == "/health"
     }
+    # Task 031: the integration-management surface is exactly these fixed routes.
+    assert {(m, p) for m, p in routes if p.startswith("/api/v1/integrations/")} == (
+        INTEGRATION_ROUTES
+    )
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),
@@ -77,9 +97,13 @@ def test_the_only_product_write_is_post_tickets(client) -> None:
     writes = {
         (method, path)
         for method, path in effective_api_routes(client.app.routes)
-        if path.startswith("/api/") and method not in ("GET", "HEAD", "OPTIONS")
+        if path.startswith("/api/")
+        and method not in ("GET", "HEAD", "OPTIONS")
+        and not path.startswith("/api/v1/integrations/")
     }
-    # /runs is a POST but read-only (asserted separately); tickets is the only write.
+    # /runs is a POST but read-only (asserted separately); tickets is the only BUSINESS
+    # write. Integration-management writes (Task 031) manage connection metadata only and
+    # are pinned by test_product_routes_are_exactly_the_intended_surface.
     assert writes == {("POST", "/api/v1/operations/runs"), ("POST", "/api/v1/operations/tickets")}
 
 

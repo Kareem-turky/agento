@@ -20,8 +20,11 @@ PRODUCTION_FILES = sorted(APP_DIR.rglob("*.py")) + sorted(
 ALLOWED_ROOTS = {"__future__", "collections", "hmac", "typing", "uuid", "pydantic", "sqlalchemy"}
 # The command store contracts, the audit event contract PostgresAuditSink persists, and
 # the contract vocabularies its CHECK constraints are derived from (pure models/enums).
+# Task 031: the integration connection METADATA contract only (never the secret store,
+# drivers, service, definitions with credentials, or any business integration).
 ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
-               "app.execution.models", "app.governance.policy", "app.context.models")  # fmt: skip
+               "app.execution.models", "app.governance.policy", "app.context.models",
+               "app.integration_management.connections")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -125,3 +128,18 @@ def test_persistence_does_not_touch_the_agno_schema() -> None:
     from app.persistence import PRODUCT_SCHEMA, write_commands
 
     assert PRODUCT_SCHEMA == "product" and write_commands.schema == "product"
+
+
+def test_no_business_data_mirror_tables() -> None:
+    """Task 031: Product persistence holds Product-owned state only. Source systems stay
+    authoritative for business data, which is never mirrored into Product tables."""
+    from app.persistence import product_metadata
+
+    names = set(product_metadata.tables)
+    assert names == {"product.write_commands", "product.audit_events",
+                     "product.integration_connections"}  # fmt: skip
+    for path in PERSISTENCE_FILES:
+        text = path.read_text()
+        for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",
+                          "NativeCommerceAdapter", "secret_value", "get_secret_value"):  # fmt: skip
+            assert forbidden not in text, (path.name, forbidden)

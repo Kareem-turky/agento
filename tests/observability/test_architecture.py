@@ -121,15 +121,20 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
         "settings", "runtime_settings", "model",
     ]  # fmt: skip
     parameters = inspect.signature(create_app).parameters
-    assert list(parameters)[-1] == "observability"
+    # Task 031 appended ``integration_service`` after ``observability``.
+    assert list(parameters)[-2:] == ["observability", "integration_service"]
     assert parameters["observability"].default is None
+    assert parameters["integration_service"].default is None
 
 
 def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
     app = create_app(settings, runtime_settings, observability=RecordingObservability())
+    # Task 031's integration-management routes are pinned in tests/api; the observed
+    # Product surface below is unchanged (integration routes are not observed paths).
     product = sorted(
         (method, path) for method, path in effective_api_routes(app.routes)
-        if path.startswith("/api/") or path == "/health"
+        if (path.startswith("/api/") and not path.startswith("/api/v1/integrations/"))
+        or path == "/health"
     )  # fmt: skip
     assert product == [
         ("GET", "/api/v1/operations/reports/daily"),

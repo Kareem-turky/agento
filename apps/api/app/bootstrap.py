@@ -11,6 +11,10 @@ settings -> Product auth (inside ``create_app``) -> deployment composition
 * staging/production: refused (``DeploymentCompositionError``). No real business
   backend exists yet, and a deployment must not run on mock data or half-composed.
 
+Integration management (Task 031) is composed independently of the business backend
+(``app.composition.integrations``): connection metadata in PostgreSQL, credentials in
+``APP_INTEGRATION_SECRETS_DIR``; this build installs no integration type.
+
 The composition-owned resources are released when the application shuts down, or
 immediately if the application cannot be built. Startup never migrates the database.
 """
@@ -20,6 +24,7 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app.composition import build_deployment_composition
+from app.composition.integrations import build_integration_management
 from app.config import Settings, get_settings
 from app.main import create_app
 
@@ -35,6 +40,18 @@ def create_deployment_app(
     settings = settings or get_settings()
     composition = build_deployment_composition(settings, model=model)
     try:
+        integrations = build_integration_management(settings)
+    except BaseException:
+        composition.discard()
+        raise
+
+    async def close() -> None:
+        try:
+            await composition.close()
+        finally:
+            await integrations.close()
+
+    try:
         return create_app(
             settings,
             runtime_settings,
@@ -43,8 +60,12 @@ def create_deployment_app(
             operations_ticket_service=composition.operations_ticket_service,
             operations_ticket_query_service=composition.operations_ticket_query_service,
             daily_operations_service=composition.daily_operations_service,
-            shutdown_callback=composition.close,
+            integration_service=integrations.service,
+            shutdown_callback=close,
         )
     except BaseException:
-        composition.discard()
+        try:
+            composition.discard()
+        finally:
+            integrations.discard()
         raise

@@ -17,19 +17,42 @@ CLIENT = WEB / "lib" / "product-api" / "client.ts"
 API_ROUTES = WEB / "app" / "api" / "product"
 RUNTIME_DIRS = (WEB / "app", WEB / "lib", WEB / "components")
 
+# BFF route file -> {exported method: the one UPSTREAM key it proxies to}.
 EXPECTED_ROUTES = {
-    "health/route.ts": ("GET", "health"),
-    "operations/runs/route.ts": ("POST", "operationsRuns"),
-    "operations/reports/daily/route.ts": ("GET", "dailyReport"),
-    "operations/tickets/route.ts": ("POST", "tickets"),
-    "operations/tickets/commands/route.ts": ("GET", "ticketCommands"),
-}
+    "health/route.ts": {"GET": "health"},
+    "operations/runs/route.ts": {"POST": "operationsRuns"},
+    "operations/reports/daily/route.ts": {"GET": "dailyReport"},
+    "operations/tickets/route.ts": {"POST": "tickets"},
+    "operations/tickets/commands/route.ts": {"GET": "ticketCommands"},
+    # Task 031: integration management (metadata; secrets are write-only).
+    "integrations/catalog/route.ts": {"GET": "integrationsCatalog"},
+    "integrations/connections/route.ts": {"GET": "integrationConnections",
+                                          "POST": "integrationConnectionCreate"},
+    "integrations/connection/route.ts": {"GET": "integrationConnection",
+                                         "PUT": "integrationConnectionUpdate",
+                                         "DELETE": "integrationConnectionDelete"},
+    "integrations/connection/credentials/route.ts": {"PUT": "integrationCredentials"},
+    "integrations/connection/test/route.ts": {"POST": "integrationTest"},
+    "integrations/connection/enable/route.ts": {"POST": "integrationEnable"},
+    "integrations/connection/disable/route.ts": {"POST": "integrationDisable"},
+}  # fmt: skip
+INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
     "health": ("GET", "/health"),
     "operationsRuns": ("POST", "/api/v1/operations/runs"),
     "dailyReport": ("GET", "/api/v1/operations/reports/daily"),
     "tickets": ("POST", "/api/v1/operations/tickets"),
     "ticketCommands": ("GET", "/api/v1/operations/tickets/commands"),
+    "integrationsCatalog": ("GET", "/api/v1/integrations/catalog"),
+    "integrationConnections": ("GET", "/api/v1/integrations/connections"),
+    "integrationConnectionCreate": ("POST", "/api/v1/integrations/connections"),
+    "integrationConnection": ("GET", INTEGRATION_CONNECTION),
+    "integrationConnectionUpdate": ("PUT", INTEGRATION_CONNECTION),
+    "integrationConnectionDelete": ("DELETE", INTEGRATION_CONNECTION),
+    "integrationCredentials": ("PUT", f"{INTEGRATION_CONNECTION}/credentials"),
+    "integrationTest": ("POST", f"{INTEGRATION_CONNECTION}/test"),
+    "integrationEnable": ("POST", f"{INTEGRATION_CONNECTION}/enable"),
+    "integrationDisable": ("POST", f"{INTEGRATION_CONNECTION}/disable"),
 }
 
 
@@ -46,7 +69,7 @@ def code(path: Path) -> str:
 # ----- the BFF route allowlist ----------------------------------------------------------------
 
 
-def test_exactly_five_statically_named_product_routes() -> None:
+def test_exactly_the_statically_named_product_routes() -> None:
     files = sorted(str(p.relative_to(API_ROUTES)) for p in API_ROUTES.rglob("*") if p.is_file())
     assert files == sorted(EXPECTED_ROUTES)
     for path in API_ROUTES.rglob("*"):
@@ -58,18 +81,22 @@ def test_exactly_five_statically_named_product_routes() -> None:
 
 
 def test_each_route_exports_one_method_and_one_fixed_upstream() -> None:
-    for relative, (method, upstream) in EXPECTED_ROUTES.items():
+    for relative, methods in EXPECTED_ROUTES.items():
         source = code(API_ROUTES / relative)
-        exported = set(re.findall(r"export (?:async )?function (\w+)", source))
-        assert exported == {method}, relative
-        assert re.findall(r'proxyToProduct\(request, "(\w+)"', source) == [upstream], relative
+        exported = re.findall(r"export (?:async )?function (\w+)", source)
+        assert exported == list(methods), relative
+        assert re.findall(r'proxyToProduct\(request, "(\w+)"', source) == list(methods.values())
+        for method, upstream in methods.items():
+            assert UPSTREAM_PATHS[upstream][0] == method, (relative, method)
         assert 'export const dynamic = "force-dynamic";' in source
         assert "fetch(" not in source and "process.env" not in source
 
 
-def test_proxy_has_exactly_the_five_product_paths_and_no_agentos_path() -> None:
+def test_proxy_has_exactly_the_product_paths_and_no_agentos_path() -> None:
     source = code(PROXY)
-    found = dict(re.findall(r'(\w+): \{ method: "(?:GET|POST)", path: "([^"]+)" \}', source))
+    found = dict(
+        re.findall(r'(\w+): \{ method: "(?:GET|POST|PUT|DELETE)", path: "([^"]+)" \}', source)
+    )
     assert found == {key: path for key, (_, path) in UPSTREAM_PATHS.items()}
     for key, (method, path) in UPSTREAM_PATHS.items():
         assert f'{key}: {{ method: "{method}", path: "{path}" }}' in source
@@ -166,13 +193,18 @@ def test_client_exposes_explicit_functions_only() -> None:
     source = code(CLIENT)
     exported = set(re.findall(r"export (?:async )?function (\w+)", source))
     assert exported == {"getHealth", "runOperations", "getDailyReport", "createTicket",
-                        "getTicketCommand", "newIdempotencyKey", "looksLikeUuid"}  # fmt: skip
+                        "getTicketCommand", "newIdempotencyKey", "looksLikeUuid",
+                        "getIntegrationCatalog", "listIntegrationConnections",
+                        "getIntegrationConnection", "createIntegrationConnection",
+                        "updateIntegrationConnection", "replaceIntegrationCredentials",
+                        "testIntegrationConnection", "setIntegrationConnectionEnabled",
+                        "deleteIntegrationConnection"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
-    assert paths == {"/api/product/health", "/api/product/operations/runs",
-                     "/api/product/operations/reports/daily", "/api/product/operations/tickets",
-                     "/api/product/operations/tickets/commands"}  # fmt: skip
+    assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
+                     for relative in EXPECTED_ROUTES}  # fmt: skip
     assert 'credentials: "omit"' in source and 'cache: "no-store"' in source
     assert "crypto.randomUUID()" in source
+    assert source.count('method: "DELETE"') == 1 and source.count('method: "PUT"') == 2
     # The key is only ever an Authorization header value, never part of a URL or body.
     assert "`Bearer ${apiKey}`" in source
     assert not re.search(r"(URLSearchParams|JSON\.stringify)\([^)]*apiKey", source)
@@ -373,3 +405,59 @@ def test_session_reducer_tests_exist_and_run_offline() -> None:
         "never holds the key",
     ):
         assert case in script, case
+
+
+# ----- Task 031: the generic integrations settings page ------------------------------------------
+
+
+INTEGRATIONS_UI = WEB / "components" / "integrations"
+
+
+def test_integrations_page_is_generic_and_renders_no_provider_html() -> None:
+    page = code(WEB / "app" / "settings" / "integrations" / "page.tsx")
+    assert "<IntegrationsSettings />" in page
+    sources = {p.name: code(p) for p in INTEGRATIONS_UI.glob("*.tsx")}
+    assert set(sources) == {"IntegrationsSettings.tsx", "ConnectionForm.tsx"}
+    joined = "\n".join(sources.values()).lower()
+    for provider in ("shopify", "woocommerce", "whatsapp", "meta ads", "google ads", "bosta",
+                     "shipblu", "f" + "ulfly"):  # fmt: skip
+        assert provider not in joined, provider  # no hard-coded provider cards
+    for path in [
+        *INTEGRATIONS_UI.glob("*.tsx"),
+        WEB / "app" / "settings" / "integrations" / "page.tsx",
+    ]:
+        assert "dangerouslySetInnerHTML" not in path.read_text(), path.name
+        assert "innerHTML" not in path.read_text(), path.name
+    settings = sources["IntegrationsSettings.tsx"]
+    assert "No integrations are installed in this build." in settings  # empty catalog state
+    assert "definition.connectable ?" in settings  # Connect only for connectable definitions
+    assert "Last known test" in settings and "configured_secret_fields" in settings
+    assert "useState<string | null>(null)" in settings  # key in memory only
+    assert "busyRef.current" in settings  # one mutation at a time
+    for forbidden in ("setInterval", "setTimeout", "for (", "while ("):
+        assert forbidden not in settings, forbidden  # never auto-retried
+
+
+def test_secret_inputs_are_write_only_and_never_prefilled() -> None:
+    form = code(INTEGRATIONS_UI / "ConnectionForm.tsx")
+    assert form.count('type="password"') == 1 and 'autoComplete="new-password"' in form
+    assert 'if (field.kind === "secret") continue;' in form  # never pre-filled from metadata
+    assert 'value={secrets[field.name] ?? ""}' in form
+    assert "setSecrets({});" in form  # cleared after every submission
+    assert "useState<Record<string, string>>({})" in form
+    # Editing settings never sends credentials; replacing them never sends settings.
+    assert 'const showSecrets = mode !== "edit";' in form
+    assert 'const showConfig = mode !== "credentials";' in form
+    settings = code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")
+    assert (
+        "connection.config[" not in settings
+        or "secret" not in settings.split("connection.config[")[1][:40]
+    )
+    assert "get_secret_value" not in settings
+
+
+def test_console_links_to_integrations_settings() -> None:
+    console = component("Console.tsx")
+    assert '<Link href="/settings/integrations">Integrations</Link>' in console
+    settings = code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")
+    assert '<Link href="/">Operations Console</Link>' in settings
