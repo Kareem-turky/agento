@@ -3,7 +3,8 @@
     settings -> (database configured?)  no  -> no service (Agent routes answer 503;
                                                Agents keep their definition defaults)
              -> engine + sessions -> PostgresAgentConfigurationRepository
-             -> ProductAgentCatalog (this build: the Operations Agent only)
+             -> ProductCapabilityGraph: the Agent, Skill and Task catalogs, validated
+                against each other (fails closed: an inconsistent build does not start)
              -> GovernanceGate(AGENT_MANAGEMENT_ACTIONS, HumanOperatorPermissionEvaluator)
              -> handlers + ExecutionCoordinator (+ PostgresAuditSink: the existing audit)
              -> AgentManagementService
@@ -41,8 +42,8 @@ def build_agent_management(settings: Settings) -> AgentManagementComposition:
         return AgentManagementComposition()
     # Imported only here (called after the business backend was allowed): building a
     # refused deployment never loads persistence or Agent management.
-    from app.agent_management import build_default_agent_catalog
     from app.agent_management.actions import AGENT_MANAGEMENT_ACTIONS
+    from app.agent_management.capabilities import build_default_capability_graph
     from app.agent_management.handlers import build_agent_management_handlers
     from app.agent_management.permissions import HumanOperatorPermissionEvaluator
     from app.agent_management.service import AgentManagementService
@@ -55,6 +56,7 @@ def build_agent_management(settings: Settings) -> AgentManagementComposition:
         create_session_factory,
     )
 
+    capabilities = build_default_capability_graph()  # before any resource is acquired
     engine = create_product_engine(str(settings.database_url))
     released = False
 
@@ -81,12 +83,13 @@ def build_agent_management(settings: Settings) -> AgentManagementComposition:
     try:
         sessions = create_session_factory(engine)
         repository = PostgresAgentConfigurationRepository(sessions)
-        catalog = build_default_agent_catalog()
+        catalog = capabilities.agents
         gate = GovernanceGate(ActionCatalog(AGENT_MANAGEMENT_ACTIONS),
                               permissions=HumanOperatorPermissionEvaluator())  # fmt: skip
         handlers = ActionHandlerRegistry(build_agent_management_handlers(catalog, repository))
         coordinator = ExecutionCoordinator(gate, handlers, PostgresAuditSink(sessions))
-        service = AgentManagementService(catalog, repository, gate, coordinator)
+        service = AgentManagementService(catalog, repository, gate, coordinator,
+                                         capabilities=capabilities)  # fmt: skip
         return AgentManagementComposition(service=service, close=close, discard=discard)
     except BaseException:
         discard()

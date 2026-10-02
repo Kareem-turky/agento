@@ -42,6 +42,11 @@ EXPECTED_ROUTES = {
     "agent-management/agent/enable/route.ts": {"POST": "agentEnable"},
     "agent-management/agent/disable/route.ts": {"POST": "agentDisable"},
     "agent-management/agent/configuration/route.ts": {"DELETE": "agentReset"},
+    # Task 033: read-only Product Skill / Task metadata.
+    "agent-management/skills/route.ts": {"GET": "skillsCatalog"},
+    "agent-management/skill/route.ts": {"GET": "skillDetail"},
+    "agent-management/tasks/route.ts": {"GET": "tasksCatalog"},
+    "agent-management/task/route.ts": {"GET": "taskDetail"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -66,6 +71,10 @@ UPSTREAM_PATHS = {
     "agentEnable": ("POST", "/api/v1/agents/agent/enable"),
     "agentDisable": ("POST", "/api/v1/agents/agent/disable"),
     "agentReset": ("DELETE", "/api/v1/agents/agent/configuration"),
+    "skillsCatalog": ("GET", "/api/v1/skills/catalog"),
+    "skillDetail": ("GET", "/api/v1/skills/skill"),
+    "tasksCatalog": ("GET", "/api/v1/tasks/catalog"),
+    "taskDetail": ("GET", "/api/v1/tasks/task"),
 }
 
 
@@ -212,7 +221,8 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "updateIntegrationConnection", "replaceIntegrationCredentials",
                         "testIntegrationConnection", "setIntegrationConnectionEnabled",
                         "deleteIntegrationConnection", "getAgentCatalog", "getAgent",
-                        "listAgents", "setAgentEnabled", "resetAgentConfiguration"}  # fmt: skip
+                        "listAgents", "setAgentEnabled", "resetAgentConfiguration",
+                        "getSkillCatalog", "getSkill", "getTaskCatalog", "getTask"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -491,8 +501,10 @@ def test_agents_page_is_lifecycle_management_only() -> None:
     settings = code(AGENTS_UI / "AgentsSettings.tsx")
     # Product API only: the explicit Agent-management client functions, never AgentOS.
     calls = set(re.findall(r"\b(listAgents|setAgentEnabled|resetAgentConfiguration|"
-                           r"getAgentCatalog|getAgent)\(", settings))  # fmt: skip
-    assert calls == {"listAgents", "setAgentEnabled", "resetAgentConfiguration"}
+                           r"getAgentCatalog|getAgent|getSkillCatalog|getSkill|getTaskCatalog|"
+                           r"getTask)\(", settings))  # fmt: skip
+    assert calls == {"listAgents", "setAgentEnabled", "resetAgentConfiguration",
+                     "getSkillCatalog", "getTaskCatalog"}  # fmt: skip
     assert "fetch(" not in settings and "/api/" not in settings
     for agentos in ('"/agents', '"/info', '"/sessions', "os_security", "AgentOS("):
         assert agentos not in settings, agentos
@@ -517,3 +529,14 @@ def test_disabled_operations_agent_message_in_the_console() -> None:
         'if (context === "analysis") return "Operations Agent is disabled (Settings → Agents)";'
         in ui
     )
+
+
+def test_skills_and_tasks_are_read_only_in_the_ui() -> None:
+    settings = code(AGENTS_UI / "AgentsSettings.tsx")
+    section = settings.split("function AgentCapabilities", 1)[1]
+    # Display only: no button, input, form or editor inside the Skills/Tasks section.
+    for control in ("<button", "<input", "<form", "<textarea", "<select", "onClick",
+                    "onChange", "contentEditable"):  # fmt: skip
+        assert control not in section, control
+    assert "Task limits are contract metadata" in section
+    assert "acceptance_criteria" in section and "allowed_write_actions" in section

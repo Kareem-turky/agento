@@ -123,6 +123,15 @@ write do not depend on it.
 There is no prompt editing, no Agent creation and no dynamic code loading, and this does
 not lift the production blocker below.
 
+## Product Skills and Tasks (metadata only)
+
+The Operations Agent's capabilities are described by three Skills and three Tasks with
+explicit acceptance criteria. These are immutable, read-only Product metadata validated at
+startup (see [`docs/SKILLS_AND_TASKS.md`](SKILLS_AND_TASKS.md)).
+
+- They change no runtime behaviour and grant nothing.
+- They add no persistence, and no Task executor exists yet.
+
 ## Production business use is still blocked
 
 **PRODUCTION BUSINESS USE IS STILL BLOCKED.**

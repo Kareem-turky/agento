@@ -100,6 +100,19 @@ answer `409` before the model or any tool runs.
 There is no prompt editor, no Agent creation and no dynamic code loading, and Agents can
 never manage Agents. See [`docs/AGENTS.md`](docs/AGENTS.md).
 
+**Skills and Tasks** are immutable, read-only Product metadata. An Agent is WHO, a Skill is
+WHAT it can do, and a Task is WHAT job is requested. Tools are HOW a read or write is
+invoked, and Workflows are deterministic processes. The Operations Agent declares three
+Skills (`operations.order_inspection`, `operations.daily_analysis`,
+`operations.ticket_escalation`) and three Tasks (`operations.inspect_order`,
+`operations.analyze_daily`, `operations.escalate_issue`) with explicit acceptance
+criteria.
+
+The cross-catalog graph is validated at startup and fails closed. The catalogs are
+inspected at `/api/v1/skills/*` and `/api/v1/tasks/*` (`agents.read`, read-only) and on
+**Settings → Agents**. Task limits are contract metadata, not a security boundary. There
+is no Task executor yet. See [`docs/SKILLS_AND_TASKS.md`](docs/SKILLS_AND_TASKS.md).
+
 ## 2. High-level architecture
 
 ```
@@ -355,8 +368,8 @@ never authorization, policy, verification or business truth, and is never stored
 PostgreSQL. It lives in `app/observability/`:
 
 - **What is observed:** every request to the five original Product HTTP routes
-  (`/health` and the four operations routes; the integration- and Agent-management routes
-  are not Product-observed yet) (`http.request`,
+  (`/health` and the four operations routes; the integration-, Agent- and Skill/Task-
+  management routes are not Product-observed yet) (`http.request`,
   by `ProductObservabilityMiddleware`), and the Product services behind them:
   `operations.agent_run`, `operations.daily_report`, `operations.ticket_command` and
   `operations.ticket_command_query` (transparent decorators of the service contracts,

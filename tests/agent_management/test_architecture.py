@@ -9,8 +9,9 @@ from app.agent_management import OPERATIONS_AGENT_DEFINITION, build_default_agen
 
 APP = Path(app.__file__).parent
 PACKAGE = Path(app.agent_management.__file__).parent
-DOMAIN = ("definitions.py", "catalog.py", "configuration.py", "state.py")
-STDLIB = {"__future__", "collections", "datetime", "enum", "types", "typing"}
+DOMAIN = ("definitions.py", "catalog.py", "configuration.py", "state.py", "skills.py",
+          "tasks.py", "capabilities.py")  # fmt: skip
+STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "types", "typing"}
 PROVIDERS = ("shopify", "woocommerce", "whatsapp", "bosta", "shipblu", "meta ads",
              "google ads", "f" + "ulfly")  # fmt: skip
 
@@ -30,6 +31,7 @@ def test_package_layout() -> None:
         "__init__.py", *DOMAIN, "actions.py", "handlers.py", "permissions.py", "service.py",
         "runtime.py",
     }  # fmt: skip
+    assert len(DOMAIN) == 7
 
 
 def test_domain_depends_only_on_the_standard_library_and_pydantic() -> None:
@@ -106,7 +108,8 @@ def test_agent_management_is_wired_only_through_composition_main_and_routes() ->
     users = {str(p.relative_to(APP)) for p in APP.rglob("*.py")
              if PACKAGE not in p.parents
              and any(m.startswith("app.agent_management") for m in imports(p))}  # fmt: skip
-    assert users == {"main.py", "routes/agents.py", "composition/agents.py",
+    assert users == {"main.py", "routes/agents.py", "routes/capabilities.py",
+                     "composition/agents.py",
                      "persistence/agent_configurations.py"}  # fmt: skip
 
 

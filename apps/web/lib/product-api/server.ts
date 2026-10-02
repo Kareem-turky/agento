@@ -39,6 +39,10 @@ export const UPSTREAM = {
   agentEnable: { method: "POST", path: "/api/v1/agents/agent/enable" },
   agentDisable: { method: "POST", path: "/api/v1/agents/agent/disable" },
   agentReset: { method: "DELETE", path: "/api/v1/agents/agent/configuration" },
+  skillsCatalog: { method: "GET", path: "/api/v1/skills/catalog" },
+  skillDetail: { method: "GET", path: "/api/v1/skills/skill" },
+  tasksCatalog: { method: "GET", path: "/api/v1/tasks/catalog" },
+  taskDetail: { method: "GET", path: "/api/v1/tasks/task" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;

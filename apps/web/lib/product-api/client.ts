@@ -15,6 +15,10 @@ import type {
   OperationsRunResponse,
   ProductErrorKind,
   ProductResult,
+  SkillCatalogResponse,
+  SkillResponse,
+  TaskCatalogResponse,
+  TaskResponse,
   TicketCommandStatusResponse,
   TicketCreateResponse,
 } from "./types";
@@ -38,6 +42,10 @@ const PATHS = {
   agentEnable: "/api/product/agent-management/agent/enable",
   agentDisable: "/api/product/agent-management/agent/disable",
   agentReset: "/api/product/agent-management/agent/configuration",
+  skillCatalog: "/api/product/agent-management/skills",
+  skillDetail: "/api/product/agent-management/skill",
+  taskCatalog: "/api/product/agent-management/tasks",
+  taskDetail: "/api/product/agent-management/task",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -165,6 +173,7 @@ const isAgentDefinition = (v: unknown): boolean => {
   return (
     isString(v.agent_id) && isString(v.name) && isString(v.description) && isString(v.category) &&
     isString(v.lifecycle) && typeof v.default_enabled === "boolean" && isStringArray(v.capabilities) &&
+    isStringArray(v.skill_ids) && isStringArray(v.task_ids) &&
     isNumber(m.tool_call_limit) && isStringArray(m.action_names) && isStringArray(m.requirements) &&
     isStringArray(m.safety) && Array.isArray(m.tools) &&
     m.tools.every((t) => isObject(t) && isString(t.tool_id) && isString(t.access) &&
@@ -186,6 +195,41 @@ const isAgentCatalog: Guard<AgentCatalogResponse> = (v): v is AgentCatalogRespon
 
 const isAgentResponse: Guard<AgentResponse> = (v): v is AgentResponse =>
   isObject(v) && isString(v.request_id) && isAgentView(v.agent);
+
+const isSkill = (v: unknown): boolean =>
+  isObject(v) && isString(v.skill_id) && isString(v.name) && isString(v.description) &&
+  isString(v.category) && isString(v.lifecycle) && isStringArray(v.capabilities) &&
+  isStringArray(v.tool_ids) && isStringArray(v.requirements) && isStringArray(v.agent_ids) &&
+  isStringArray(v.task_ids);
+
+const isTask = (v: unknown): boolean => {
+  if (!isObject(v) || !isObject(v.limits)) return false;
+  const l = v.limits;
+  return (
+    isString(v.task_id) && isString(v.name) && isString(v.description) && isString(v.category) &&
+    isString(v.lifecycle) && isStringArray(v.skill_ids) && isStringArray(v.agent_ids) &&
+    Array.isArray(v.inputs) &&
+    v.inputs.every((f) => isObject(f) && isString(f.name) && isString(f.label) && isString(f.kind) &&
+      typeof f.required === "boolean" && isString(f.description) &&
+      (f.max_length === null || isNumber(f.max_length))) &&
+    Array.isArray(v.acceptance_criteria) &&
+    v.acceptance_criteria.every((c) => isObject(c) && isString(c.code) && isString(c.description)) &&
+    isNumber(l.max_tool_calls) && typeof l.writes_possible === "boolean" &&
+    isStringArray(l.allowed_write_actions) && typeof l.requires_explicit_write_intent === "boolean"
+  );
+};
+
+const isSkillCatalog: Guard<SkillCatalogResponse> = (v): v is SkillCatalogResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.skills) && v.skills.every(isSkill);
+
+const isSkillResponse: Guard<SkillResponse> = (v): v is SkillResponse =>
+  isObject(v) && isString(v.request_id) && isSkill(v.skill);
+
+const isTaskCatalog: Guard<TaskCatalogResponse> = (v): v is TaskCatalogResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.tasks) && v.tasks.every(isTask);
+
+const isTaskResponse: Guard<TaskResponse> = (v): v is TaskResponse =>
+  isObject(v) && isString(v.request_id) && isTask(v.task);
 
 // ----- the Product functions ---------------------------------------------------------------
 
@@ -368,6 +412,26 @@ export function setAgentEnabled(apiKey: string, agentId: string, enabled: boolea
 
 export function resetAgentConfiguration(apiKey: string, agentId: string): Promise<ProductResult<AgentResponse>> {
   return send(agentQuery(PATHS.agentReset, agentId), { method: "DELETE", headers: authorized(apiKey) }, isAgentResponse);
+}
+
+// ----- Product Skills and Tasks (read-only metadata; Product API only) -----------------------
+
+export function getSkillCatalog(apiKey: string): Promise<ProductResult<SkillCatalogResponse>> {
+  return send(PATHS.skillCatalog, { method: "GET", headers: authorized(apiKey) }, isSkillCatalog);
+}
+
+export function getSkill(apiKey: string, skillId: string): Promise<ProductResult<SkillResponse>> {
+  const path = `${PATHS.skillDetail}?${new URLSearchParams({ skill_id: skillId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isSkillResponse);
+}
+
+export function getTaskCatalog(apiKey: string): Promise<ProductResult<TaskCatalogResponse>> {
+  return send(PATHS.taskCatalog, { method: "GET", headers: authorized(apiKey) }, isTaskCatalog);
+}
+
+export function getTask(apiKey: string, taskId: string): Promise<ProductResult<TaskResponse>> {
+  const path = `${PATHS.taskDetail}?${new URLSearchParams({ task_id: taskId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isTaskResponse);
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

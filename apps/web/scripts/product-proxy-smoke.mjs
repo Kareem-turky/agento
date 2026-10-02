@@ -96,6 +96,7 @@ const stub = createServer((req, res) => {
     }
     if (path.startsWith("/api/v1/integrations/")) return integrationReply(res, req.method, path);
     if (path === "/api/v1/agents" || path.startsWith("/api/v1/agents/")) return agentReply(res, req.method, path);
+    if (path.startsWith("/api/v1/skills/") || path.startsWith("/api/v1/tasks/")) return capabilityReply(res, req.method, path);
     return reply(res, 404, { detail: "Not Found" });
   });
 });
@@ -130,6 +131,19 @@ function agentReply(res, method, path) {
   };
   const answer = routes[`${method} ${path}`];
   return answer ? reply(res, answer[0], answer[1]) : reply(res, 405, { detail: "Method Not Allowed" });
+}
+
+// Product Skills and Tasks (Task 033): read-only metadata.
+function capabilityReply(res, method, path) {
+  if (method !== "GET") return reply(res, 405, { detail: "Method Not Allowed" });
+  const id = { request_id: UPSTREAM_REQUEST_ID };
+  const routes = {
+    "/api/v1/skills/catalog": { ...id, skills: [] },
+    "/api/v1/skills/skill": { ...id, skill: {} },
+    "/api/v1/tasks/catalog": { ...id, tasks: [] },
+    "/api/v1/tasks/task": { ...id, task: {} },
+  };
+  return path in routes ? reply(res, 200, routes[path]) : reply(res, 404, { detail: "Not Found" });
 }
 
 function integrationReply(res, method, path) {
@@ -381,6 +395,36 @@ async function main() {
     }
     check(received.length === 0, "agents: refused methods and unknown paths never reached the upstream");
 
+    // 8. Product Skills / Tasks: GET-only, one fixed upstream each, Authorization only.
+    const capabilityCalls = [
+      ["/api/product/agent-management/skills", "/api/v1/skills/catalog"],
+      ["/api/product/agent-management/skill?skill_id=operations.order_inspection", "/api/v1/skills/skill?skill_id=operations.order_inspection"],
+      ["/api/product/agent-management/tasks", "/api/v1/tasks/catalog"],
+      ["/api/product/agent-management/task?task_id=operations.inspect_order", "/api/v1/tasks/task?task_id=operations.inspect_order"],
+    ];
+    for (const [bffPath, upstreamPath] of capabilityCalls) {
+      received.length = 0;
+      response = await fetch(`${base}${bffPath}`, { headers: hostile });
+      await response.text();
+      const call = received[0];
+      check(response.status === 200 && received.length === 1 && call.method === "GET" && call.url === upstreamPath,
+            `skills/tasks: GET ${bffPath.split("?")[0]} -> exact upstream (${response.status})`);
+      check(call?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (call?.headers ?? {})),
+            `skills/tasks: GET ${bffPath.split("?")[0]} forwards Authorization only`);
+    }
+    received.length = 0;
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+      for (const path of ["/api/product/agent-management/skills", "/api/product/agent-management/task"]) {
+        response = await fetch(`${base}${path}`, { method, headers: hostile });
+        check(response.status === 405, `skills/tasks: ${method} ${path} refused (${response.status})`);
+      }
+    }
+    for (const path of ["/api/product/agent-management/task/run", "/api/product/agent-management/skills/install"]) {
+      response = await fetch(`${base}${path}`, { headers: hostile });
+      check(response.status === 404, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "skills/tasks: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -395,6 +439,8 @@ async function main() {
       `/api/product/agent-management/agents?agent_id=operations`,
       `/api/product/agent-management/agent?agent_id=operations&agent_id=operations`,
       `/api/product/agent-management/agent?agent_id=operations&module=app.agents`,
+      `/api/product/agent-management/skills?skill_id=operations.order_inspection`,
+      `/api/product/agent-management/task?task_id=operations.inspect_order&code=x`,
     ];
     for (const path of rejected) {
       response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
@@ -469,7 +515,8 @@ async function main() {
     })(staticDir);
     const clientCode = bundles.join("\n");
     check(bundles.length > 0 && !clientCode.includes("PRODUCT_API_ORIGIN") && !clientCode.includes("/api/v1/operations") &&
-          !clientCode.includes("/api/v1/integrations") && !clientCode.includes("/api/v1/agents"),
+          !clientCode.includes("/api/v1/integrations") && !clientCode.includes("/api/v1/agents") &&
+          !clientCode.includes("/api/v1/skills") && !clientCode.includes("/api/v1/tasks"),
           "client bundles contain no server origin variable or upstream Product path");
 
     // 14. upstream unavailable (stub stopped).

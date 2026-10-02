@@ -28,6 +28,9 @@ CATALOG_READ = _action("agents.catalog.read", "List the Product Agents installed
 CONFIGURATION_READ = _action(
     "agents.configuration.read", "Read Agent configuration and effective state.", write=False
 )
+# Task 033: read-only inspection of the immutable Skill and Task catalogs (agents.read).
+SKILLS_READ = _action("agents.skills.read", "Read the Product Skill catalog.", write=False)
+TASKS_READ = _action("agents.tasks.read", "Read the Product Task catalog.", write=False)
 AGENT_ENABLE = _action("agents.agent.enable", "Enable a Product Agent.", write=True)
 AGENT_DISABLE = _action("agents.agent.disable", "Disable a Product Agent.", write=True)
 CONFIGURATION_RESET = _action(
@@ -35,5 +38,6 @@ CONFIGURATION_RESET = _action(
 )
 
 AGENT_MANAGEMENT_ACTIONS: tuple[ActionDefinition, ...] = (
-    CATALOG_READ, CONFIGURATION_READ, AGENT_ENABLE, AGENT_DISABLE, CONFIGURATION_RESET,
+    CATALOG_READ, CONFIGURATION_READ, SKILLS_READ, TASKS_READ, AGENT_ENABLE, AGENT_DISABLE,
+    CONFIGURATION_RESET,
 )  # fmt: skip

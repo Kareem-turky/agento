@@ -22,7 +22,7 @@ npm run typecheck && npm run build && npm run smoke:proxy
 | Daily report | `GET /api/v1/operations/reports/daily` | The deterministic backend report as returned: business date, timezone, generated time, metrics, every status count (zeros included), findings in API order, `findings_total`/truncation and coverage (inventory is shown as **not analyzed**). A blank date is omitted so the Product decides the store’s business day. |
 | Operational ticket | `POST /api/v1/operations/tickets` | Explicit write (title ≤ 160, description ≤ 4000), never through the Agent. |
 | Command status | `GET /api/v1/operations/tickets/commands` | Manual lookup (auto-filled from the latest ticket), no polling. A 404 is only “Ticket command not found”. |
-| Settings → Agents (`/settings/agents`) | `/api/v1/agents/*` | Product Agent lifecycle management: installed Product Agents (only the Operations Agent), effective availability, read-only manifest summary, Enable / Disable / Reset to default. No prompt, model, tool or code editor and no Agent creation. Product API only, never AgentOS. See [`docs/AGENTS.md`](../../docs/AGENTS.md). |
+| Settings → Agents (`/settings/agents`) | `/api/v1/agents/*` | Product Agent lifecycle management: installed Product Agents (only the Operations Agent), effective availability, read-only manifest summary, Enable / Disable / Reset to default, plus each Agent's read-only Skills (tool bindings, read/write) and Tasks (required Skills, declared envelope, acceptance criteria) from `/api/v1/skills/*` and `/api/v1/tasks/*`. No prompt, model, tool, Skill, Task or code editor and no Agent creation. Product API only, never AgentOS. See [`docs/AGENTS.md`](../../docs/AGENTS.md). |
 | Settings → Integrations (`/settings/integrations`) | `/api/v1/integrations/*` | Generic Connections UI: installed integration types grouped by category (this build installs none, and says so), connections with enabled state and last-known test result, a generic form (text/URL/boolean/write-only secret fields), Test, Enable/Disable, Edit settings, Replace credentials, Delete. Secret inputs are never pre-filled. See [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md). |
 
 ## Security model
@@ -35,7 +35,8 @@ npm run typecheck && npm run build && npm run smoke:proxy
   `connection/credentials`, `connection/test`, `connection/enable`,
   `connection/disable`), and the Agent-management routes under
   `/api/product/agent-management/` (`catalog`, `agents`, `agent`, `agent/enable`,
-  `agent/disable`, `agent/configuration`; deliberately not `/api/product/agents`, which
+  `agent/disable`, `agent/configuration`, and the read-only `skills`, `skill`, `tasks`,
+  `task`; deliberately not `/api/product/agents`, which
   stays unproxied like every AgentOS-like path). Each exported method maps to exactly one
   Product API method and path (`lib/product-api/server.ts`). There is no catch-all route, no client-supplied
   path or origin, and **AgentOS routes (`/agents`, `/info`, `/sessions`, …) are never
@@ -47,8 +48,8 @@ npm run typecheck && npm run build && npm run smoke:proxy
   `Idempotency-Key`, plus its own `Content-Type`. Browser cookies, `Host`,
   `X-Forwarded-*`, `X-Request-ID`, `Referer`, `Origin` and custom headers are dropped.
   Only `store_id`/`business_date` (daily report), `command_id` (command status),
-  `connection_id` (single-connection integration routes) and `agent_id` (single-Agent
-  routes) pass,
+  `connection_id` (single-connection integration routes), `agent_id` (single-Agent
+  routes), `skill_id` and `task_id` (single Skill/Task routes) pass,
   each at most once; any other or repeated query parameter is rejected with 422. Request bodies are capped at 16 KiB (413),
   responses at 1 MiB; redirects are never followed; only `Content-Type`,
   `Cache-Control: no-store` and the Product `X-Request-ID` are returned. Timeouts,

@@ -66,6 +66,10 @@ OPERATIONS_AGENT_DEFINITION = AgentDefinition(
             AgentSafetyProperty.NOT_EXPOSED_THROUGH_AGENTOS,
         }),
     ),
+    skill_ids=frozenset({"operations.order_inspection", "operations.daily_analysis",
+                         "operations.ticket_escalation"}),
+    task_ids=frozenset({"operations.inspect_order", "operations.analyze_daily",
+                        "operations.escalate_issue"}),
 )  # fmt: skip
 
 

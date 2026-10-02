@@ -105,3 +105,7 @@ class AgentDefinition(BaseModel):
     default_enabled: bool
     capabilities: frozenset[DottedId] = frozenset()
     manifest: AgentManifest
+    # Task 033: the Product Skills this Agent possesses and the Product Tasks it supports
+    # (IDs resolved and validated against the Skill and Task catalogs; never Agno objects).
+    skill_ids: frozenset[DottedId] = frozenset()
+    task_ids: frozenset[DottedId] = frozenset()

@@ -141,9 +141,20 @@ proxied or used by the Product UI.
   no "create Agent";
 - keeps the Product API key in page memory only.
 
+## Skills and Tasks (Task 033)
+
+`AgentDefinition.skill_ids` and `AgentDefinition.task_ids` name the Product Skills the
+Agent possesses and the Product Tasks it supports. They are resolved and validated, failing
+closed, against the immutable Skill and Task catalogs; see
+[`SKILLS_AND_TASKS.md`](SKILLS_AND_TASKS.md).
+
+- Skills bind to tool ids of this manifest.
+- Task limits never exceed this manifest's tool-call limit.
+- Neither grants anything.
+
 ## Not in this task
 
-These are not implemented: Skills or tasks (Task 033), knowledge, company operating
+These are not implemented: a Task executor (the Workflow Platform comes later), knowledge, company operating
 context, Agent-specific model policy, controlled tool bindings and new business Agents.
 The domain keeps these separate (definition, configuration, runtime) so they can be added
 later without rewriting Agent management. Agent-management routes are not yet part of

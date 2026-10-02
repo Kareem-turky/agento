@@ -10,8 +10,21 @@
 // plain text.
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { listAgents, resetAgentConfiguration, setAgentEnabled } from "../../lib/product-api/client";
-import type { AgentView, ProductErrorKind, ProductResult } from "../../lib/product-api/types";
+import {
+  getSkillCatalog,
+  getTaskCatalog,
+  listAgents,
+  resetAgentConfiguration,
+  setAgentEnabled,
+} from "../../lib/product-api/client";
+import type {
+  AgentDefinitionView,
+  AgentView,
+  ProductErrorKind,
+  ProductResult,
+  SkillView,
+  TaskView,
+} from "../../lib/product-api/types";
 import { Badge, Card, ErrorNotice, Mono, Timestamp, type Tone } from "../console/ui";
 
 const AVAILABILITY: Record<string, [string, Tone]> = {
@@ -120,6 +133,8 @@ export function AgentsSettings() {
 
 function AgentsWorkspace({ apiKey }: { apiKey: string }) {
   const [agents, setAgents] = useState<AgentView[] | null>(null);
+  const [skills, setSkills] = useState<Map<string, SkillView>>(new Map());
+  const [tasks, setTasks] = useState<Map<string, TaskView>>(new Map());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -128,12 +143,19 @@ function AgentsWorkspace({ apiKey }: { apiKey: string }) {
 
   const load = useCallback(async () => {
     setLoadError(null);
-    const result = await listAgents(apiKey);
+    const [result, skillResult, taskResult] = await Promise.all([
+      listAgents(apiKey),
+      getSkillCatalog(apiKey),
+      getTaskCatalog(apiKey),
+    ]);
     if (!result.ok) {
       setLoadError(errorText(result.error));
       return;
     }
     setAgents(result.data.agents);
+    // Skills and Tasks are read-only Product metadata; the Agent list still shows without them.
+    if (skillResult.ok) setSkills(new Map(skillResult.data.skills.map((skill) => [skill.skill_id, skill])));
+    if (taskResult.ok) setTasks(new Map(taskResult.data.tasks.map((task) => [task.task_id, task])));
   }, [apiKey]);
 
   useEffect(() => {
@@ -218,6 +240,7 @@ function AgentsWorkspace({ apiKey }: { apiKey: string }) {
                       <p className="field__hint">Requires: {manifest.requirements.join(", ") || "nothing"}</p>
                       <p className="field__hint">Safety: {manifest.safety.join(", ") || "none declared"}</p>
                     </details>
+                    <AgentCapabilities definition={definition} skills={skills} tasks={tasks} />
                   </div>
                   <div className="form__actions">
                     {state.enabled ? (
@@ -245,5 +268,79 @@ function AgentsWorkspace({ apiKey }: { apiKey: string }) {
         )}
       </Card>
     </>
+  );
+}
+
+
+/** Read-only view of an Agent's Product Skills and Tasks (no controls of any kind). */
+function AgentCapabilities({ definition, skills, tasks }: {
+  definition: AgentDefinitionView;
+  skills: Map<string, SkillView>;
+  tasks: Map<string, TaskView>;
+}) {
+  const access = new Map(definition.manifest.tools.map((tool) => [tool.tool_id, tool.access]));
+  return (
+    <div className="capabilities">
+      <p className="field__hint">
+        Skills and Tasks are read-only Product metadata. Task limits are contract metadata;
+        Product governance still decides every action.
+      </p>
+      <h4 className="capabilities__title">Skills ({definition.skill_ids.length})</h4>
+      <ul className="capabilities__list">
+        {definition.skill_ids.map((id) => {
+          const skill = skills.get(id);
+          return (
+            <li key={id}>
+              <strong>{skill ? skill.name : id}</strong> <Mono>{id}</Mono>
+              {skill ? <span className="field__hint"> {skill.description}</span> : null}
+              {skill ? (
+                <span className="capabilities__tools">
+                  {skill.tool_ids.map((toolId) => (
+                    <span key={toolId}>
+                      <Mono>{toolId}</Mono>{" "}
+                      <Badge tone={access.get(toolId) === "write" ? "attention" : "neutral"}>
+                        {access.get(toolId) ?? "unknown"}
+                      </Badge>{" "}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <h4 className="capabilities__title">Tasks ({definition.task_ids.length})</h4>
+      <ul className="capabilities__list">
+        {definition.task_ids.map((id) => {
+          const task = tasks.get(id);
+          if (!task) return <li key={id}><Mono>{id}</Mono></li>;
+          const limits = task.limits;
+          return (
+            <li key={id}>
+              <strong>{task.name}</strong> <Mono>{id}</Mono>{" "}
+              <Badge tone={limits.writes_possible ? "attention" : "neutral"}>
+                {limits.writes_possible ? "may write" : "read-only"}
+              </Badge>
+              <span className="field__hint"> {task.description}</span>
+              <span className="field__hint capabilities__line">
+                Uses: {task.skill_ids.map((skillId) => skills.get(skillId)?.name ?? skillId).join(", ")}
+                {" "}· up to {limits.max_tool_calls} tool calls
+                {limits.writes_possible
+                  ? ` · writes ${limits.allowed_write_actions.join(", ")}${limits.requires_explicit_write_intent ? " (explicit write intent required)" : ""}`
+                  : ""}
+              </span>
+              <details className="manifest">
+                <summary>Acceptance criteria ({task.acceptance_criteria.length})</summary>
+                <ul className="manifest__tools">
+                  {task.acceptance_criteria.map((criterion) => (
+                    <li key={criterion.code}><Mono>{criterion.code}</Mono> {criterion.description}</li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
