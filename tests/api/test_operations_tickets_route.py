@@ -162,6 +162,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     # Task 031 adds the exact integration-management paths and Task 032 the exact
     # Agent-management paths (never a pattern or prefix).
     from app.routes.agents import AGENTS_PATHS
+    from app.routes.capabilities import CAPABILITIES_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
 
     assert sorted(excluded) == sorted(
@@ -172,9 +173,11 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
             "/api/v1/operations/tickets/commands",
             *INTEGRATIONS_PATHS,
             *AGENTS_PATHS,
+            *CAPABILITIES_PATHS,  # Task 033: read-only Skill/Task inspection
         ]
     )
     assert len(INTEGRATIONS_PATHS) == 7 and len(AGENTS_PATHS) == 6
+    assert len(CAPABILITIES_PATHS) == 4
     assert OPERATIONS_TICKETS_PATH == PATH
 
 

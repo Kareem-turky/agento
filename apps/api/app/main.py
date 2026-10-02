@@ -37,6 +37,8 @@ from app.observability.services import (
 )
 from app.routes.agents import AGENTS_PATHS, AGENTS_SERVICE_STATE_KEY
 from app.routes.agents import router as agents_router
+from app.routes.capabilities import CAPABILITIES_PATHS
+from app.routes.capabilities import router as capabilities_router
 from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
 from app.routes.integrations import router as integrations_router
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
@@ -187,6 +189,7 @@ def create_app(
     app.include_router(operations_tickets_router)
     app.include_router(integrations_router)
     app.include_router(agents_router)
+    app.include_router(capabilities_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -201,6 +204,7 @@ def create_app(
             OPERATIONS_TICKET_COMMANDS_PATH,
             *INTEGRATIONS_PATHS,
             *AGENTS_PATHS,
+            *CAPABILITIES_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

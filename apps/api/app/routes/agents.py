@@ -42,6 +42,8 @@ from app.agent_management.service import (
     AgentManagementService,
     AgentNotFoundError,
     AgentOperationFailedError,
+    SkillNotFoundError,
+    TaskNotFoundError,
 )
 from app.context import CurrentActor, CurrentRequestContext
 from app.routes.integrations import SafeValidationRoute
@@ -101,6 +103,12 @@ class AgentDefinitionView(BaseModel):
     default_enabled: bool
     capabilities: list[str]
     manifest: AgentManifestView
+    skill_ids: list[str] = Field(
+        description="Product Skills this Agent possesses (resolve them in the Skill catalog)."
+    )
+    task_ids: list[str] = Field(
+        description="Product Tasks this Agent supports (resolve them in the Task catalog)."
+    )
 
     @classmethod
     def of(cls, definition: AgentDefinition) -> "AgentDefinitionView":
@@ -122,6 +130,8 @@ class AgentDefinitionView(BaseModel):
                 requirements=sorted(manifest.requirements),
                 safety=sorted(manifest.safety),
             ),
+            skill_ids=sorted(definition.skill_ids),
+            task_ids=sorted(definition.task_ids),
         )  # fmt: skip
 
 
@@ -188,7 +198,7 @@ def _service(request: Request) -> AgentManagementService:
 def _http(error: Exception) -> HTTPException:
     if isinstance(error, AgentAccessDeniedError):
         return HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if isinstance(error, AgentNotFoundError):
+    if isinstance(error, AgentNotFoundError | SkillNotFoundError | TaskNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, detail=error.message)
     if isinstance(error, AgentOperationFailedError):
         return HTTPException(status.HTTP_409_CONFLICT, detail=error.message)

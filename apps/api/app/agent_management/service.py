@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agent_management import actions
+from app.agent_management.capabilities import ProductCapabilityGraph
 from app.agent_management.catalog import ProductAgentCatalog
 from app.agent_management.configuration import (
     AgentConfiguration,
@@ -25,7 +26,9 @@ from app.agent_management.configuration import (
     AgentConfigurationRepositoryError,
 )
 from app.agent_management.definitions import AgentDefinition
+from app.agent_management.skills import SkillDefinition, build_default_skill_catalog
 from app.agent_management.state import AgentEffectiveState, effective_state
+from app.agent_management.tasks import TaskDefinition, build_default_task_catalog
 from app.context.models import ActorContext, RequestContext
 from app.execution import ActionRunStatus, ExecutionCoordinator
 from app.governance import (
@@ -54,6 +57,14 @@ class AgentNotFoundError(AgentManagementError):
     message = "Agent not found"
 
 
+class SkillNotFoundError(AgentManagementError):
+    message = "Skill not found"
+
+
+class TaskNotFoundError(AgentManagementError):
+    message = "Task not found"
+
+
 class AgentOperationFailedError(AgentManagementError):
     message = "Agent management operation did not complete"
 
@@ -70,8 +81,17 @@ class AgentManagementService:
         gate: GovernanceGate,
         coordinator: ExecutionCoordinator,
         *,
+        capabilities: ProductCapabilityGraph | None = None,
         runtime_available: frozenset[str] = frozenset(),
     ) -> None:
+        if capabilities is None:
+            # Validated against this Agent catalog; fails closed when inconsistent.
+            capabilities = ProductCapabilityGraph.build(
+                catalog, build_default_skill_catalog(), build_default_task_catalog()
+            )
+        if capabilities.agents is not catalog:
+            raise ValueError("the capability graph must describe this Agent catalog")
+        self._capabilities = capabilities
         self._catalog = catalog
         self._repository = repository
         self._gate = gate
@@ -85,6 +105,7 @@ class AgentManagementService:
             self._repository,
             self._gate,
             self._coordinator,
+            capabilities=self._capabilities,
             runtime_available=runtime_available,
         )
 
@@ -189,6 +210,34 @@ class AgentManagementService:
         actor = self._authorize_read(context, actions.CONFIGURATION_READ)
         definition = self._definition(agent_id)
         return definition, self._state(definition, await self._override(actor.company_id, agent_id))
+
+    # ----- Skills and Tasks (immutable Product metadata; read-only) ---------------------------
+
+    @property
+    def capabilities(self) -> ProductCapabilityGraph:
+        return self._capabilities
+
+    def skill_catalog(self, context: RequestContext) -> tuple[SkillDefinition, ...]:
+        self._authorize_read(context, actions.SKILLS_READ)
+        return self._capabilities.skills.definitions()
+
+    def get_skill(self, context: RequestContext, skill_id: str) -> SkillDefinition:
+        self._authorize_read(context, actions.SKILLS_READ)
+        skill = self._capabilities.skills.get(skill_id)
+        if skill is None:
+            raise SkillNotFoundError()
+        return skill
+
+    def task_catalog(self, context: RequestContext) -> tuple[TaskDefinition, ...]:
+        self._authorize_read(context, actions.TASKS_READ)
+        return self._capabilities.tasks.definitions()
+
+    def get_task(self, context: RequestContext, task_id: str) -> TaskDefinition:
+        self._authorize_read(context, actions.TASKS_READ)
+        task = self._capabilities.tasks.get(task_id)
+        if task is None:
+            raise TaskNotFoundError()
+        return task
 
     # ----- mutations ----------------------------------------------------------------------------
 

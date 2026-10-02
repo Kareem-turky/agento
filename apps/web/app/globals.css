@@ -232,3 +232,10 @@ input:disabled, textarea:disabled { background: var(--surface-muted); color: var
 .manifest { margin-top: 0.4rem; font-size: 0.85rem; }
 .manifest summary { cursor: pointer; color: var(--text-muted); }
 .manifest__tools { margin: 0.3rem 0; padding-left: 1.1rem; }
+
+/* ----- agent skills and tasks (read-only) --------------------------------------------- */
+
+.capabilities { margin-top: 0.6rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+.capabilities__title { margin: 0.4rem 0 0.2rem; font-size: 0.9rem; }
+.capabilities__list { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.capabilities__tools, .capabilities__line { display: block; margin-top: 0.15rem; }

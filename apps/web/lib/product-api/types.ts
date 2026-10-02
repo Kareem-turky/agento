@@ -187,6 +187,8 @@ export type AgentDefinitionView = {
   default_enabled: boolean;
   capabilities: string[];
   manifest: AgentManifestView;
+  skill_ids: string[];
+  task_ids: string[];
 };
 
 export type AgentAvailability = "available" | "disabled" | "unavailable";
@@ -206,3 +208,55 @@ export type AgentListResponse = { request_id: string; agents: AgentView[] };
 export type AgentResponse = { request_id: string; agent: AgentView };
 
 export type AgentCatalogResponse = { request_id: string; agents: AgentDefinitionView[] };
+
+// ----- Product Skills and Tasks (Task 033): immutable, read-only Product metadata ------------
+
+export type SkillView = {
+  skill_id: string;
+  name: string;
+  description: string;
+  category: string;
+  lifecycle: string;
+  capabilities: string[];
+  tool_ids: string[];
+  requirements: string[];
+  agent_ids: string[];
+  task_ids: string[];
+};
+
+export type TaskInputFieldView = {
+  name: string;
+  label: string;
+  kind: string;
+  required: boolean;
+  description: string;
+  max_length: number | null;
+};
+
+export type AcceptanceCriterionView = { code: string; description: string };
+
+/** Declared envelope: contract metadata, not a security boundary. */
+export type TaskLimitsView = {
+  max_tool_calls: number;
+  writes_possible: boolean;
+  allowed_write_actions: string[];
+  requires_explicit_write_intent: boolean;
+};
+
+export type TaskView = {
+  task_id: string;
+  name: string;
+  description: string;
+  category: string;
+  lifecycle: string;
+  skill_ids: string[];
+  inputs: TaskInputFieldView[];
+  acceptance_criteria: AcceptanceCriterionView[];
+  limits: TaskLimitsView;
+  agent_ids: string[];
+};
+
+export type SkillCatalogResponse = { request_id: string; skills: SkillView[] };
+export type SkillResponse = { request_id: string; skill: SkillView };
+export type TaskCatalogResponse = { request_id: string; tasks: TaskView[] };
+export type TaskResponse = { request_id: string; task: TaskView };

@@ -137,7 +137,8 @@ def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
     product = sorted(
         (method, path) for method, path in effective_api_routes(app.routes)
         if (path.startswith("/api/")
-            and not path.startswith(("/api/v1/integrations/", "/api/v1/agents")))
+            and not path.startswith(("/api/v1/integrations/", "/api/v1/agents",
+                                     "/api/v1/skills/", "/api/v1/tasks/")))
         or path == "/health"
     )  # fmt: skip
     assert product == [

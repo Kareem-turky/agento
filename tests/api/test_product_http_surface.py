@@ -68,7 +68,14 @@ AGENT_ROUTES = {
     ("POST", "/api/v1/agents/agent/disable"),
     ("DELETE", "/api/v1/agents/agent/configuration"),
 }
-MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents")
+CAPABILITY_ROUTES = {
+    ("GET", "/api/v1/skills/catalog"),
+    ("GET", "/api/v1/skills/skill"),
+    ("GET", "/api/v1/tasks/catalog"),
+    ("GET", "/api/v1/tasks/task"),
+}
+MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
+                       "/api/v1/tasks/")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -85,6 +92,9 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     )
     # Task 032: the Agent-management surface is exactly these fixed routes.
     assert {(m, p) for m, p in routes if p.startswith("/api/v1/agents")} == AGENT_ROUTES
+    # Task 033: Skill/Task inspection is exactly these READ-ONLY routes.
+    capability = ("/api/v1/skills/", "/api/v1/tasks/")
+    assert {(m, p) for m, p in routes if p.startswith(capability)} == CAPABILITY_ROUTES
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),
