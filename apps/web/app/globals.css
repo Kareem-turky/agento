@@ -225,3 +225,10 @@ input:disabled, textarea:disabled { background: var(--surface-muted); color: var
 .integration-list__title { margin: 0; }
 .integration-list__body .field__hint { display: block; margin: 0.15rem 0 0; }
 .field--checkbox { flex-direction: column; }
+
+/* ----- agents (settings) ------------------------------------------------------------ */
+
+.topbar__nav { display: flex; gap: 1rem; }
+.manifest { margin-top: 0.4rem; font-size: 0.85rem; }
+.manifest summary { cursor: pointer; color: var(--text-muted); }
+.manifest__tools { margin: 0.3rem 0; padding-left: 1.1rem; }

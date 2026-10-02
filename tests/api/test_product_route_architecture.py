@@ -152,8 +152,13 @@ def test_agentos_exemption_takes_exact_paths_only(settings, runtime_settings) ->
     compact = "".join(source.split())
     assert (
         "product_route_paths=(OPERATIONS_RUNS_PATH,OPERATIONS_DAILY_REPORT_PATH,"
-        "OPERATIONS_TICKETS_PATH,OPERATIONS_TICKET_COMMANDS_PATH,*INTEGRATIONS_PATHS,)" in compact
+        "OPERATIONS_TICKETS_PATH,OPERATIONS_TICKET_COMMANDS_PATH,*INTEGRATIONS_PATHS,"
+        "*AGENTS_PATHS,)" in compact
     )
+    from app.routes.agents import AGENTS_PATHS
+
+    assert all(p.startswith("/api/v1/agents") and not any(c in p for c in "*?[{")
+               for p in AGENTS_PATHS)  # fmt: skip
     from app.routes.integrations import INTEGRATIONS_PATHS
 
     assert all(p.startswith("/api/v1/integrations/") and not any(c in p for c in "*?[{")

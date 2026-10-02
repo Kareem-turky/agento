@@ -60,6 +60,15 @@ INTEGRATION_ROUTES = {
     ("POST", "/api/v1/integrations/connection/enable"),
     ("POST", "/api/v1/integrations/connection/disable"),
 }
+AGENT_ROUTES = {
+    ("GET", "/api/v1/agents/catalog"),
+    ("GET", "/api/v1/agents"),
+    ("GET", "/api/v1/agents/agent"),
+    ("POST", "/api/v1/agents/agent/enable"),
+    ("POST", "/api/v1/agents/agent/disable"),
+    ("DELETE", "/api/v1/agents/agent/configuration"),
+}
+MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents")
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -67,13 +76,15 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     product = {
         (method, path)
         for method, path in routes
-        if (path.startswith("/api/") and not path.startswith("/api/v1/integrations/"))
+        if (path.startswith("/api/") and not path.startswith(MANAGEMENT_PREFIXES))
         or path == "/health"
     }
     # Task 031: the integration-management surface is exactly these fixed routes.
     assert {(m, p) for m, p in routes if p.startswith("/api/v1/integrations/")} == (
         INTEGRATION_ROUTES
     )
+    # Task 032: the Agent-management surface is exactly these fixed routes.
+    assert {(m, p) for m, p in routes if p.startswith("/api/v1/agents")} == AGENT_ROUTES
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),
@@ -99,11 +110,12 @@ def test_the_only_product_write_is_post_tickets(client) -> None:
         for method, path in effective_api_routes(client.app.routes)
         if path.startswith("/api/")
         and method not in ("GET", "HEAD", "OPTIONS")
-        and not path.startswith("/api/v1/integrations/")
+        and not path.startswith(MANAGEMENT_PREFIXES)
     }
     # /runs is a POST but read-only (asserted separately); tickets is the only BUSINESS
-    # write. Integration-management writes (Task 031) manage connection metadata only and
-    # are pinned by test_product_routes_are_exactly_the_intended_surface.
+    # write. Integration-management (Task 031) and Agent-management (Task 032) writes manage
+    # Product configuration only and are pinned by
+    # test_product_routes_are_exactly_the_intended_surface.
     assert writes == {("POST", "/api/v1/operations/runs"), ("POST", "/api/v1/operations/tickets")}
 
 

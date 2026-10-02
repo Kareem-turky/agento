@@ -18,6 +18,8 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app import __version__
+from app.agent_management.runtime import AgentGatedOperationsRunService
+from app.agent_management.service import AgentManagementService
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
@@ -33,6 +35,8 @@ from app.observability.services import (
     observed_ticket_query_service,
     observed_ticket_service,
 )
+from app.routes.agents import AGENTS_PATHS, AGENTS_SERVICE_STATE_KEY
+from app.routes.agents import router as agents_router
 from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
 from app.routes.integrations import router as integrations_router
 from app.routes.operations import OPERATIONS_RUNS_PATH, OPERATIONS_SERVICE_STATE_KEY
@@ -70,6 +74,7 @@ def create_app(
     shutdown_callback: Callable[[], Awaitable[None]] | None = None,
     observability: ProductObservability | None = None,
     integration_service: IntegrationManagementService | None = None,
+    agent_service: AgentManagementService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -92,7 +97,13 @@ def create_app(
 
     ``integration_service`` is the provider-independent integration management (Task
     031), composed independently of the business backend; without one the integration
-    routes answer 503."""
+    routes answer 503.
+
+    ``agent_service`` is the Product Agent management (Task 032). With one, the Agent
+    routes are served and the Operations run boundary is gated by the effective state of
+    the ``operations`` Agent (a disabled Agent is refused before it, its model or any tool
+    runs). Without one, the Agent routes answer 503 and every Agent keeps its Product
+    definition default."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -131,6 +142,14 @@ def create_app(
     )
     app.state.settings = settings
     app.state.runtime_started = False
+    if agent_service is not None:
+        # Which Product Agents' trusted runtimes this deployment actually composed.
+        agent_service = agent_service.with_runtime(
+            frozenset({"operations"}) if operations_service is not None else frozenset()
+        )
+        if operations_service is not None:
+            operations_service = AgentGatedOperationsRunService(operations_service, agent_service)
+    setattr(app.state, AGENTS_SERVICE_STATE_KEY, agent_service)
     setattr(
         app.state,
         OPERATIONS_SERVICE_STATE_KEY,
@@ -167,6 +186,7 @@ def create_app(
     app.include_router(operations_reports_router)
     app.include_router(operations_tickets_router)
     app.include_router(integrations_router)
+    app.include_router(agents_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -180,6 +200,7 @@ def create_app(
             OPERATIONS_TICKETS_PATH,
             OPERATIONS_TICKET_COMMANDS_PATH,
             *INTEGRATIONS_PATHS,
+            *AGENTS_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only
