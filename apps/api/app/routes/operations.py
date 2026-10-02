@@ -5,6 +5,8 @@
          -> exact store grant check against actor.store_ids (403 otherwise)
          -> trusted ActionScope(company_id=actor.company_id, store_id=<granted store>)
          -> OperationsRunService.run_product (READ-ONLY) -> {request_id, message}
+            (409 "Operations Agent is disabled" when Agent management disabled it: the
+            refusal happens before the Agent, its model or any tool runs)
 
 Product authentication is the ``ActorResolver``; the AgentOS ``OS_SECURITY_KEY`` is
 not product authentication. The client never supplies identity, company,
@@ -21,7 +23,11 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
-from app.services.operations import OperationsRunService, ProductOperationsRunResult
+from app.services.operations import (
+    OperationsAgentDisabledError,
+    OperationsRunService,
+    ProductOperationsRunResult,
+)
 
 OPERATIONS_SERVICE_STATE_KEY = "operations_service"
 OPERATIONS_RUNS_PATH = "/api/v1/operations/runs"
@@ -80,6 +86,11 @@ async def create_operations_run(
         if not isinstance(result, ProductOperationsRunResult):
             raise TypeError("invalid operations service result")
         response = OperationsRunResponse(request_id=context.request_id, message=result.message)
+    except OperationsAgentDisabledError:
+        # A deliberate installation setting, not an outage: stable and value-free.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Operations Agent is disabled"
+        ) from None
     except Exception:  # noqa: BLE001 - never leak internals; the request id correlates logs
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

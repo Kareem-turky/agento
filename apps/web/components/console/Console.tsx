@@ -86,6 +86,7 @@ export function Console() {
           </div>
         </div>
         <nav className="topbar__nav" aria-label="Pages">
+          <Link href="/settings/agents">Agents</Link>
           <Link href="/settings/integrations">Integrations</Link>
         </nav>
         <span className={`pill pill--${health}`} role="status">

@@ -25,6 +25,14 @@ class ProductOperationsRunResult(BaseModel):
     message: str
 
 
+class OperationsAgentDisabledError(Exception):
+    """The Operations Agent is disabled by this installation's Agent configuration: the
+    run was refused before the Agent, the model or any tool ran. Fixed message."""
+
+    def __init__(self) -> None:
+        super().__init__("Operations Agent is disabled")
+
+
 @runtime_checkable
 class OperationsRunService(Protocol):
     async def run_product(

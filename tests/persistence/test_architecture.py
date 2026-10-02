@@ -24,7 +24,8 @@ ALLOWED_ROOTS = {"__future__", "collections", "hmac", "typing", "uuid", "pydanti
 # drivers, service, definitions with credentials, or any business integration).
 ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                "app.execution.models", "app.governance.policy", "app.context.models",
-               "app.integration_management.connections")  # fmt: skip
+               "app.integration_management.connections",
+               "app.agent_management.configuration")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -137,7 +138,8 @@ def test_no_business_data_mirror_tables() -> None:
 
     names = set(product_metadata.tables)
     assert names == {"product.write_commands", "product.audit_events",
-                     "product.integration_connections"}  # fmt: skip
+                     "product.integration_connections",
+                     "product.agent_configurations"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

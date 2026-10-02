@@ -83,6 +83,23 @@ The demo still uses mock data. Source systems remain the source of truth: busine
 is not ingested or mirrored. OAuth is not implemented. Nothing here provides production
 business connectivity. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
+### Product Agents: management foundation
+
+Agents are first-class Product components defined by trusted Product code. The immutable
+`ProductAgentCatalog` lists the Product business Agents installed in this build, which is
+exactly the **Operations Agent**. Each has an immutable definition and a descriptive
+manifest (tools, governed actions, tool-call limit, domain requirements, safety
+properties).
+
+An operator with `agents.manage` can enable or disable an Agent for this installation
+through `/api/v1/agents/*` or **Settings → Agents** (`/settings/agents`). Every change is
+governed and audited, and the override is stored in `product.agent_configurations`
+(migration `0004`). A disabled Operations Agent makes `POST /api/v1/operations/runs`
+answer `409` before the model or any tool runs.
+
+There is no prompt editor, no Agent creation and no dynamic code loading, and Agents can
+never manage Agents. See [`docs/AGENTS.md`](docs/AGENTS.md).
+
 ## 2. High-level architecture
 
 ```
@@ -338,8 +355,8 @@ never authorization, policy, verification or business truth, and is never stored
 PostgreSQL. It lives in `app/observability/`:
 
 - **What is observed:** every request to the five original Product HTTP routes
-  (`/health` and the four operations routes; the integration-management routes are not
-  Product-observed yet) (`http.request`,
+  (`/health` and the four operations routes; the integration- and Agent-management routes
+  are not Product-observed yet) (`http.request`,
   by `ProductObservabilityMiddleware`), and the Product services behind them:
   `operations.agent_run`, `operations.daily_report`, `operations.ticket_command` and
   `operations.ticket_command_query` (transparent decorators of the service contracts,
@@ -1436,7 +1453,9 @@ explicit Store UUID), read-only Operations analysis (`POST /api/v1/operations/ru
 deterministic daily report, explicit idempotent operational ticket creation (never through
 the Agent, never retried automatically) and manual ticket command status lookup.
 **Settings → Integrations** (`/settings/integrations`) is the generic Connections UI
-([`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)). The browser talks only to fixed
+([`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)), and **Settings → Agents**
+(`/settings/agents`) is Product Agent lifecycle management
+([`docs/AGENTS.md`](docs/AGENTS.md)). The browser talks only to fixed
 same-origin proxy routes under `/api/product/*`. Each one is one exported method mapped
 to one fixed Product method and path, forwarded to the server-only `PRODUCT_API_ORIGIN`.
 AgentOS routes are never proxied. The

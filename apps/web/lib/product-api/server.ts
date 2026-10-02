@@ -33,6 +33,12 @@ export const UPSTREAM = {
   integrationTest: { method: "POST", path: "/api/v1/integrations/connection/test" },
   integrationEnable: { method: "POST", path: "/api/v1/integrations/connection/enable" },
   integrationDisable: { method: "POST", path: "/api/v1/integrations/connection/disable" },
+  agentsCatalog: { method: "GET", path: "/api/v1/agents/catalog" },
+  agentsList: { method: "GET", path: "/api/v1/agents" },
+  agentDetail: { method: "GET", path: "/api/v1/agents/agent" },
+  agentEnable: { method: "POST", path: "/api/v1/agents/agent/enable" },
+  agentDisable: { method: "POST", path: "/api/v1/agents/agent/disable" },
+  agentReset: { method: "DELETE", path: "/api/v1/agents/agent/configuration" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;

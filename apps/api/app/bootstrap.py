@@ -13,7 +13,9 @@ settings -> Product auth (inside ``create_app``) -> deployment composition
 
 Integration management (Task 031) is composed independently of the business backend
 (``app.composition.integrations``): connection metadata in PostgreSQL, credentials in
-``APP_INTEGRATION_SECRETS_DIR``; this build installs no integration type.
+``APP_INTEGRATION_SECRETS_DIR``; this build installs no integration type. Agent
+management (Task 032, ``app.composition.agents``) is composed the same way: Agent
+enable/disable overrides in PostgreSQL, gating the Operations run boundary.
 
 The composition-owned resources are released when the application shuts down, or
 immediately if the application cannot be built. Startup never migrates the database.
@@ -24,6 +26,7 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app.composition import build_deployment_composition
+from app.composition.agents import build_agent_management
 from app.composition.integrations import build_integration_management
 from app.config import Settings, get_settings
 from app.main import create_app
@@ -44,12 +47,23 @@ def create_deployment_app(
     except BaseException:
         composition.discard()
         raise
+    try:
+        agents = build_agent_management(settings)
+    except BaseException:
+        try:
+            composition.discard()
+        finally:
+            integrations.discard()
+        raise
 
     async def close() -> None:
         try:
             await composition.close()
         finally:
-            await integrations.close()
+            try:
+                await integrations.close()
+            finally:
+                await agents.close()
 
     try:
         return create_app(
@@ -61,11 +75,15 @@ def create_deployment_app(
             operations_ticket_query_service=composition.operations_ticket_query_service,
             daily_operations_service=composition.daily_operations_service,
             integration_service=integrations.service,
+            agent_service=agents.service,
             shutdown_callback=close,
         )
     except BaseException:
         try:
             composition.discard()
         finally:
-            integrations.discard()
+            try:
+                integrations.discard()
+            finally:
+                agents.discard()
         raise

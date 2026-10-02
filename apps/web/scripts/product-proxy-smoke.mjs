@@ -95,6 +95,7 @@ const stub = createServer((req, res) => {
                                updated_at: "2026-01-16T08:00:01Z" });
     }
     if (path.startsWith("/api/v1/integrations/")) return integrationReply(res, req.method, path);
+    if (path === "/api/v1/agents" || path.startsWith("/api/v1/agents/")) return agentReply(res, req.method, path);
     return reply(res, 404, { detail: "Not Found" });
   });
 });
@@ -106,6 +107,30 @@ const CONNECTION_VIEW = {
   enabled: true, created_at: "2026-01-16T08:00:00Z", updated_at: "2026-01-16T08:00:00Z",
   last_tested_at: null, last_test_result: "never_tested", last_test_error: null,
 };
+
+// Product Agent management (Task 032): definitions and state only.
+const AGENT_VIEW = {
+  definition: {
+    agent_id: "operations", name: "Operations Agent", description: "stub", category: "operations",
+    lifecycle: "active", default_enabled: true, capabilities: ["operations.analysis"],
+    manifest: { tools: [], action_names: [], tool_call_limit: 6, requirements: [], safety: [] },
+  },
+  state: { enabled: true, source: "default", availability: "available", reason: null, updated_at: null },
+};
+
+function agentReply(res, method, path) {
+  const agent = { request_id: UPSTREAM_REQUEST_ID, agent: AGENT_VIEW };
+  const routes = {
+    "GET /api/v1/agents/catalog": [200, { request_id: UPSTREAM_REQUEST_ID, agents: [AGENT_VIEW.definition] }],
+    "GET /api/v1/agents": [200, { request_id: UPSTREAM_REQUEST_ID, agents: [AGENT_VIEW] }],
+    "GET /api/v1/agents/agent": [200, agent],
+    "POST /api/v1/agents/agent/enable": [200, agent],
+    "POST /api/v1/agents/agent/disable": [200, agent],
+    "DELETE /api/v1/agents/agent/configuration": [200, agent],
+  };
+  const answer = routes[`${method} ${path}`];
+  return answer ? reply(res, answer[0], answer[1]) : reply(res, 405, { detail: "Method Not Allowed" });
+}
 
 function integrationReply(res, method, path) {
   const connection = { request_id: UPSTREAM_REQUEST_ID, connection: CONNECTION_VIEW };
@@ -320,6 +345,42 @@ async function main() {
     }
     check(received.length === 0, "integrations: refused methods and unknown paths never reached the upstream");
 
+    // 7. Product Agent management: each BFF route reaches exactly one Product method + path
+    // under /api/v1/agents (never an AgentOS /agents route), forwarding Authorization only.
+    const agentCalls = [
+      ["GET", "/api/product/agent-management/catalog", "/api/v1/agents/catalog"],
+      ["GET", "/api/product/agent-management/agents", "/api/v1/agents"],
+      ["GET", "/api/product/agent-management/agent?agent_id=operations", "/api/v1/agents/agent?agent_id=operations"],
+      ["POST", "/api/product/agent-management/agent/enable?agent_id=operations", "/api/v1/agents/agent/enable?agent_id=operations"],
+      ["POST", "/api/product/agent-management/agent/disable?agent_id=operations", "/api/v1/agents/agent/disable?agent_id=operations"],
+      ["DELETE", "/api/product/agent-management/agent/configuration?agent_id=operations",
+       "/api/v1/agents/agent/configuration?agent_id=operations"],
+    ];
+    for (const [method, bffPath, upstreamPath] of agentCalls) {
+      received.length = 0;
+      response = await fetch(`${base}${bffPath}`, { method, headers: hostile });
+      await response.text();
+      const call = received[0];
+      check(response.status === 200 && received.length === 1 && call.method === method && call.url === upstreamPath,
+            `agents: ${method} ${bffPath.split("?")[0]} -> exact upstream (${response.status})`);
+      check(call?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (call?.headers ?? {})),
+            `agents: ${method} ${bffPath.split("?")[0]} forwards Authorization only`);
+      check(response.headers.get("cache-control") === "no-store", `agents: ${method} ${bffPath.split("?")[0]} no-store`);
+    }
+    received.length = 0;
+    for (const [method, path] of [["POST", "/api/product/agent-management/agents"], ["PUT", "/api/product/agent-management/agent"],
+                                  ["GET", "/api/product/agent-management/agent/enable"],
+                                  ["POST", "/api/product/agent-management/agent/configuration"]]) {
+      response = await fetch(`${base}${path}?agent_id=operations`, { method, headers: hostile });
+      check(response.status === 405, `agents: ${method} ${path} refused (${response.status})`);
+    }
+    for (const path of ["/api/product/agent-management", "/api/product/agent-management/agent/instructions",
+                        "/api/product/agent-management/agent/create"]) {
+      response = await fetch(`${base}${path}`, { headers: hostile });
+      check(response.status === 404, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "agents: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -331,6 +392,9 @@ async function main() {
       `/api/product/integrations/catalog?connection_id=${CONNECTION}`,
       `/api/product/integrations/connection?connection_id=${CONNECTION}&connection_id=${CONNECTION}`,
       `/api/product/integrations/connection/test?connection_id=${CONNECTION}&integration_id=x`,
+      `/api/product/agent-management/agents?agent_id=operations`,
+      `/api/product/agent-management/agent?agent_id=operations&agent_id=operations`,
+      `/api/product/agent-management/agent?agent_id=operations&module=app.agents`,
     ];
     for (const path of rejected) {
       response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
@@ -387,6 +451,10 @@ async function main() {
           "rendered HTML has no key, origin or upstream port");
     response = await fetch(`${base}/settings/integrations`);
     const settingsHtml = await response.text();
+    const agentsPage = await fetch(`${base}/settings/agents`);
+    const agentsHtml = await agentsPage.text();
+    check(agentsPage.status === 200 && agentsHtml.includes("Agents"), "agents settings page renders");
+    check(!agentsHtml.includes(API_KEY) && !agentsHtml.includes(origin), "agents settings HTML has no key or origin");
     check(response.status === 200 && settingsHtml.includes("Integrations"), "integrations settings page renders");
     check(!settingsHtml.includes(API_KEY) && !settingsHtml.includes(origin) && !settingsHtml.includes(SECRET_VALUE),
           "integrations settings HTML has no key, origin or secret value");
@@ -401,7 +469,7 @@ async function main() {
     })(staticDir);
     const clientCode = bundles.join("\n");
     check(bundles.length > 0 && !clientCode.includes("PRODUCT_API_ORIGIN") && !clientCode.includes("/api/v1/operations") &&
-          !clientCode.includes("/api/v1/integrations"),
+          !clientCode.includes("/api/v1/integrations") && !clientCode.includes("/api/v1/agents"),
           "client bundles contain no server origin variable or upstream Product path");
 
     // 14. upstream unavailable (stub stopped).

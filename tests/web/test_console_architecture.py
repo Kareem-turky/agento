@@ -35,6 +35,13 @@ EXPECTED_ROUTES = {
     "integrations/connection/test/route.ts": {"POST": "integrationTest"},
     "integrations/connection/enable/route.ts": {"POST": "integrationEnable"},
     "integrations/connection/disable/route.ts": {"POST": "integrationDisable"},
+    # Task 032: Product Agent management (Product API only, never AgentOS /agents).
+    "agent-management/catalog/route.ts": {"GET": "agentsCatalog"},
+    "agent-management/agents/route.ts": {"GET": "agentsList"},
+    "agent-management/agent/route.ts": {"GET": "agentDetail"},
+    "agent-management/agent/enable/route.ts": {"POST": "agentEnable"},
+    "agent-management/agent/disable/route.ts": {"POST": "agentDisable"},
+    "agent-management/agent/configuration/route.ts": {"DELETE": "agentReset"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -53,6 +60,12 @@ UPSTREAM_PATHS = {
     "integrationTest": ("POST", f"{INTEGRATION_CONNECTION}/test"),
     "integrationEnable": ("POST", f"{INTEGRATION_CONNECTION}/enable"),
     "integrationDisable": ("POST", f"{INTEGRATION_CONNECTION}/disable"),
+    "agentsCatalog": ("GET", "/api/v1/agents/catalog"),
+    "agentsList": ("GET", "/api/v1/agents"),
+    "agentDetail": ("GET", "/api/v1/agents/agent"),
+    "agentEnable": ("POST", "/api/v1/agents/agent/enable"),
+    "agentDisable": ("POST", "/api/v1/agents/agent/disable"),
+    "agentReset": ("DELETE", "/api/v1/agents/agent/configuration"),
 }
 
 
@@ -198,13 +211,14 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "getIntegrationConnection", "createIntegrationConnection",
                         "updateIntegrationConnection", "replaceIntegrationCredentials",
                         "testIntegrationConnection", "setIntegrationConnectionEnabled",
-                        "deleteIntegrationConnection"}  # fmt: skip
+                        "deleteIntegrationConnection", "getAgentCatalog", "getAgent",
+                        "listAgents", "setAgentEnabled", "resetAgentConfiguration"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
     assert 'credentials: "omit"' in source and 'cache: "no-store"' in source
     assert "crypto.randomUUID()" in source
-    assert source.count('method: "DELETE"') == 1 and source.count('method: "PUT"') == 2
+    assert source.count('method: "DELETE"') == 2 and source.count('method: "PUT"') == 2
     # The key is only ever an Authorization header value, never part of a URL or body.
     assert "`Bearer ${apiKey}`" in source
     assert not re.search(r"(URLSearchParams|JSON\.stringify)\([^)]*apiKey", source)
@@ -459,5 +473,47 @@ def test_secret_inputs_are_write_only_and_never_prefilled() -> None:
 def test_console_links_to_integrations_settings() -> None:
     console = component("Console.tsx")
     assert '<Link href="/settings/integrations">Integrations</Link>' in console
+    assert '<Link href="/settings/agents">Agents</Link>' in console
     settings = code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")
     assert '<Link href="/">Operations Console</Link>' in settings
+
+
+# ----- Task 032: the Product Agents settings page ------------------------------------------
+
+
+AGENTS_UI = WEB / "components" / "agents"
+
+
+def test_agents_page_is_lifecycle_management_only() -> None:
+    page = code(WEB / "app" / "settings" / "agents" / "page.tsx")
+    assert "<AgentsSettings />" in page
+    assert {p.name for p in AGENTS_UI.glob("*.tsx")} == {"AgentsSettings.tsx"}
+    settings = code(AGENTS_UI / "AgentsSettings.tsx")
+    # Product API only: the explicit Agent-management client functions, never AgentOS.
+    calls = set(re.findall(r"\b(listAgents|setAgentEnabled|resetAgentConfiguration|"
+                           r"getAgentCatalog|getAgent)\(", settings))  # fmt: skip
+    assert calls == {"listAgents", "setAgentEnabled", "resetAgentConfiguration"}
+    assert "fetch(" not in settings and "/api/" not in settings
+    for agentos in ('"/agents', '"/info', '"/sessions', "os_security", "AgentOS("):
+        assert agentos not in settings, agentos
+    # No editor of any kind: no text areas, no prompt/model/tool/permission inputs.
+    assert "<textarea" not in settings and "contentEditable" not in settings
+    inputs = re.findall(r"<input[^>]*>", settings, flags=re.S)
+    assert len(inputs) == 1 and 'name="product-api-key"' in inputs[0]
+    for word in ("prompt", "instruction", "model_id", "api key field", "tool selection",
+                 "dangerouslySetInnerHTML", "innerHTML", "JSON.parse"):  # fmt: skip
+        assert word.lower() not in settings.lower(), word
+    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    for forbidden in ("setInterval", "setTimeout", "for (", "while ("):
+        assert forbidden not in settings, forbidden
+    joined = settings.lower()
+    for provider in ("shopify", "woocommerce", "whatsapp", "f" + "ulfly"):
+        assert provider not in joined, provider
+
+
+def test_disabled_operations_agent_message_in_the_console() -> None:
+    ui = component("ui.tsx")
+    assert (
+        'if (context === "analysis") return "Operations Agent is disabled (Settings → Agents)";'
+        in ui
+    )

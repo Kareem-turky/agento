@@ -3,6 +3,9 @@
 // per-call argument held by the caller in memory; this module never stores, caches,
 // logs or puts it in a URL.
 import type {
+  AgentCatalogResponse,
+  AgentListResponse,
+  AgentResponse,
   DailyOperationsReportResponse,
   HealthResponse,
   IntegrationCatalogResponse,
@@ -29,6 +32,12 @@ const PATHS = {
   integrationTest: "/api/product/integrations/connection/test",
   integrationEnable: "/api/product/integrations/connection/enable",
   integrationDisable: "/api/product/integrations/connection/disable",
+  agentCatalog: "/api/product/agent-management/catalog",
+  agentList: "/api/product/agent-management/agents",
+  agentDetail: "/api/product/agent-management/agent",
+  agentEnable: "/api/product/agent-management/agent/enable",
+  agentDisable: "/api/product/agent-management/agent/disable",
+  agentReset: "/api/product/agent-management/agent/configuration",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -149,6 +158,34 @@ const isConnectionResponse: Guard<IntegrationConnectionResponse> = (v): v is Int
 
 const isDeleted: Guard<IntegrationConnectionDeletedResponse> = (v): v is IntegrationConnectionDeletedResponse =>
   isObject(v) && isString(v.request_id) && isString(v.connection_id) && typeof v.deleted === "boolean";
+
+const isAgentDefinition = (v: unknown): boolean => {
+  if (!isObject(v) || !isObject(v.manifest)) return false;
+  const m = v.manifest;
+  return (
+    isString(v.agent_id) && isString(v.name) && isString(v.description) && isString(v.category) &&
+    isString(v.lifecycle) && typeof v.default_enabled === "boolean" && isStringArray(v.capabilities) &&
+    isNumber(m.tool_call_limit) && isStringArray(m.action_names) && isStringArray(m.requirements) &&
+    isStringArray(m.safety) && Array.isArray(m.tools) &&
+    m.tools.every((t) => isObject(t) && isString(t.tool_id) && isString(t.access) &&
+      isStringArray(t.action_names) && isString(t.description))
+  );
+};
+
+const isAgentView = (v: unknown): boolean =>
+  isObject(v) && isAgentDefinition(v.definition) && isObject(v.state) &&
+  typeof v.state.enabled === "boolean" && isString(v.state.source) &&
+  isString(v.state.availability) && isNullableString(v.state.reason) &&
+  isNullableString(v.state.updated_at);
+
+const isAgentList: Guard<AgentListResponse> = (v): v is AgentListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.agents) && v.agents.every(isAgentView);
+
+const isAgentCatalog: Guard<AgentCatalogResponse> = (v): v is AgentCatalogResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.agents) && v.agents.every(isAgentDefinition);
+
+const isAgentResponse: Guard<AgentResponse> = (v): v is AgentResponse =>
+  isObject(v) && isString(v.request_id) && isAgentView(v.agent);
 
 // ----- the Product functions ---------------------------------------------------------------
 
@@ -304,6 +341,33 @@ export function deleteIntegrationConnection(
   connectionId: string,
 ): Promise<ProductResult<IntegrationConnectionDeletedResponse>> {
   return send(connectionQuery(PATHS.integrationConnection, connectionId), { method: "DELETE", headers: authorized(apiKey) }, isDeleted);
+}
+
+// ----- Product Agent management (Product API only, never AgentOS) ------------------------------
+
+function agentQuery(path: string, agentId: string): string {
+  return `${path}?${new URLSearchParams({ agent_id: agentId }).toString()}`;
+}
+
+export function getAgentCatalog(apiKey: string): Promise<ProductResult<AgentCatalogResponse>> {
+  return send(PATHS.agentCatalog, { method: "GET", headers: authorized(apiKey) }, isAgentCatalog);
+}
+
+export function getAgent(apiKey: string, agentId: string): Promise<ProductResult<AgentResponse>> {
+  return send(agentQuery(PATHS.agentDetail, agentId), { method: "GET", headers: authorized(apiKey) }, isAgentResponse);
+}
+
+export function listAgents(apiKey: string): Promise<ProductResult<AgentListResponse>> {
+  return send(PATHS.agentList, { method: "GET", headers: authorized(apiKey) }, isAgentList);
+}
+
+export function setAgentEnabled(apiKey: string, agentId: string, enabled: boolean): Promise<ProductResult<AgentResponse>> {
+  const path = enabled ? PATHS.agentEnable : PATHS.agentDisable;
+  return send(agentQuery(path, agentId), { method: "POST", headers: authorized(apiKey) }, isAgentResponse);
+}
+
+export function resetAgentConfiguration(apiKey: string, agentId: string): Promise<ProductResult<AgentResponse>> {
+  return send(agentQuery(PATHS.agentReset, agentId), { method: "DELETE", headers: authorized(apiKey) }, isAgentResponse);
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

@@ -3,11 +3,16 @@
 Implements product-owned store contracts: ``app.commands.WriteCommandStore`` /
 ``WriteCommandReader``, ``app.execution.AuditSink`` (``PostgresAuditSink``) and
 ``app.integration_management.IntegrationConnectionRepository`` (connection METADATA,
-Task 031). Depends on SQLAlchemy and those contracts only: no agents, Agno, routes,
+Task 031) and ``app.agent_management.AgentConfigurationRepository`` (Agent enable/disable
+overrides, Task 032). Depends on SQLAlchemy and those contracts only: no agents, Agno, routes,
 business integrations or business handlers, and no business-data tables. The schema
 is owned by Alembic migrations, never created here.
 """
 
+from app.persistence.agent_configurations import (
+    PostgresAgentConfigurationRepository,
+    agent_configurations,
+)
 from app.persistence.audit import AuditPersistenceError, PostgresAuditSink, audit_events
 from app.persistence.database import (
     PRODUCT_SCHEMA,
@@ -23,6 +28,8 @@ from app.persistence.write_commands import PostgresWriteCommandStore, write_comm
 
 __all__ = [
     "PRODUCT_SCHEMA",
+    "PostgresAgentConfigurationRepository",
+    "agent_configurations",
     "AuditPersistenceError",
     "PostgresAuditSink",
     "PostgresIntegrationConnectionRepository",

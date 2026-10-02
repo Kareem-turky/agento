@@ -111,6 +111,7 @@ export function IntegrationsSettings() {
         </div>
         <nav className="topbar__nav" aria-label="Pages">
           <Link href="/">Operations Console</Link>
+          <Link href="/settings/agents">Agents</Link>
         </nav>
       </header>
 

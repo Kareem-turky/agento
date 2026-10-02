@@ -88,7 +88,7 @@ the canonical acceptance business date (`2026-03-03`) and follows up on a proble
 - The packaged installation (API and Web images, four-service Compose template), as
   proven by the deployment smoke.
 - The Operations Console builds, and its BFF forwards only fixed Product routes: the five
-  above plus the integration-management routes below.
+  above plus the integration- and Agent-management routes below.
 
 ## Integration foundation (framework only)
 
@@ -107,6 +107,21 @@ connected or installed**: the production catalog is empty. Business data is not
 ingested or mirrored, and source systems remain the source of truth. OAuth is not
 implemented. The demo still uses mock data. This foundation does **not** lift the
 production blocker below.
+
+## Product Agent management (lifecycle only)
+
+Product Agents are described by an immutable, explicit `ProductAgentCatalog`, which
+contains exactly the Operations Agent (see [`docs/AGENTS.md`](AGENTS.md)). Operators with
+`agents.manage` can enable or disable an Agent. Changes are governed, audited and stored in
+`product.agent_configurations` (migration `0004`).
+
+The Operations Agent defaults to enabled, so the demo and fresh installations behave as
+before without setup. When it is disabled, `POST /api/v1/operations/runs` answers `409`
+before any model or tool call. The deterministic daily report and the explicit ticket
+write do not depend on it.
+
+There is no prompt editing, no Agent creation and no dynamic code loading, and this does
+not lift the production blocker below.
 
 ## Production business use is still blocked
 

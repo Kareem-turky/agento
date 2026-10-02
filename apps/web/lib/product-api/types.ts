@@ -160,3 +160,49 @@ export type IntegrationConnectionDeletedResponse = {
   connection_id: string;
   deleted: boolean;
 };
+
+// ----- Product Agent management (Task 032): trusted Agent lifecycle, never AgentOS -------
+
+export type AgentToolView = {
+  tool_id: string;
+  access: "read" | "write" | string;
+  action_names: string[];
+  description: string;
+};
+
+export type AgentManifestView = {
+  tools: AgentToolView[];
+  action_names: string[];
+  tool_call_limit: number;
+  requirements: string[];
+  safety: string[];
+};
+
+export type AgentDefinitionView = {
+  agent_id: string;
+  name: string;
+  description: string;
+  category: string;
+  lifecycle: string;
+  default_enabled: boolean;
+  capabilities: string[];
+  manifest: AgentManifestView;
+};
+
+export type AgentAvailability = "available" | "disabled" | "unavailable";
+
+export type AgentStateView = {
+  enabled: boolean;
+  source: "default" | "override" | string;
+  availability: AgentAvailability | string;
+  reason: string | null;
+  updated_at: string | null;
+};
+
+export type AgentView = { definition: AgentDefinitionView; state: AgentStateView };
+
+export type AgentListResponse = { request_id: string; agents: AgentView[] };
+
+export type AgentResponse = { request_id: string; agent: AgentView };
+
+export type AgentCatalogResponse = { request_id: string; agents: AgentDefinitionView[] };

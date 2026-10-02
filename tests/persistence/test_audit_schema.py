@@ -213,4 +213,5 @@ def test_audit_sink_is_not_wired_and_has_no_http_surface() -> None:
     app_dir = Path(app.main.__file__).parent
     users = [p for p in app_dir.rglob("*.py") if "PostgresAuditSink" in p.read_text()]
     outside = {str(p.relative_to(app_dir)) for p in users if p.parent.name != "persistence"}
-    assert outside == {"composition/local_mock.py", "composition/integrations.py"}
+    assert outside == {"composition/local_mock.py", "composition/integrations.py",
+                       "composition/agents.py"}  # fmt: skip

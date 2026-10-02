@@ -82,6 +82,7 @@ export function errorMessage(kind: ProductErrorKind, context: keyof typeof SERVI
     case "not_found":
       return context === "command" ? "Ticket command not found" : "Not found";
     case "conflict":
+      if (context === "analysis") return "Operations Agent is disabled (Settings → Agents)";
       return "Idempotency conflict: this request key was already used for a different ticket. Reset the ticket form.";
     case "too_large":
       return "Request too large";
