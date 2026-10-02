@@ -10,7 +10,8 @@ authorization, policy or verification, and never business truth.
 
 Everything that can be observed is a fixed, low-cardinality vocabulary: the operation,
 the outcome and a few bounded details (HTTP method/route/status, a canonical business
-status and reason, two booleans). There is deliberately no free-form field: no
+status and reason, two booleans, and Workflow labels: static catalog Workflow/Step ids,
+canonical statuses and failure codes, a retry flag). There is deliberately no free-form field: no
 identifiers of companies, stores, actors, commands, tickets, orders or shipments, no
 message, title, description, idempotency key, credential, provider value or exception
 text can be expressed. ``request_id`` (the server-generated correlation id) is the
@@ -21,6 +22,7 @@ from any failure of the observability implementation (it never raises into busin
 code, never suppresses the operation's own exception and never retries anything).
 """
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from types import TracebackType
@@ -36,6 +38,8 @@ class ProductOperation(StrEnum):
     DAILY_REPORT = "operations.daily_report"
     TICKET_COMMAND = "operations.ticket_command"
     TICKET_COMMAND_QUERY = "operations.ticket_command_query"
+    WORKFLOW_RUN = "workflow.run"
+    WORKFLOW_STEP_ATTEMPT = "workflow.step_attempt"
 
 
 class ObservationOutcome(StrEnum):
@@ -108,10 +112,40 @@ class BusinessDetails:
                 raise ValueError("business flags must be booleans")
 
 
+_WORKFLOW_ID = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+_STEP_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowDetails:
+    """Workflow labels: the STATIC catalog ids (low cardinality) and canonical enum
+    members only. Never a run, company, actor or store identifier."""
+
+    workflow_id: str
+    status: StrEnum
+    step_id: str | None = None
+    failure_code: StrEnum | None = None
+    retry: bool | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workflow_id, str) or not _WORKFLOW_ID.fullmatch(self.workflow_id):
+            raise ValueError("workflow_id must be a catalog workflow id")
+        if self.step_id is not None and (
+            not isinstance(self.step_id, str) or not _STEP_ID.fullmatch(self.step_id)
+        ):
+            raise ValueError("step_id must be a catalog step id")
+        for value in (self.status, self.failure_code):
+            if value is not None and not isinstance(value, StrEnum):
+                raise ValueError("workflow status and failure code must be enum members")
+        if self.retry is not None and type(self.retry) is not bool:
+            raise ValueError("retry must be a boolean")
+
+
 @dataclass(frozen=True, slots=True)
 class ObservationDetails:
     http: HttpDetails | None = None
     business: BusinessDetails | None = None
+    workflow: WorkflowDetails | None = None
 
     def attributes(self) -> dict[str, str | int | bool]:
         """The flat, bounded attribute set shared by logs, spans and metrics."""
@@ -131,6 +165,16 @@ class ObservationDetails:
                 attrs["replayed"] = business.replayed
             if business.persistence_complete is not None:
                 attrs["persistence_complete"] = business.persistence_complete
+        if self.workflow is not None:
+            workflow = self.workflow
+            attrs["workflow.id"] = workflow.workflow_id
+            attrs["workflow.status"] = workflow.status.value
+            if workflow.step_id is not None:
+                attrs["workflow.step_id"] = workflow.step_id
+            if workflow.failure_code is not None:
+                attrs["workflow.failure_code"] = workflow.failure_code.value
+            if workflow.retry is not None:
+                attrs["workflow.retry"] = workflow.retry
         return attrs
 
 

@@ -13,6 +13,7 @@ from agno.models.base import Model
 
 from app.composition.backend_inputs import BusinessBackendInputs
 from app.config import Settings
+from app.observability.contracts import ProductObservability
 from app.services.operations import OperationsRunService
 from app.services.operations_reports import DailyOperationsReportService
 from app.services.operations_tickets import (
@@ -66,6 +67,11 @@ class BusinessBackendBuilder(Protocol):
     ``inputs`` holds exactly the config and secret inputs the registration declared,
     already resolved by the Product. A builder never reads the environment, files or
     deployment secret storage itself, and reveals a secret only where it is used.
+
+    ``observability`` is the ONE Product observability of the deployed application (the
+    same instance ``create_app`` uses); a builder hands it to the services it composes
+    that observe themselves (the Workflow engine). ``None``: those services are not
+    observed. A builder never creates another one.
     """
 
     def __call__(
@@ -74,4 +80,5 @@ class BusinessBackendBuilder(Protocol):
         *,
         model: Model | None = None,
         inputs: BusinessBackendInputs,
+        observability: ProductObservability | None = None,
     ) -> DeploymentComposition: ...

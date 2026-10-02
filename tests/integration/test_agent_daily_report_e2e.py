@@ -30,6 +30,15 @@ NOT_REQUESTED = {"status": "denied", "reason": "action_not_requested", "ticket_i
 LEAKS = AGENT_NEVER_SHOWS
 
 
+def wrapped_report_workflow(service: object) -> object:
+    """The DailyOperationsWorkflow a Workflow-backed report service runs (Task 034)."""
+    from app.workflow_management import DAILY_REPORT_HANDLER_ID, DAILY_REPORT_WORKFLOW_ID
+
+    handler = service.engine.registry.handler(DAILY_REPORT_WORKFLOW_ID,  # type: ignore[attr-defined]
+                                              DAILY_REPORT_HANDLER_ID)  # fmt: skip
+    return handler.report_service
+
+
 class Observed:
     def __init__(self) -> None:
         self.calls: dict[str, list] = {}
@@ -114,12 +123,14 @@ def test_agent_explains_the_daily_report_read_only(settings, runtime_settings, m
     ((desk, _, _),) = observed.calls["MockTicketDesk"]
     assert desk.ticket_count == 0
 
-    # ONE workflow instance: the HTTP report service AND the agent's report tool.
+    # ONE report service: the HTTP report service AND the agent's report tool. Task 034:
+    # it runs the ONE workflow instance as the operations.daily_report Product Workflow.
     ((workflow, _, wf_kwargs),) = observed.calls["DailyOperationsWorkflow"]
     ((_, _, agent_kwargs),) = observed.calls["build_operations_agent"]
-    assert agent_kwargs["daily_operations"] is workflow
-    # (The HTTP slot holds the Product observability decorator of that same workflow.)
-    assert getattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY).delegate is workflow
+    report_service = agent_kwargs["daily_operations"]
+    assert wrapped_report_workflow(report_service) is workflow
+    # (The HTTP slot holds the Product observability decorator of that same service.)
+    assert getattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY).delegate is report_service
     # ... on the same adapter and gate as the agent, and only one mock system.
     ((adapter, _, _),) = observed.calls["MockCommerceAdapter"]
     ((gate, _, _),) = observed.calls["GovernanceGate"]

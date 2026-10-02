@@ -55,6 +55,8 @@ from app.routes.operations_tickets import (
     OPERATIONS_TICKETS_PATH,
 )
 from app.routes.operations_tickets import router as operations_tickets_router
+from app.routes.workflows import WORKFLOWS_PATHS, WORKFLOWS_SERVICE_STATE_KEY
+from app.routes.workflows import router as workflows_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
 from app.services.operations import OperationsRunService
 from app.services.operations_reports import DailyOperationsReportService
@@ -62,6 +64,7 @@ from app.services.operations_tickets import (
     OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
 )
+from app.workflow_management.service import WorkflowInspectionService
 
 
 def create_app(
@@ -77,6 +80,7 @@ def create_app(
     observability: ProductObservability | None = None,
     integration_service: IntegrationManagementService | None = None,
     agent_service: AgentManagementService | None = None,
+    workflow_service: WorkflowInspectionService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -105,7 +109,11 @@ def create_app(
     routes are served and the Operations run boundary is gated by the effective state of
     the ``operations`` Agent (a disabled Agent is refused before it, its model or any tool
     runs). Without one, the Agent routes answer 503 and every Agent keeps its Product
-    definition default."""
+    definition default.
+
+    ``workflow_service`` is the read-only Workflow inspection (Task 034): the Workflow
+    catalog and this company's run history. Without one the Workflow routes answer 503.
+    It never executes anything (there is no Workflow run endpoint)."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -170,6 +178,7 @@ def create_app(
     setattr(app.state, OPERATIONS_DAILY_REPORT_SERVICE_STATE_KEY,
             observed_daily_operations_service(daily_operations_service, observer))  # fmt: skip
     setattr(app.state, INTEGRATIONS_SERVICE_STATE_KEY, integration_service)
+    setattr(app.state, WORKFLOWS_SERVICE_STATE_KEY, workflow_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -190,6 +199,7 @@ def create_app(
     app.include_router(integrations_router)
     app.include_router(agents_router)
     app.include_router(capabilities_router)
+    app.include_router(workflows_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -205,6 +215,7 @@ def create_app(
             *INTEGRATIONS_PATHS,
             *AGENTS_PATHS,
             *CAPABILITIES_PATHS,
+            *WORKFLOWS_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

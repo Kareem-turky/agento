@@ -88,6 +88,7 @@ export function Console() {
         <nav className="topbar__nav" aria-label="Pages">
           <Link href="/settings/agents">Agents</Link>
           <Link href="/settings/integrations">Integrations</Link>
+          <Link href="/settings/workflows">Workflows</Link>
         </nav>
         <span className={`pill pill--${health}`} role="status">
           {health === "checking" ? "Checking API…" : health === "reachable" ? "API reachable" : "API unavailable"}

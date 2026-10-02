@@ -36,6 +36,7 @@ from app.composition.contracts import (
     DeploymentCompositionError,
 )
 from app.config import DISABLED_BUSINESS_BACKEND, Environment, Settings
+from app.observability.contracts import ProductObservability
 
 _BACKEND_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _ENVIRONMENTS = frozenset(get_args(Environment))
@@ -96,7 +97,11 @@ class BusinessBackendRegistry:
 
 
 def _build_mock_backend(
-    settings: Settings, *, model: Model | None = None, inputs: BusinessBackendInputs
+    settings: Settings,
+    *,
+    model: Model | None = None,
+    inputs: BusinessBackendInputs,
+    observability: ProductObservability | None = None,
 ) -> DeploymentComposition:
     # The mock declares no inputs; anything else means the composition is miswired.
     if not isinstance(inputs, BusinessBackendInputs) or not inputs.is_empty:
@@ -105,7 +110,7 @@ def _build_mock_backend(
     # backend was resolved AND its environment allowed. Configuration never names it.
     from app.composition.local_mock import build_local_mock_composition
 
-    return build_local_mock_composition(settings, model=model)
+    return build_local_mock_composition(settings, model=model, observability=observability)
 
 
 def build_default_backend_registry() -> BusinessBackendRegistry:

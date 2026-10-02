@@ -242,7 +242,11 @@ def test_operations_analysis_and_daily_report_are_consistent_and_read_only(
     assert {**tool_result["report"], "generated_at": None} == {**report, "generated_at": None}
     (workflow,) = observed.workflows
     (agent_kwargs,) = observed.agent_kwargs
-    assert agent_kwargs["daily_operations"] is workflow
+    # Task 034: the agent's report service runs that ONE workflow as a Product Workflow.
+    daily = agent_kwargs["daily_operations"]
+    handler = daily.engine.registry.handler("operations.daily_report",
+                                            "operations.daily_report.compute")  # fmt: skip
+    assert handler.report_service is workflow
 
     # No provider/private data through the Agent or the report.
     for marker in AGENT_NEVER_SHOWS:

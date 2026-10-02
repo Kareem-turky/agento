@@ -12,7 +12,7 @@
 | **Skill** | WHAT capability the Agent possesses | `SkillDefinition` / `ProductSkillCatalog` (`app/agent_management/skills.py`) |
 | **Task** | WHAT concrete Product job is requested | `TaskDefinition` / `ProductTaskCatalog` (`app/agent_management/tasks.py`) |
 | **Tool** | HOW one atomic read or write is invoked | trusted tool code (`app/agents/operations_tools.py`), described by the Agent's `AgentManifest` |
-| **Workflow** | HOW a deterministic multi-step process runs | `DailyOperationsWorkflow` (`app/workflows/operations_daily.py`) |
+| **Workflow** | HOW a deterministic multi-step process runs | Product Workflow `operations.daily_report` on the Workflow Platform (`app/workflow_management/`, Task 034), around `DailyOperationsWorkflow` (`app/workflows/operations_daily.py`); see [`WORKFLOWS.md`](WORKFLOWS.md) |
 
 These stay separate:
 
@@ -160,8 +160,13 @@ criteria), read-only. There are no controls.
 
 ## Not in this task
 
-- There is no Task executor, task run endpoint, scheduler, queue, state machine, retries,
-  checkpoints or task history. The Workflow Platform comes later (Task 034).
+- There is no Task executor, task run endpoint, scheduler, queue or task history.
+  Deterministic execution (state machine, retries, checkpoints, recovery) belongs to the
+  Workflow Platform (Task 034, [`WORKFLOWS.md`](WORKFLOWS.md)). A Task only *names* the
+  Product Workflow that performs it: `operations.analyze_daily` has
+  `workflow_id = "operations.daily_report"`, validated (fail closed) against the Workflow
+  catalog. `operations.inspect_order` and `operations.escalate_issue` are not
+  Workflow-backed.
 - There are no user-created or user-configured Skills or Tasks, and no LLM-driven task
   routing.
 - Model-chosen Skill or Task ids are never trusted.

@@ -64,7 +64,8 @@ class RecordingBuilder:
         self.result = DeploymentComposition()
 
     def __call__(self, settings: Settings, *, model: Any = None,
-                 inputs: BusinessBackendInputs) -> DeploymentComposition:  # fmt: skip
+                 inputs: BusinessBackendInputs,
+                 observability: Any = None) -> DeploymentComposition:  # fmt: skip
         self.inputs.append(inputs)
         return self.result
 
@@ -235,7 +236,7 @@ def test_resolution_happens_after_the_environment_check_and_before_the_builder(s
             events.append("load")
             return result
 
-    def builder(settings_, *, model=None, inputs):
+    def builder(settings_, *, model=None, inputs, observability=None):
         events.append("builder")
         return DeploymentComposition()
 
@@ -263,9 +264,9 @@ def test_mock_reads_nothing_and_needs_no_directories(settings, forbid_reads, mon
     received: list[BusinessBackendInputs] = []
     original = registry_module._build_mock_backend
 
-    def spy(settings_, *, model=None, inputs):
+    def spy(settings_, *, model=None, inputs, observability=None):
         received.append(inputs)
-        return original(settings_, model=model, inputs=inputs)
+        return original(settings_, model=model, inputs=inputs, observability=observability)
 
     monkeypatch.setattr(registry_module, "_build_mock_backend", spy)
     source = RecordingSource(error=AssertionError("must not load"))
@@ -406,8 +407,10 @@ def test_failures_do_not_log_values(settings, roots, caplog) -> None:
 
 
 def test_operator_factory_signature_is_unchanged() -> None:
+    # Task 034: ``observability`` (keyword-only) chooses the application's ONE Product
+    # observability; it is never a registry, builder, input source or credential.
     assert list(inspect.signature(create_deployment_app).parameters) == [
-        "settings", "runtime_settings", "model",
+        "settings", "runtime_settings", "model", "observability",
     ]  # fmt: skip
     parameters = inspect.signature(build_deployment_composition).parameters
     assert parameters["input_source"].kind is inspect.Parameter.KEYWORD_ONLY
@@ -434,7 +437,7 @@ def test_a_builder_reveals_the_secret_only_into_the_transport_header(settings, r
 
     built: list[HttpxIntegrationTransport] = []
 
-    def builder(settings_, *, model=None, inputs: BusinessBackendInputs):
+    def builder(settings_, *, model=None, inputs: BusinessBackendInputs, observability=None):
         token = inputs.secrets["API_TOKEN"].reveal_bytes().decode("ascii")
         built.append(HttpxIntegrationTransport(
             inputs.config["BASE_URL"], default_headers={"Authorization": f"Bearer {token}"},

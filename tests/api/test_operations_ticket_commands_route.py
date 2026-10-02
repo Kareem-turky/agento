@@ -136,6 +136,7 @@ def test_trusted_actor_needs_no_agentos_key_and_agentos_stays_protected(
     from app.routes.agents import AGENTS_PATHS
     from app.routes.capabilities import CAPABILITIES_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
+    from app.routes.workflows import WORKFLOWS_PATHS
 
     assert sorted(excluded) == sorted(
         [
@@ -146,10 +147,11 @@ def test_trusted_actor_needs_no_agentos_key_and_agentos_stays_protected(
             *INTEGRATIONS_PATHS,
             *AGENTS_PATHS,
             *CAPABILITIES_PATHS,  # Task 033: read-only Skill/Task inspection
+            *WORKFLOWS_PATHS,  # Task 034: read-only Workflow inspection
         ]
     )
     assert len(INTEGRATIONS_PATHS) == 7 and len(AGENTS_PATHS) == 6
-    assert len(CAPABILITIES_PATHS) == 4
+    assert len(CAPABILITIES_PATHS) == 4 and len(WORKFLOWS_PATHS) == 4
     assert not [p for p in excluded if any(c in p for c in "*?[{")]
 
 

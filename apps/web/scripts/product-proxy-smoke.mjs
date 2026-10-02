@@ -97,6 +97,7 @@ const stub = createServer((req, res) => {
     if (path.startsWith("/api/v1/integrations/")) return integrationReply(res, req.method, path);
     if (path === "/api/v1/agents" || path.startsWith("/api/v1/agents/")) return agentReply(res, req.method, path);
     if (path.startsWith("/api/v1/skills/") || path.startsWith("/api/v1/tasks/")) return capabilityReply(res, req.method, path);
+    if (path.startsWith("/api/v1/workflows/")) return workflowReply(res, req.method, path);
     return reply(res, 404, { detail: "Not Found" });
   });
 });
@@ -142,6 +143,19 @@ function capabilityReply(res, method, path) {
     "/api/v1/skills/skill": { ...id, skill: {} },
     "/api/v1/tasks/catalog": { ...id, tasks: [] },
     "/api/v1/tasks/task": { ...id, task: {} },
+  };
+  return path in routes ? reply(res, 200, routes[path]) : reply(res, 404, { detail: "Not Found" });
+}
+
+// Product Workflows (Task 034): read-only inspection; there is no run endpoint.
+function workflowReply(res, method, path) {
+  if (method !== "GET") return reply(res, 405, { detail: "Method Not Allowed" });
+  const id = { request_id: UPSTREAM_REQUEST_ID };
+  const routes = {
+    "/api/v1/workflows/catalog": { ...id, workflows: [] },
+    "/api/v1/workflows/workflow": { ...id, workflow: {} },
+    "/api/v1/workflows/runs": { ...id, runs: [] },
+    "/api/v1/workflows/run": { ...id, run: {}, attempts: [], events: [] },
   };
   return path in routes ? reply(res, 200, routes[path]) : reply(res, 404, { detail: "Not Found" });
 }
@@ -425,6 +439,40 @@ async function main() {
     }
     check(received.length === 0, "skills/tasks: refused methods and unknown paths never reached the upstream");
 
+    // 8b. Product Workflows (Task 034): GET-only inspection, one fixed upstream each,
+    // Authorization only. There is no run, resume or retry route to proxy.
+    const workflowCalls = [
+      ["/api/product/workflows/catalog", "/api/v1/workflows/catalog"],
+      ["/api/product/workflows/workflow?workflow_id=operations.daily_report",
+       "/api/v1/workflows/workflow?workflow_id=operations.daily_report"],
+      ["/api/product/workflows/runs?limit=10", "/api/v1/workflows/runs?limit=10"],
+      [`/api/product/workflows/run?run_id=8f2c6a1e-4b7d-4c3a-9e2f-1a2b3c4d5e6f`, `/api/v1/workflows/run?run_id=8f2c6a1e-4b7d-4c3a-9e2f-1a2b3c4d5e6f`],
+    ];
+    for (const [bffPath, upstreamPath] of workflowCalls) {
+      received.length = 0;
+      response = await fetch(`${base}${bffPath}`, { headers: hostile });
+      await response.text();
+      const call = received[0];
+      check(response.status === 200 && received.length === 1 && call.method === "GET" && call.url === upstreamPath,
+            `workflows: GET ${bffPath.split("?")[0]} -> exact upstream (${response.status})`);
+      check(call?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (call?.headers ?? {})),
+            `workflows: GET ${bffPath.split("?")[0]} forwards Authorization only`);
+      check(response.headers.get("cache-control") === "no-store", `workflows: GET ${bffPath.split("?")[0]} no-store`);
+    }
+    received.length = 0;
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+      for (const path of ["/api/product/workflows/catalog", "/api/product/workflows/runs", "/api/product/workflows/run"]) {
+        response = await fetch(`${base}${path}`, { method, headers: hostile });
+        check(response.status === 405, `workflows: ${method} ${path} refused (${response.status})`);
+      }
+    }
+    for (const path of ["/api/product/workflows", "/api/product/workflows/execute", "/api/product/workflows/run/resume",
+                        "/api/product/workflows/runs/retry"]) {
+      response = await fetch(`${base}${path}`, { method: "POST", headers: hostile });
+      check(response.status === 404 || response.status === 405, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "workflows: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -441,6 +489,10 @@ async function main() {
       `/api/product/agent-management/agent?agent_id=operations&module=app.agents`,
       `/api/product/agent-management/skills?skill_id=operations.order_inspection`,
       `/api/product/agent-management/task?task_id=operations.inspect_order&code=x`,
+      `/api/product/workflows/catalog?workflow_id=operations.daily_report`,
+      `/api/product/workflows/run?run_id=${COMMAND}&run_id=${COMMAND}`,
+      `/api/product/workflows/runs?limit=5&company_id=other`,
+      `/api/product/workflows/workflow?workflow_id=operations.daily_report&handler=x`,
     ];
     for (const path of rejected) {
       response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
@@ -500,6 +552,10 @@ async function main() {
     const agentsPage = await fetch(`${base}/settings/agents`);
     const agentsHtml = await agentsPage.text();
     check(agentsPage.status === 200 && agentsHtml.includes("Agents"), "agents settings page renders");
+    const workflowsPage = await fetch(`${base}/settings/workflows`);
+    const workflowsHtml = await workflowsPage.text();
+    check(workflowsPage.status === 200 && workflowsHtml.includes("Workflows"), "workflows settings page renders");
+    check(!workflowsHtml.includes(API_KEY) && !workflowsHtml.includes(origin), "workflows settings HTML has no key or origin");
     check(!agentsHtml.includes(API_KEY) && !agentsHtml.includes(origin), "agents settings HTML has no key or origin");
     check(response.status === 200 && settingsHtml.includes("Integrations"), "integrations settings page renders");
     check(!settingsHtml.includes(API_KEY) && !settingsHtml.includes(origin) && !settingsHtml.includes(SECRET_VALUE),
@@ -516,7 +572,8 @@ async function main() {
     const clientCode = bundles.join("\n");
     check(bundles.length > 0 && !clientCode.includes("PRODUCT_API_ORIGIN") && !clientCode.includes("/api/v1/operations") &&
           !clientCode.includes("/api/v1/integrations") && !clientCode.includes("/api/v1/agents") &&
-          !clientCode.includes("/api/v1/skills") && !clientCode.includes("/api/v1/tasks"),
+          !clientCode.includes("/api/v1/skills") && !clientCode.includes("/api/v1/tasks") &&
+          !clientCode.includes("/api/v1/workflows"),
           "client bundles contain no server origin variable or upstream Product path");
 
     // 14. upstream unavailable (stub stopped).

@@ -37,8 +37,10 @@ def test_package_layout() -> None:
 def test_domain_depends_only_on_the_standard_library_and_pydantic() -> None:
     for name in DOMAIN:
         for module in imports(PACKAGE / name):
+            # Task 034: capabilities.py validates Task -> Workflow references against the
+            # static Product Workflow catalog (metadata only).
             assert module.split(".")[0] in STDLIB | {"pydantic"} or module.startswith(
-                "app.agent_management."
+                ("app.agent_management.", "app.workflow_management.catalog")
             ), (name, module)
 
 

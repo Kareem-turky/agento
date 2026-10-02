@@ -239,3 +239,11 @@ input:disabled, textarea:disabled { background: var(--surface-muted); color: var
 .capabilities__title { margin: 0.4rem 0 0.2rem; font-size: 0.9rem; }
 .capabilities__list { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; display: flex; flex-direction: column; gap: 0.35rem; }
 .capabilities__tools, .capabilities__line { display: block; margin-top: 0.15rem; }
+
+/* Settings → Workflows (read-only) */
+.workflow-steps { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.workflow-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.4rem; }
+.workflow-table th, .workflow-table td { text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.workflow-table th { color: var(--text-muted); font-weight: 600; }
+.workflow-runs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.workflow-runs__item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

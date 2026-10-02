@@ -61,7 +61,7 @@ class RecordingBuilder:
         self.result = DeploymentComposition()
 
     def __call__(
-        self, settings: Settings, *, model: Any = None, inputs: Any
+        self, settings: Settings, *, model: Any = None, inputs: Any, observability: Any = None
     ) -> DeploymentComposition:
         self.calls.append((settings, model))
         self.inputs.append(inputs)
@@ -270,9 +270,9 @@ def test_mock_in_development_goes_through_the_registered_builder(settings, monke
     calls: list[str] = []
     original = registry_module._build_mock_backend
 
-    def spy(settings_, *, model=None, inputs):
+    def spy(settings_, *, model=None, inputs, observability=None):
         calls.append(settings_.environment)
-        return original(settings_, model=model, inputs=inputs)
+        return original(settings_, model=model, inputs=inputs, observability=observability)
 
     monkeypatch.setattr(registry_module, "_build_mock_backend", spy)
     composition = build_deployment_composition(env_settings(settings, environment, "mock"),
@@ -321,7 +321,8 @@ def test_a_production_registration_is_honoured_generically(settings) -> None:
 
 
 def test_builder_results_and_injected_registries_are_checked(settings) -> None:
-    def broken(settings: Settings, *, model: Any = None, inputs: Any) -> Any:  # noqa: ARG001
+    def broken(settings: Settings, *, model: Any = None, inputs: Any,
+               observability: Any = None) -> Any:  # noqa: ARG001  # fmt: skip
         return {"operations_service": None}  # not a DeploymentComposition
 
     s = env_settings(settings, "local", "test-backend")
@@ -343,7 +344,9 @@ def test_builder_results_and_injected_registries_are_checked(settings) -> None:
 
 def test_operator_factory_cannot_inject_a_registry_or_builder() -> None:
     params = inspect.signature(create_deployment_app).parameters
-    assert list(params) == ["settings", "runtime_settings", "model"]
+    # Task 034: the one Product observability is the only addition (keyword-only).
+    assert list(params) == ["settings", "runtime_settings", "model", "observability"]
+    assert params["observability"].kind is inspect.Parameter.KEYWORD_ONLY
     assert "registry" in inspect.signature(build_deployment_composition).parameters
     bootstrap = (APP_DIR / "bootstrap.py").read_text()
     assert "registry" not in bootstrap.lower() and "builder" not in bootstrap.lower()

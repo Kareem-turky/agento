@@ -15,6 +15,7 @@ from app.observability.contracts import (
     ProductObservability,
     ProductOperation,
     ProductRoute,
+    WorkflowDetails,
     observe,
 )
 from app.observability.middleware import ProductObservabilityMiddleware
@@ -31,6 +32,7 @@ __all__ = [
     "ProductObservabilityMiddleware",
     "ProductOperation",
     "ProductRoute",
+    "WorkflowDetails",
     "build_default_observability",
     "observe",
 ]

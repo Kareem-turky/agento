@@ -65,6 +65,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
     assert [o.value for o in ProductOperation] == [
         "http.request", "operations.agent_run", "operations.daily_report",
         "operations.ticket_command", "operations.ticket_command_query",
+        # Task 034: Workflow runs and Step attempts (labels: catalog ids, statuses).
+        "workflow.run", "workflow.step_attempt",
     ]  # fmt: skip
     assert [o.value for o in ObservationOutcome] == [
         "completed", "denied", "invalid", "conflict", "not_found", "unavailable", "error",

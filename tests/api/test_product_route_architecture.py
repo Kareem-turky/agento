@@ -153,7 +153,7 @@ def test_agentos_exemption_takes_exact_paths_only(settings, runtime_settings) ->
     assert (
         "product_route_paths=(OPERATIONS_RUNS_PATH,OPERATIONS_DAILY_REPORT_PATH,"
         "OPERATIONS_TICKETS_PATH,OPERATIONS_TICKET_COMMANDS_PATH,*INTEGRATIONS_PATHS,"
-        "*AGENTS_PATHS,*CAPABILITIES_PATHS,)" in compact
+        "*AGENTS_PATHS,*CAPABILITIES_PATHS,*WORKFLOWS_PATHS,)" in compact
     )
     from app.routes.agents import AGENTS_PATHS
 

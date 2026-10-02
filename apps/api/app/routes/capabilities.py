@@ -111,6 +111,10 @@ class TaskView(BaseModel):
     acceptance_criteria: list[AcceptanceCriterionView]
     limits: TaskLimitsView
     agent_ids: list[str] = Field(description="Product Agents that support this Task.")
+    workflow_id: str | None = Field(
+        description="The deterministic Product Workflow that "
+        "performs this Task (None: it is not Workflow-backed)."
+    )
 
     @classmethod
     def of(cls, task: TaskDefinition, graph: ProductCapabilityGraph) -> "TaskView":
@@ -126,7 +130,7 @@ class TaskView(BaseModel):
                 allowed_write_actions=sorted(limits.allowed_write_actions),
                 requires_explicit_write_intent=limits.requires_explicit_write_intent,
             ),
-            agent_ids=list(graph.agents_with_task(task.task_id)),
+            agent_ids=list(graph.agents_with_task(task.task_id)), workflow_id=task.workflow_id,
         )  # fmt: skip
 
 

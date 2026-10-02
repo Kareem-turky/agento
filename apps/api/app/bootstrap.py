@@ -15,11 +15,18 @@ Integration management (Task 031) is composed independently of the business back
 (``app.composition.integrations``): connection metadata in PostgreSQL, credentials in
 ``APP_INTEGRATION_SECRETS_DIR``; this build installs no integration type. Agent
 management (Task 032, ``app.composition.agents``) is composed the same way: Agent
-enable/disable overrides in PostgreSQL, gating the Operations run boundary.
+enable/disable overrides in PostgreSQL, gating the Operations run boundary. Workflow
+inspection (Task 034, ``app.composition.workflows``) is composed the same way: read-only
+Workflow catalog and run history; Workflows themselves run inside the business backend.
+
+ONE Product observability per application: chosen here, then handed to the business
+composition (the Workflow engine) and to ``create_app`` alike.
 
 The composition-owned resources are released when the application shuts down, or
 immediately if the application cannot be built. Startup never migrates the database.
 """
+
+from collections.abc import Callable
 
 from agno.models.base import Model
 from agno.os.settings import AgnoAPISettings
@@ -28,8 +35,10 @@ from fastapi import FastAPI
 from app.composition import build_deployment_composition
 from app.composition.agents import build_agent_management
 from app.composition.integrations import build_integration_management
+from app.composition.workflows import build_workflow_inspection
 from app.config import Settings, get_settings
 from app.main import create_app
+from app.observability import ProductObservability, build_default_observability
 
 
 def create_deployment_app(
@@ -37,23 +46,38 @@ def create_deployment_app(
     runtime_settings: AgnoAPISettings | None = None,
     *,
     model: Model | None = None,
+    observability: ProductObservability | None = None,
 ) -> FastAPI:
-    """``model`` is an explicit model override for deterministic tests; it is the only
-    override (Product authentication and the services always come from settings)."""
+    """``model`` is an explicit model override for deterministic tests. ``observability``
+    is the Product observability of the application (default: the Product's own); it is
+    chosen ONCE here and the SAME instance is given to the business composition (Workflow
+    runs and Step attempts) and to ``create_app`` (HTTP and service observations).
+    Product authentication and the services always come from settings."""
     settings = settings or get_settings()
-    composition = build_deployment_composition(settings, model=model)
+    observer = observability if observability is not None else build_default_observability()
+    composition = build_deployment_composition(settings, model=model, observability=observer)
+    discards: list[Callable[[], None]] = [composition.discard]
+
+    def discard_all() -> None:
+        # Release everything built so far, in reverse order; every release is attempted.
+        error: BaseException | None = None
+        for discard in reversed(discards):
+            try:
+                discard()
+            except BaseException as failure:  # noqa: BLE001 - re-raised below
+                error = error or failure
+        if error is not None:
+            raise error
+
     try:
         integrations = build_integration_management(settings)
-    except BaseException:
-        composition.discard()
-        raise
-    try:
+        discards.append(integrations.discard)
         agents = build_agent_management(settings)
+        discards.append(agents.discard)
+        workflows = build_workflow_inspection(settings)
+        discards.append(workflows.discard)
     except BaseException:
-        try:
-            composition.discard()
-        finally:
-            integrations.discard()
+        discard_all()
         raise
 
     async def close() -> None:
@@ -63,7 +87,10 @@ def create_deployment_app(
             try:
                 await integrations.close()
             finally:
-                await agents.close()
+                try:
+                    await agents.close()
+                finally:
+                    await workflows.close()
 
     try:
         return create_app(
@@ -76,14 +103,10 @@ def create_deployment_app(
             daily_operations_service=composition.daily_operations_service,
             integration_service=integrations.service,
             agent_service=agents.service,
+            workflow_service=workflows.service,
             shutdown_callback=close,
+            observability=observer,
         )
     except BaseException:
-        try:
-            composition.discard()
-        finally:
-            try:
-                integrations.discard()
-            finally:
-                agents.discard()
+        discard_all()
         raise

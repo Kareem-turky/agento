@@ -11,7 +11,12 @@
       -> WriteCommandCoordinator(store, coordinator, catalog)
       -> WriteCommandTicketService / WriteCommandTicketQueryService(store)
     DailyOperationsWorkflow(commerce=<the SAME MockCommerceAdapter>, gate=<the SAME gate>)
-      -> the HTTP report service AND the agent's report tool (one instance)
+      -> WorkflowRuntimeRegistry(catalog, [daily_report_registration(<that workflow>)])
+      -> WorkflowEngine(catalog, registry, PostgresWorkflowRunRepository(sessions),
+                        observability=<the application's ONE Product observability>)
+      -> WorkflowBackedDailyOperationsReportService(engine)
+      -> the HTTP report service AND the agent's report tool (one instance): every report
+         is a durable ``operations.daily_report`` Workflow run (Task 034)
     build_operations_agent(model, commerce, gate, coordinator, daily_operations)
       -> OperationsAgentRunner
 
@@ -49,15 +54,24 @@ from app.integrations.commerce.mock import (
     MockTicketDesk,
     MockTicketingAdapter,
 )
+from app.observability.contracts import ProductObservability
 from app.operations import OPERATIONS_ACTIONS, CreateOperationalTicketHandler
 from app.persistence import (
     PostgresAuditSink,
+    PostgresWorkflowRunRepository,
     PostgresWriteCommandStore,
     create_product_engine,
     create_session_factory,
 )
 from app.runtime.models import build_default_model
+from app.workflow_management.catalog import build_default_workflow_catalog
+from app.workflow_management.engine import WorkflowEngine
+from app.workflow_management.handlers import WorkflowRuntimeRegistry
 from app.workflows import DailyOperationsWorkflow
+from app.workflows.operations_daily_platform import (
+    WorkflowBackedDailyOperationsReportService,
+    daily_report_registration,
+)
 
 
 class _EngineLifecycle:
@@ -88,7 +102,10 @@ class _EngineLifecycle:
 
 
 def build_local_mock_composition(
-    settings: Settings, *, model: Model | None = None
+    settings: Settings,
+    *,
+    model: Model | None = None,
+    observability: ProductObservability | None = None,
 ) -> DeploymentComposition:
     # Defense in depth: the registry already refused other environments.
     if settings.environment not in DEVELOPMENT_ENVIRONMENTS:
@@ -99,6 +116,7 @@ def build_local_mock_composition(
         raise DeploymentCompositionError(MODEL_REQUIRED)
     if settings.database_url is None:
         raise DeploymentCompositionError(DATABASE_REQUIRED)
+    workflows = build_default_workflow_catalog()  # static; validated before any resource
 
     engine = create_product_engine(str(settings.database_url))
     lifecycle = _EngineLifecycle(engine)
@@ -119,8 +137,16 @@ def build_local_mock_composition(
         commands = WriteCommandCoordinator(store, coordinator, catalog)
 
         # ONE deterministic report service, shared by the HTTP report route and the
-        # Operations Agent's report tool (same adapter, same gate).
-        daily_operations = DailyOperationsWorkflow(commerce=commerce, gate=gate)
+        # Operations Agent's report tool (same adapter, same gate), executed as the
+        # durable ``operations.daily_report`` Product Workflow. The existing workflow
+        # still computes every report; the platform only orchestrates it.
+        report = DailyOperationsWorkflow(commerce=commerce, gate=gate)
+        bindings = WorkflowRuntimeRegistry(workflows, [daily_report_registration(report)])
+        # Workflow runs are observed through the SAME Product observability the
+        # application uses (never a second default instance).
+        platform = WorkflowEngine(workflows, bindings, PostgresWorkflowRunRepository(sessions),
+                                  observability=observability)  # fmt: skip
+        daily_operations = WorkflowBackedDailyOperationsReportService(platform)
         agent = build_operations_agent(
             operations_model, commerce=commerce, gate=gate, coordinator=coordinator,
             daily_operations=daily_operations,

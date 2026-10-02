@@ -145,13 +145,15 @@ def test_no_real_provider_backend_was_invented() -> None:
 
 def test_no_new_product_migration() -> None:
     # Composition (Task 022) added none; Task 031 adds exactly the integration-connection
-    # METADATA table and Task 032 the Agent configuration table (no business-data table).
+    # METADATA table, Task 032 the Agent configuration table and Task 034 the Workflow
+    # execution control tables (no business-data table).
     versions = ROOT / "apps" / "api" / "migrations" / "versions"
     assert sorted(p.name for p in versions.glob("*.py")) == [
         "0001_create_write_commands.py",
         "0002_create_audit_events.py",
         "0003_create_integration_connections.py",
         "0004_create_agent_configurations.py",
+        "0005_create_workflow_runtime.py",
     ]
 
 
