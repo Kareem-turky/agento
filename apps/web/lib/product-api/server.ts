@@ -59,6 +59,12 @@ export const UPSTREAM = {
   knowledgeDocumentCreate: { method: "POST", path: "/api/v1/knowledge/document/create" },
   knowledgeDocumentArchive: { method: "POST", path: "/api/v1/knowledge/document/archive" },
   knowledgeQuery: { method: "POST", path: "/api/v1/knowledge/query" },
+  approvals: { method: "GET", path: "/api/v1/approvals" },
+  approval: { method: "GET", path: "/api/v1/approvals/approval" },
+  approvalApprove: { method: "POST", path: "/api/v1/approvals/approval/approve" },
+  approvalReject: { method: "POST", path: "/api/v1/approvals/approval/reject" },
+  approvalCancel: { method: "POST", path: "/api/v1/approvals/approval/cancel" },
+  approvalResumeWorkflow: { method: "POST", path: "/api/v1/approvals/approval/resume-workflow" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;

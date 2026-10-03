@@ -113,6 +113,7 @@ export function WorkflowsSettings() {
           <Link href="/settings/agents">Agents</Link>
           <Link href="/settings/integrations">Integrations</Link>
           <Link href="/settings/knowledge">Knowledge</Link>
+          <Link href="/settings/approvals">Approvals</Link>
         </nav>
       </header>
 

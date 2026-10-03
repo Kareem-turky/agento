@@ -14,7 +14,6 @@ Only the subject fingerprint and the trusted safe summary are stored, never raw 
 parameters. Every failure is a fixed-message ``ApprovalRepositoryError``.
 """
 
-from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -133,7 +132,7 @@ def _row(request: ApprovalRequest) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def _request(row: Mapping[str, Any]) -> ApprovalRequest:
+def _request(row: sa.RowMapping) -> ApprovalRequest:
     try:
         data = dict(row)
         source = ApprovalSourceRef(
@@ -148,7 +147,7 @@ def _request(row: Mapping[str, Any]) -> ApprovalRequest:
         raise ApprovalRepositoryError() from None
 
 
-def _event(row: Mapping[str, Any]) -> ApprovalEvent:
+def _event(row: sa.RowMapping) -> ApprovalEvent:
     try:
         return ApprovalEvent.model_validate({k: row[k] for k in (c.name for c in _EVENT_COLUMNS)})
     except (ValidationError, TypeError, ValueError, KeyError):

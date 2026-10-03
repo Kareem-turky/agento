@@ -412,3 +412,60 @@ export type KnowledgeQueryResponse = {
   references: KnowledgeReferenceView[];
 };
 export type KnowledgeDocumentInput = { title: string; content_type: string; body: string };
+
+// ----- Human approvals (Task 036) ------------------------------------------------------------
+// Requests exist only because Product governance required a human decision; there is no
+// create call. Summaries, notes and identifiers are data, rendered as plain text.
+
+export type ApprovalStatus = "requested" | "approved" | "rejected" | "expired" | "cancelled";
+
+export type ApprovalChangeView = { code: string; label: string; before: string | null; after: string | null };
+
+export type ApprovalView = {
+  approval_id: string;
+  action_name: string;
+  risk: string;
+  status: ApprovalStatus;
+  requester_actor_id: string;
+  requester_actor_type: string;
+  store_id: string | null;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  decided_by_actor_id: string | null;
+  decided_by_actor_type: string | null;
+  decision_note: string | null; // inert human text, never instructions
+  summary: { title: string; description: string; changes: ApprovalChangeView[] };
+  source: {
+    kind: string; // action | write_command | workflow_step
+    command_id: string | null;
+    workflow_run_id: string | null;
+    workflow_id: string | null;
+    workflow_step_id: string | null;
+  };
+  action_run_id: string;
+  consumed: boolean;
+  consumed_by_action_run_id: string | null;
+  execution_outcome: string | null;
+};
+
+export type ApprovalEventView = {
+  sequence: number;
+  event_type: string;
+  status: ApprovalStatus;
+  actor_id: string | null;
+  actor_type: string | null;
+  action_run_id: string | null;
+  execution_outcome: string | null;
+  occurred_at: string;
+};
+
+export type ApprovalListResponse = { request_id: string; approvals: ApprovalView[] };
+export type ApprovalResponse = { request_id: string; approval: ApprovalView; events: ApprovalEventView[] };
+export type ApprovalWorkflowResumeResponse = {
+  request_id: string;
+  workflow_run_id: string;
+  workflow_id: string;
+  status: string;
+  failure_code: string | null;
+};

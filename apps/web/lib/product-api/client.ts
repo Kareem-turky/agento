@@ -4,6 +4,9 @@
 // logs or puts it in a URL.
 import type {
   AgentCatalogResponse,
+  ApprovalListResponse,
+  ApprovalResponse,
+  ApprovalWorkflowResumeResponse,
   AgentListResponse,
   AgentResponse,
   DailyOperationsReportResponse,
@@ -70,6 +73,12 @@ const PATHS = {
   knowledgeDocumentCreate: "/api/product/knowledge/document/create",
   knowledgeDocumentArchive: "/api/product/knowledge/document/archive",
   knowledgeQuery: "/api/product/knowledge/query",
+  approvals: "/api/product/approvals",
+  approval: "/api/product/approvals/approval",
+  approvalApprove: "/api/product/approvals/approval/approve",
+  approvalReject: "/api/product/approvals/approval/reject",
+  approvalCancel: "/api/product/approvals/approval/cancel",
+  approvalResumeWorkflow: "/api/product/approvals/approval/resume-workflow",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -637,6 +646,82 @@ export function queryKnowledge(apiKey: string, query: string, limit = 5): Promis
     },
     isQueryResponse,
   );
+}
+
+// ----- Human approvals (Task 036; Product API only) -------------------------------------------
+// No create function exists: requests are created only by Product governance.
+
+const APPROVAL_STATUSES = ["requested", "approved", "rejected", "expired", "cancelled"];
+
+const isApprovalChange = (v: unknown): boolean =>
+  isObject(v) && isString(v.code) && isString(v.label) && isNullableString(v.before) && isNullableString(v.after);
+
+const isApproval = (v: unknown): boolean =>
+  isObject(v) && isString(v.approval_id) && isString(v.action_name) && isString(v.risk) &&
+  isString(v.status) && APPROVAL_STATUSES.includes(v.status) && isString(v.requester_actor_id) &&
+  isString(v.created_at) && isString(v.expires_at) && isNullableString(v.decision_note) &&
+  isObject(v.summary) && isString(v.summary.title) && isString(v.summary.description) &&
+  Array.isArray(v.summary.changes) && v.summary.changes.every(isApprovalChange) &&
+  isObject(v.source) && isString(v.source.kind) && typeof v.consumed === "boolean";
+
+const isApprovalEvent = (v: unknown): boolean =>
+  isObject(v) && isNumber(v.sequence) && isString(v.event_type) && isString(v.status) && isString(v.occurred_at);
+
+const isApprovalList: Guard<ApprovalListResponse> = (v): v is ApprovalListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.approvals) && v.approvals.every(isApproval);
+
+const isApprovalResponse: Guard<ApprovalResponse> = (v): v is ApprovalResponse =>
+  isObject(v) && isString(v.request_id) && isApproval(v.approval) && Array.isArray(v.events) &&
+  v.events.every(isApprovalEvent);
+
+const isWorkflowResume: Guard<ApprovalWorkflowResumeResponse> = (v): v is ApprovalWorkflowResumeResponse =>
+  isObject(v) && isString(v.request_id) && isString(v.workflow_run_id) && isString(v.workflow_id) &&
+  isString(v.status) && isNullableString(v.failure_code);
+
+function approvalQuery(path: string, approvalId: string): string {
+  return `${path}?${new URLSearchParams({ approval_id: approvalId }).toString()}`;
+}
+
+export function listApprovals(apiKey: string, status?: string): Promise<ProductResult<ApprovalListResponse>> {
+  const path = status ? `${PATHS.approvals}?${new URLSearchParams({ status }).toString()}` : PATHS.approvals;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isApprovalList);
+}
+
+export function getApproval(apiKey: string, approvalId: string): Promise<ProductResult<ApprovalResponse>> {
+  return send(approvalQuery(PATHS.approval, approvalId), { method: "GET", headers: authorized(apiKey) }, isApprovalResponse);
+}
+
+function decide(path: string, apiKey: string, approvalId: string, note: string | null): Promise<ProductResult<ApprovalResponse>> {
+  return send(
+    approvalQuery(path, approvalId),
+    {
+      method: "POST",
+      headers: authorized(apiKey, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ note }),
+    },
+    isApprovalResponse,
+  );
+}
+
+/** Approve: grants ONE execution of exactly the requested action (note optional). */
+export function approveApproval(apiKey: string, approvalId: string, note: string | null): Promise<ProductResult<ApprovalResponse>> {
+  return decide(PATHS.approvalApprove, apiKey, approvalId, note);
+}
+
+/** Reject (a reason is required). Final. */
+export function rejectApproval(apiKey: string, approvalId: string, reason: string): Promise<ProductResult<ApprovalResponse>> {
+  return decide(PATHS.approvalReject, apiKey, approvalId, reason);
+}
+
+/** Cancel (a reason is required). Final. */
+export function cancelApproval(apiKey: string, approvalId: string, reason: string): Promise<ProductResult<ApprovalResponse>> {
+  return decide(PATHS.approvalCancel, apiKey, approvalId, reason);
+}
+
+/** The requester continues the Workflow linked to an approved request (at most once). */
+export function resumeApprovalWorkflow(apiKey: string, approvalId: string): Promise<ProductResult<ApprovalWorkflowResumeResponse>> {
+  return send(approvalQuery(PATHS.approvalResumeWorkflow, approvalId), { method: "POST", headers: authorized(apiKey) },
+              isWorkflowResume);
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */
