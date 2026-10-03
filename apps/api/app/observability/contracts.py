@@ -45,6 +45,9 @@ class ProductOperation(StrEnum):
     APPROVAL_REQUEST = "approval.request"
     APPROVAL_DECISION = "approval.decision"
     APPROVAL_CONSUME = "approval.consume"
+    CONVERSATION_INGEST = "conversation.ingest"
+    CONVERSATION_READ = "conversation.read"
+    CONVERSATION_DELIVERY = "conversation.delivery"
 
 
 class ObservationOutcome(StrEnum):

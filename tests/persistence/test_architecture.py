@@ -39,7 +39,11 @@ ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                # Task 036: the approval repository contract and pure domain modules
                # (never the service, handlers, routes or composition).
                "app.approval_management.errors", "app.approval_management.models",
-               "app.approval_management.state", "app.execution.approvals")  # fmt: skip
+               "app.approval_management.state", "app.execution.approvals",
+               # Task 037: the conversation repository contract and pure domain modules
+               # (never the ingress, read service, routes or composition).
+               "app.conversations.contracts", "app.conversations.delivery",
+               "app.conversations.errors", "app.conversations.models")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -163,7 +167,11 @@ def test_no_business_data_mirror_tables() -> None:
                      "product.knowledge_documents", "product.knowledge_document_versions",
                      "product.knowledge_chunks",
                      # Task 036: Product-owned approval decisions (no raw parameters).
-                     "product.approval_requests", "product.approval_events"}  # fmt: skip
+                     "product.approval_requests", "product.approval_events",
+                     # Task 037: the Product-owned canonical conversation transcript
+                     # (no provider payload, CRM, attachment or Agent-memory table).
+                     "product.conversations", "product.conversation_messages",
+                     "product.message_delivery_events"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

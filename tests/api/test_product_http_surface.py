@@ -103,9 +103,15 @@ APPROVAL_ROUTES = {
     ("POST", "/api/v1/approvals/approval/cancel"),
     ("POST", "/api/v1/approvals/approval/resume-workflow"),
 }
+# Task 037: read-only conversations. There is NO ingest/webhook and NO send route.
+CONVERSATION_ROUTES = {
+    ("GET", "/api/v1/conversations"),
+    ("GET", "/api/v1/conversations/conversation"),
+    ("GET", "/api/v1/conversations/messages"),
+}
 MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
                        "/api/v1/tasks/", "/api/v1/workflows/", "/api/v1/knowledge/",
-                       "/api/v1/approvals")  # fmt: skip
+                       "/api/v1/approvals", "/api/v1/conversations")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -134,6 +140,9 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     # Task 036: approvals are exactly these fixed routes (list, read, decide, continue).
     approvals = {(m, p) for m, p in routes if p.startswith("/api/v1/approvals")}
     assert approvals == APPROVAL_ROUTES
+    # Task 037: conversations are exactly these fixed READ-ONLY routes.
+    conversations = {(m, p) for m, p in routes if p.startswith("/api/v1/conversations")}
+    assert conversations == CONVERSATION_ROUTES
     assert not [p for _, p in approvals if "create" in p or "request" in p]
     assert product == {
         ("GET", "/health"),

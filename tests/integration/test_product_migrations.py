@@ -26,7 +26,7 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0007"]
+    assert script.get_heads() == ["0008"]
     (base,) = script.get_bases()
     assert base == "0001"
     assert script.get_revision("0002").down_revision == "0001"
@@ -35,8 +35,9 @@ def test_single_linear_history_with_one_head() -> None:
     assert script.get_revision("0005").down_revision == "0004"
     assert script.get_revision("0006").down_revision == "0005"
     assert script.get_revision("0007").down_revision == "0006"
+    assert script.get_revision("0008").down_revision == "0007"
     assert [r.revision for r in script.walk_revisions()] == [
-        "0007", "0006", "0005", "0004", "0003", "0002", "0001",
+        "0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001",
     ]  # fmt: skip
 
 
@@ -55,6 +56,7 @@ KNOWLEDGE_TABLES = {
     "knowledge_documents", "knowledge_document_versions", "knowledge_chunks",
 }  # fmt: skip
 APPROVAL_TABLES = {"approval_requests", "approval_events"}
+CONVERSATION_TABLES = {"conversations", "conversation_messages", "message_delivery_events"}
 # Task 036 adds a nullable approval correlation column to these existing tables.
 APPROVAL_CORRELATED = ("write_commands", "audit_events", "workflow_step_runs")
 
@@ -100,7 +102,8 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
     before_workflows = {"alembic_version", *PRESERVED}
     before_knowledge = before_workflows | WORKFLOW_TABLES  # the prior 7 Product tables
     before_approvals = before_knowledge | KNOWLEDGE_TABLES
-    head = before_approvals | APPROVAL_TABLES
+    before_conversations = before_approvals | APPROVAL_TABLES
+    head = before_conversations | CONVERSATION_TABLES
 
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
@@ -141,6 +144,23 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
     columns = {t: {c["name"] for c in sa.inspect(engine).get_columns(t, schema="product")}
                for t in APPROVAL_CORRELATED}  # fmt: skip
     assert all("approval_id" in c for c in columns.values())
+    with engine.begin() as connection:  # Task 037 rows: removed with their schema
+        connection.execute(sa.text(
+            "INSERT INTO product.conversations VALUES ('00000000-0000-4000-8000-0000000000ad', "
+            "'roundtrip-company', NULL, gen_random_uuid(), 'example-messaging', 'thread-1', "
+            "now(), now(), NULL, 1)"
+        ))  # fmt: skip
+    approvals_before = _counts(engine, tuple(sorted(APPROVAL_TABLES)))
+
+    command.downgrade(config, "-1")
+    # 0008 -> 0007 drops only the Task 037 conversation schema (tables and the delivery
+    # append-only trigger function). Every Task 001-036 table and row stays.
+    assert tables(engine, "product") == before_conversations
+    assert _counts(engine) == rows_before
+    assert _counts(engine, tuple(sorted(APPROVAL_TABLES))) == approvals_before
+    assert _version(engine) == "0007"
+    assert _leftovers(engine, "%conversation%",
+                      "message_delivery_events_append_only") == (0, 0)  # fmt: skip
 
     command.downgrade(config, "-1")
     # 0007 -> 0006 drops only the Task 036 schema (approval tables, trigger function and
@@ -183,7 +203,7 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
     assert _counts(engine, PRESERVED) == {t: rows_before[t] for t in PRESERVED}
-    assert _version(engine) == "0007"
+    assert _version(engine) == "0008"
     with engine.begin() as connection:
         connection.execute(sa.text(
             "DELETE FROM product.agent_configurations WHERE company_id = 'roundtrip-company'"
@@ -468,3 +488,16 @@ def test_approval_schema(migrated: str, engine: sa.Engine) -> None:
         "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND "
         "tgrelid = 'product.approval_events'::regclass"))}  # fmt: skip
     assert triggers == {"approval_events_append_only"}
+
+
+# SHA-256 of migration 0007 as merged in Task 036: it must never change either.
+MIGRATION_0007_SHA256 = "0bab564c73a9bcc9a1e24568c1627e707b813f37fcd172d41a48df26b280fde4"
+
+
+def test_migration_0007_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0007_create_approvals.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0007_SHA256

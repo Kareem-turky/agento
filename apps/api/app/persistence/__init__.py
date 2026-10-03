@@ -9,7 +9,9 @@ overrides, Task 032) and ``app.workflow_management.contracts.WorkflowRunReposito
 repositories (``PostgresKnowledgeRepository``: versioned operating model and Knowledge
 documents, Task 035) and ``app.approval_management.contracts.ApprovalRepository``
 (``PostgresApprovalRepository``: human-approval requests and their append-only events,
-Task 036). Depends on SQLAlchemy and those contracts
+Task 036) and ``app.conversations.contracts.ConversationRepository``
+(``PostgresConversationRepository``: the canonical conversation transcript, Task 037).
+Depends on SQLAlchemy and those contracts
 only: no agents, Agno, routes, business integrations or business handlers, and no
 business-data tables. The schema is owned by Alembic migrations, never created here.
 """
@@ -24,6 +26,12 @@ from app.persistence.approvals import (
     approval_requests,
 )
 from app.persistence.audit import AuditPersistenceError, PostgresAuditSink, audit_events
+from app.persistence.conversations import (
+    PostgresConversationRepository,
+    conversation_messages,
+    conversations,
+    message_delivery_events,
+)
 from app.persistence.database import (
     PRODUCT_SCHEMA,
     create_product_engine,
@@ -52,6 +60,10 @@ from app.persistence.write_commands import PostgresWriteCommandStore, write_comm
 
 __all__ = [
     "PostgresApprovalRepository",
+    "PostgresConversationRepository",
+    "conversation_messages",
+    "conversations",
+    "message_delivery_events",
     "approval_events",
     "approval_requests",
     "PRODUCT_SCHEMA",

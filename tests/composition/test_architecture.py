@@ -156,6 +156,7 @@ def test_no_new_product_migration() -> None:
         "0005_create_workflow_runtime.py",
         "0006_create_knowledge_context.py",
         "0007_create_approvals.py",
+        "0008_create_conversations.py",
     ]
 
 

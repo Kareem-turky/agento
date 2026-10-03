@@ -164,6 +164,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     from app.routes.agents import AGENTS_PATHS
     from app.routes.approvals import APPROVALS_PATHS
     from app.routes.capabilities import CAPABILITIES_PATHS
+    from app.routes.conversations import CONVERSATIONS_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
     from app.routes.knowledge import KNOWLEDGE_PATHS
     from app.routes.workflows import WORKFLOWS_PATHS
@@ -180,12 +181,14 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
             *WORKFLOWS_PATHS,  # Task 034: read-only Workflow inspection
             *KNOWLEDGE_PATHS,  # Task 035: Knowledge (exact paths)
             *APPROVALS_PATHS,  # Task 036: human approvals (exact paths)
+            *CONVERSATIONS_PATHS,  # Task 037: read-only conversations (exact paths)
         ]
     )
     assert len(INTEGRATIONS_PATHS) == 7 and len(AGENTS_PATHS) == 6
     assert len(CAPABILITIES_PATHS) == 4 and len(WORKFLOWS_PATHS) == 4
     assert len(KNOWLEDGE_PATHS) == len(set(KNOWLEDGE_PATHS)) == 10
     assert len(APPROVALS_PATHS) == len(set(APPROVALS_PATHS)) == 6
+    assert len(CONVERSATIONS_PATHS) == len(set(CONVERSATIONS_PATHS)) == 3
     assert OPERATIONS_TICKETS_PATH == PATH
 
 
