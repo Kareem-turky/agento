@@ -42,6 +42,7 @@ from tests.support.product_core import (
     company_state,
     rows,
 )
+from tests.support.scripted_tool_model import CallTool, Reply, ScriptedToolModel
 
 pytestmark = pytest.mark.integration
 
@@ -200,20 +201,42 @@ def test_actor_store_and_company_boundaries_hold_across_domains(
     assert no_outbound_network == []
 
 
-def test_invalid_input_is_refused_without_echoing_secrets_or_internals(
-    core: CoreInstallation, engine: sa.Engine
+SAFE_VALIDATION_KEYS = {"type", "loc", "msg"}
+
+
+def operations_audit_count(engine: sa.Engine) -> int:
+    return rows(engine, "SELECT count(*) AS n FROM product.audit_events WHERE company_id = :c "
+                "AND action_name LIKE 'operations.%'", c=COMPANY)[0]["n"]  # fmt: skip
+
+
+def assert_no_echo(response: Any, *submitted: str) -> None:
+    """A refusal never echoes a submitted value, a key, ``input``/``ctx`` or internals; a
+    framework validation answer lists only structural ``type`` / ``loc`` / ``msg``."""
+    assert 400 <= response.status_code < 500, response.status_code
+    for leaked in (*submitted, '"input"', '"ctx"', "Traceback", "psycopg", "sqlalchemy",
+                   "subject_fingerprint"):  # fmt: skip
+        assert leaked not in response.text, leaked
+    detail = response.json()["detail"]
+    if response.status_code == 422 and isinstance(detail, list):
+        assert detail and all(set(entry) == SAFE_VALIDATION_KEYS for entry in detail)
+
+
+def test_no_request_validation_answer_echoes_submitted_values(
+    core: CoreInstallation, engine: sa.Engine, no_outbound_network
 ) -> None:
-    """Every refusal is a 4xx with no credential, idempotency key, fingerprint, SQL or
-    traceback. The Product-management routes (Tasks 031-039, ``SafeValidationRoute``)
-    additionally never echo ANY submitted value. FINDING (reported, not patched in Task
-    040): the three pre-Task-031 Operations routers keep FastAPI's default 422 body, which
-    echoes the caller's OWN submitted field values back to that same caller; see
-    docs/PRODUCT_CORE_ACCEPTANCE.md, "Findings"."""
+    """EVERY Product route exercised here, the Operations routes included, refuses invalid
+    input without echoing any submitted value (the Operations finding of the first Task 040
+    acceptance pass was fixed by the safe-validation hardening now on the baseline; the
+    focused route suites under tests/api remain the detailed transport authority)."""
     marker = f"echo-marker-{uuid4().hex}"
-    key = f"core-invalid-{marker}"
+    title, text = f"title-{marker}", f"description-{marker}"
+    key, long_key = f"core-invalid-{marker}", f"{marker}-" + "k" * 400
     secret = f"{INTEGRATION_SECRET}-{marker}"
-    with TestClient(core.app()) as client:
+    model = ScriptedToolModel(script=[CallTool("create_operational_ticket", {
+        "title": title, "description": text}), Reply("x")])  # fmt: skip
+    with TestClient(core.app(model)) as client:
         before = company_state(engine)
+        operations_audit = operations_audit_count(engine)
         management = [
             client.post("/api/v1/knowledge/document/create", headers=OPERATOR, json={
                 "category": marker, "title": marker, "content_type": "text/plain",
@@ -232,24 +255,49 @@ def test_invalid_input_is_refused_without_echoing_secrets_or_internals(
             client.get("/api/v1/conversations/messages", headers=OPERATOR,
                        params={"conversation_id": marker}),
         ]  # fmt: skip
-        operations = [
+        runs = [
+            client.post("/api/v1/operations/runs", headers=OPERATOR,
+                        json={"message": marker + "x" * 8001, "store_id": SOUTH}),
+            client.post("/api/v1/operations/runs", headers=OPERATOR,
+                        json={"message": marker, "store_id": marker}),
+        ]  # fmt: skip
+        unauthenticated = client.post("/api/v1/operations/runs", json={
+            "message": marker + "x" * 8001, "store_id": marker})  # fmt: skip
+        tickets = [
             client.post(TICKETS, headers=OPERATOR | {"Idempotency-Key": key},
-                        json={"store_id": SOUTH, "title": "", "description": marker}),
-            client.post(TICKETS, headers=OPERATOR | {"Idempotency-Key": "x" * 500},
-                        json={"store_id": SOUTH, "title": "t", "description": "d"}),
+                        json={"store_id": SOUTH, "title": title + "x" * 161,
+                              "description": text}),
+            client.post(TICKETS, headers=OPERATOR | {"Idempotency-Key": key},
+                        json={"store_id": marker, "title": title, "description": text}),
+            client.post(TICKETS, headers=OPERATOR | {"Idempotency-Key": key},
+                        json={"store_id": SOUTH, "title": title}),  # whole body invalid
+            client.post(TICKETS, headers=OPERATOR | {"Idempotency-Key": long_key},
+                        json={"store_id": SOUTH, "title": title, "description": text}),
+        ]  # fmt: skip
+        reads = [
+            client.get("/api/v1/operations/reports/daily", headers=OPERATOR,
+                       params={"store_id": SOUTH, "business_date": marker}),
             client.get(COMMANDS, headers=OPERATOR, params={"command_id": marker}),
         ]  # fmt: skip
         after = company_state(engine)
-    for response in (*management, *operations):
-        assert 400 <= response.status_code < 500, response.status_code
-        for leaked in (key, "x" * 500, secret, "Traceback", "psycopg", "sqlalchemy",
-                       "subject_fingerprint"):  # fmt: skip
-            assert leaked not in response.text, leaked
-    for response in management:
-        assert marker not in response.text
+        desks = list(core.desks)
+
+    for response in (*management, *runs, *tickets, *reads):
+        assert_no_echo(response, marker, title, text, key, long_key, secret)
+    assert [r.status_code for r in (*runs, *tickets[:3], *reads)] == [422] * 7
+    assert tickets[3].status_code == 400  # the fixed Idempotency-Key answer
+    # Unauthenticated: 401 first, never a validation answer.
+    assert unauthenticated.status_code == 401
+    assert marker not in unauthenticated.text and "loc" not in unauthenticated.text
+    # Nothing ran: no model request, no tool call, no report Workflow, no command, no
+    # ticket, no audit lifecycle; only refused management attempts may be audited.
+    assert model.requests == [] and model.tool_results() == {}
+    assert all(desk.ticket_count == 0 for desk in desks)
     assert {k: v for k, v in after.items() if k != "audit_events"} == {
         k: v for k, v in before.items() if k != "audit_events"}  # fmt: skip
-    assert marker not in core.log.getvalue() and secret not in core.log.getvalue()
+    assert operations_audit_count(engine) == operations_audit
+    for text_ in (marker, secret):
+        assert text_ not in core.log.getvalue()
 
 
 def test_product_observability_is_bounded_and_carries_no_business_text(

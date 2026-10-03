@@ -6,8 +6,10 @@ Product Core. The release decision itself is
 
 Task 040 is an acceptance task, not a feature task. It adds tests, test-only harnesses,
 one CI gate and documentation. It changes **no** production runtime code, migration,
-dependency, Dockerfile or deployment runtime file. A guard pins all of them against the
-Task 039 base (`c913d73c32d2c8c942d5e5ec33f06620b4a42a49`).
+dependency, Dockerfile or deployment runtime file. A guard pins all of them (335 files,
+measured on a clean worktree) against the Task 040 base
+`82be2ec1896ac7a55ab57ace7d30570bc6a03557`: Task 039 plus the pre-Core-Ready Operations
+safe-validation hardening (see [Resolved before final acceptance](#resolved-before-final-acceptance)).
 
 ## What "Product Core Ready" means
 
@@ -102,7 +104,7 @@ There is no authentication bypass anywhere.
 | `test_product_core_context_e2e.py` | E: Company Operating Model versions, Knowledge document versions, retrieval, archive, restart, hostile text inert, no automatic Agent consumption |
 | `test_product_core_governance_e2e.py` | G: test-only governed action, durable Approval, two-person rule, `system_agent` refused, exact requester binding (actor id and type, input), one-time concurrent continuation, restart, rejected terminal state, Approval-linked audit. H: test-only Workflow waits on approval, survives a restart, no rerun, no retry consumed, resumes once, Workflow API matches the engine |
 | `test_product_core_restart_e2e.py` | J: a durability snapshot of every domain across a restart, including the idempotent write replayed from PostgreSQL |
-| `test_product_core_security_e2e.py` | Cross-domain actor, store and company isolation. Unknown IDs fail closed. Errors do not echo secrets or internals. Bounded observability with no business text |
+| `test_product_core_security_e2e.py` | Cross-domain actor, store and company isolation. Unknown IDs fail closed. No request-validation answer (Operations included) echoes a submitted value, key, `input` or `ctx`. Bounded observability with no business text |
 | `test_product_core_architecture.py` | Static release invariants: production unchanged against base, migrations, tables, catalogs, no test action, no fake import, no backdoor, no injection route, provider-free acceptance code, the CI gate, this record |
 
 The suite is a representative end-to-end gate over the detailed suites of Tasks 031–039,
@@ -178,25 +180,22 @@ copy them.
   bounded and free of business text, and **never** treats it as authoritative evidence
   of an action.
 
-## Findings
+## Resolved before final acceptance
 
-1. **Operations 422 bodies echo the caller's own submitted values.**
-   - **Where:** the three pre-Task-031 Operations routers (`app/routes/operations.py`,
-     `operations_reports.py` and `operations_tickets.py`).
-   - **What:** they keep FastAPI's default validation answer, which includes the
-     submitted `input` (for example, a ticket title or description in a 422).
-   - **Contrast:** every Product-management router from Task 031 onwards uses
-     `SafeValidationRoute`, which never echoes a submitted value.
-   - **Impact:** the value goes back only to the same authenticated caller. It is not a
-     cross-actor or cross-company leak. It never includes an idempotency key (that header
-     is validated separately with fixed messages), a credential, a fingerprint or SQL.
-   - **Smallest architecture-preserving fix:** apply `SafeValidationRoute` to those three
-     routers. The change touches the three route modules and possibly an existing route
-     test that pins the old 422 shape.
-   - **Status:** reported, **not** patched in Task 040, because Task 040 changes no
-     production code. `test_product_core_security_e2e.py` asserts the strict no-echo
-     rule for the management routes, and the secret, key and internals rule for every
-     route.
+- **Operations request-validation answers echoed submitted values.**
+  - **Found by:** the first Task 040 acceptance pass.
+  - **What:** the three pre-Task-031 Operations routers (`operations.py`,
+    `operations_reports.py`, `operations_tickets.py`) still used FastAPI's default 422
+    body, which includes the submitted `input`. The value went back only to the same
+    authenticated caller, so this was never a cross-actor or cross-company disclosure.
+  - **Fixed by:** the separate blocker PR #44, now baseline on `main`. Those routers now
+    use the Product's `SafeValidationRoute`, which lives in the FastAPI-only module
+    `app/routes/validation.py`.
+  - **Enforced by:** `test_product_core_security_e2e.py`. Final acceptance requires that
+    no request-validation answer, Operations included, echoes a submitted value, key,
+    `input` or `ctx`, and that invalid requests cause no model, tool, Workflow, command,
+    ticket or audit side effect. The focused route tests under `tests/api` remain the
+    detailed transport authority.
 
 ## Limitations (what Core Ready does not cover)
 

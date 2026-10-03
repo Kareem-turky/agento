@@ -1,7 +1,8 @@
 """PRODUCT CORE ACCEPTANCE (Task 040): the static release-gate invariants.
 
-Task 040 is ACCEPTANCE ONLY. These guards pin, against the Task 039 base
-(c913d73c32d2c8c942d5e5ec33f06620b4a42a49), that no production runtime code, migration,
+Task 040 is ACCEPTANCE ONLY. These guards pin, against the Task 040 base
+(82be2ec1896ac7a55ab57ace7d30570bc6a03557: Task 039 plus the pre-Core-Ready
+Operations safe-validation hardening), that no production runtime code, migration,
 dependency, Dockerfile or deployment runtime file changed; that the production catalogs
 are exactly the Product definitions (integration catalog and messaging registry EMPTY);
 that no TEST-ONLY action, Workflow, fake or acceptance hook reached production code; that
@@ -38,9 +39,9 @@ PINNED_FILES = (
     WEB / "tsconfig.json",
 )  # fmt: skip
 # SHA-256 over "<relative path>\0<sha256 of the file>\n" of every pinned file, sorted by
-# path, computed on the Task 039 base c913d73. A change here is a production change: it
-# needs its own reviewed task, never Task 040.
-PRODUCTION_DIGEST = "711e567a3008d192d74f316735fc1e82bc7f3ce4d98fa46cd4a30a0bdfcea627"
+# path, computed on a clean worktree of the Task 040 base 82be2ec (335 files). A change
+# here is a production change: it needs its own reviewed task, never Task 040.
+PRODUCTION_DIGEST = "be4fc7038373c6dd873812fe95a52c6895f2d2e2bcd793ad7d91d7a85df49c18"
 
 
 def production_files() -> list[Path]:
@@ -281,5 +282,9 @@ def test_the_acceptance_record_states_the_core_ready_boundaries() -> None:
                  "Control Center", "System/readiness", "Observability", "Backup/restore",
                  "Deployment packaging"):  # fmt: skip
         assert f"\n| {area} |" in raw, area
+    # The first-pass Operations validation finding is resolved on the baseline, not open.
+    assert "## Resolved before final acceptance" in raw and "## Findings" not in raw
+    assert "82be2ec1896ac7a55ab57ace7d30570bc6a03557" in raw
+    assert "82be2ec1896ac7a55ab57ace7d30570bc6a03557" in decision
     assert "Status: candidate" in decision
     assert "Product Core acceptance" in decision and "provider-free" in decision
