@@ -196,8 +196,11 @@ def test_denied_and_awaiting_approval_are_persisted_and_replayed() -> None:
     env = Env(handler=FakeHandler("orders.cancel"))
     denied = env.submit(req=request(actor(permissions=frozenset())))
     assert (denied.status, denied.reason) == (S.DENIED, R.POLICY_DENIED)
+    # Task 036: without a human-approval broker, an action needing a human decision fails
+    # closed (approval_unavailable) and the terminal outcome replays without executing.
     approval = env.submit(name="orders.cancel", key="key-2")
-    assert (approval.status, approval.reason) == (S.AWAITING_APPROVAL, R.APPROVAL_REQUIRED)
+    assert (approval.status, approval.reason) == (S.FAILED, R.APPROVAL_UNAVAILABLE)
+    assert approval.approval_id is None
     assert env.submit(name="orders.cancel", key="key-2").replayed is True
     assert env.executor.calls == 2
 

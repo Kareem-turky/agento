@@ -164,6 +164,26 @@ actor is never granted. The routes are `/api/v1/knowledge/*` and the page is
 **Settings → Knowledge** (`/settings/knowledge`). See
 [`docs/KNOWLEDGE.md`](docs/KNOWLEDGE.md).
 
+### Governance & human approvals
+
+When governance returns `REQUIRE_APPROVAL` (`MEDIUM_RISK` / `HIGH_RISK`), the
+`ExecutionCoordinator` now records a durable **approval request** (migration `0007`):
+
+- a safe before/after summary, written by the action's handler;
+- a SHA-256 fingerprint of the exact validated input (raw parameters are never stored);
+- a 24-hour expiry, applied lazily (no background worker);
+- an append-only history.
+
+Another human with `approvals.decide` approves or rejects it; the requester can never
+decide their own request, and an Agent can never decide at all. `approvals.cancel`
+cancels. The requester then re-submits the **same** action with the `approval_id`.
+Current permission is re-checked and the approval is consumed **exactly once**. Awaiting
+WriteCommands and Workflow Steps can continue the same way (the Workflow through an
+explicit resume). There is no create endpoint, and no real business action requires
+approval yet: the ticket action stays `LOW_RISK_WRITE`. The routes are
+`/api/v1/approvals/*` and the page is **Settings → Approvals** (`/settings/approvals`).
+See [`docs/APPROVALS.md`](docs/APPROVALS.md).
+
 ## 2. High-level architecture
 
 ```
@@ -798,8 +818,9 @@ PolicyDecision (ALLOW / DENY / REQUIRE_APPROVAL + reason)
 
   There is no per-action or company-specific approval override yet. MEDIUM and HIGH
   require approval purely because of the baseline risk policy.
-- **Not built yet:** approval workflow and persistence, tools and configurable policy
-  are later work. Governed execution, verification and audit events live in
+- **Not built yet:** tools and configurable policy are later work. Human approval of
+  `REQUIRE_APPROVAL` outcomes exists since Task 036 (see
+  [`docs/APPROVALS.md`](docs/APPROVALS.md)). Governed execution, verification and audit events live in
   `app/execution/` (below).
 - **Boundaries:** the package imports only the standard library, Pydantic and
   `app.context.models`. `tests/governance/test_architecture.py` enforces this.

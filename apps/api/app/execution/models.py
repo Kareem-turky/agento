@@ -17,7 +17,7 @@ ReasonCode = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_.-]{0,63}$
 
 class ActionRunStatus(StrEnum):
     DENIED = "denied"  # governance denied it
-    AWAITING_APPROVAL = "awaiting_approval"  # governance requires approval; nothing executed
+    AWAITING_APPROVAL = "awaiting_approval"  # a human decision is pending; nothing executed
     FAILED = "failed"  # stopped safely with no side effect
     REQUIRES_HUMAN = "requires_human"  # a side effect may exist but is not confirmed
     VERIFIED = "verified"  # executed and independently verified, fully audited
@@ -36,6 +36,15 @@ class ActionRunReason(StrEnum):
     VERIFICATION_ERROR = "verification_error"
     AUDIT_INCOMPLETE = "audit_incomplete"  # verified, but the audit trail is incomplete
     VERIFIED = "verified"
+    # Task 036: a human decision was required and could not authorize this execution.
+    APPROVAL_UNAVAILABLE = "approval_unavailable"  # no request could be recorded / used
+    APPROVAL_NOT_FOUND = "approval_not_found"
+    APPROVAL_NOT_DECIDED = "approval_not_decided"
+    APPROVAL_REJECTED = "approval_rejected"
+    APPROVAL_EXPIRED = "approval_expired"
+    APPROVAL_CANCELLED = "approval_cancelled"
+    APPROVAL_MISMATCH = "approval_mismatch"
+    APPROVAL_ALREADY_CONSUMED = "approval_already_consumed"
 
 
 class ExecutionResult(BaseModel):
@@ -68,3 +77,6 @@ class ActionRun(BaseModel):
     execution_result: ExecutionResult | None = None
     verification_result: VerificationResult | None = None
     audit_complete: StrictBool
+    # Task 036: the human-approval request this run is awaiting (AWAITING_APPROVAL) or
+    # executed under (a consumed request). None when the action never needed one.
+    approval_id: UUID | None = None

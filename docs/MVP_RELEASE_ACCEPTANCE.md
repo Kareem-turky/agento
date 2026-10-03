@@ -144,6 +144,16 @@ no permission. Writes are governed and audited (`knowledge.manage`, never grante
 Agent actor), and a company with zero Knowledge rows works unchanged. This does not lift
 the production blocker below.
 
+## Governance & human approvals
+
+Governance's `REQUIRE_APPROVAL` outcome now creates a durable, company-scoped approval
+request (migration `0007`; see [`docs/APPROVALS.md`](APPROVALS.md)). Another authorized
+human approves, rejects or cancels it; requesters and Agents never decide. An approved
+request lets the requester run exactly that action once, after a fresh permission check.
+No real business action requires approval in this release (the ticket action stays
+`LOW_RISK_WRITE`), and raw parameters are never stored. This does not lift the production
+blocker below.
+
 ## Product Skills and Tasks (metadata only)
 
 The Operations Agent's capabilities are described by three Skills and three Tasks with

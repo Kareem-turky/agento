@@ -35,7 +35,11 @@ ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                "app.knowledge.contracts", "app.knowledge.documents",
                "app.knowledge.chunking", "app.knowledge.context",
                "app.knowledge.errors", "app.knowledge.limits",
-               "app.knowledge.operating_context")  # fmt: skip
+               "app.knowledge.operating_context",
+               # Task 036: the approval repository contract and pure domain modules
+               # (never the service, handlers, routes or composition).
+               "app.approval_management.errors", "app.approval_management.models",
+               "app.approval_management.state", "app.execution.approvals")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -157,7 +161,9 @@ def test_no_business_data_mirror_tables() -> None:
                      "product.company_operating_model_versions",
                      "product.company_operating_model_current",
                      "product.knowledge_documents", "product.knowledge_document_versions",
-                     "product.knowledge_chunks"}  # fmt: skip
+                     "product.knowledge_chunks",
+                     # Task 036: Product-owned approval decisions (no raw parameters).
+                     "product.approval_requests", "product.approval_events"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

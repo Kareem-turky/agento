@@ -25,7 +25,12 @@ def result(**overrides) -> ProductTicketCommandResult:
 
 def test_vocabulary_matches_the_durable_command_layer_exactly() -> None:
     assert [s.value for s in S] == [s.value for s in CommandStatus]
-    assert {r.value for r in R} == {r.value for r in CommandReason}
+    # Task 036 approval reasons are never reachable by the LOW_RISK_WRITE ticket action
+    # (it is never gated), so the ticket vocabulary is the durable one without them.
+    approval = {r.value for r in CommandReason if r.value.startswith("approval_")} - {
+        "approval_required"
+    }
+    assert approval and {r.value for r in R} == {r.value for r in CommandReason} - approval
     assert not {"success", "created_successfully", "done"} & {s.value for s in S}
 
 

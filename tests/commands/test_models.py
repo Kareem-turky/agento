@@ -63,6 +63,7 @@ def test_result_fields() -> None:
     assert set(WriteCommandResult.model_fields) == {
         "command_id", "action_name", "status", "reason", "action_run_id",
         "execution_reference_id", "audit_complete", "replayed", "persistence_complete",
+        "approval_id",  # Task 036: authorization metadata (never a payload or a hash)
     }  # fmt: skip
 
 

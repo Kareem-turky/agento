@@ -4,6 +4,19 @@ Generic product core. It depends only on the standard library, Pydantic,
 ``app.context.models`` and ``app.governance``; no business actions live here.
 """
 
+from app.execution.approvals import (
+    ApprovalBroker,
+    ApprovalChange,
+    ApprovalClaim,
+    ApprovalClaimStatus,
+    ApprovalContinuationGuard,
+    ApprovalDescriber,
+    ApprovalOutcome,
+    ApprovalSource,
+    ApprovalSourceRef,
+    ApprovalSubject,
+    ApprovalSummary,
+)
 from app.execution.audit import AuditEvent, AuditEventType, AuditSink
 from app.execution.context import ActionExecutionContext
 from app.execution.coordinator import ExecutionCoordinator
@@ -23,6 +36,17 @@ from app.execution.models import (
 )
 
 __all__ = [
+    "ApprovalBroker",
+    "ApprovalChange",
+    "ApprovalClaim",
+    "ApprovalClaimStatus",
+    "ApprovalContinuationGuard",
+    "ApprovalDescriber",
+    "ApprovalOutcome",
+    "ApprovalSource",
+    "ApprovalSourceRef",
+    "ApprovalSubject",
+    "ApprovalSummary",
     "ActionExecutionContext",
     "ActionExecutionError",
     "ActionHandler",

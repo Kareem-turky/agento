@@ -34,7 +34,12 @@ from app.workflow_management.records import (
     WorkflowEventRecord,
     WorkflowRunRecord,
 )
-from app.workflow_management.state import ACTIVE_RUN_STATUSES, StepAttemptStatus
+from app.workflow_management.state import (
+    ACTIVE_RUN_STATUSES,
+    StepAttemptStatus,
+    WorkflowEventType,
+    WorkflowRunStatus,
+)
 
 # Mirror migration 0005 (``alembic check`` and the vocabulary test keep them in step;
 # CHECK constraints and the append-only trigger live in the migration).
@@ -77,6 +82,9 @@ workflow_step_runs = sa.Table(
     sa.Column("checkpoint", JSONB(none_as_null=True), nullable=True),  # None is SQL NULL
     sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+    # Task 036 (migration 0007): the human-approval request a governed write attempt
+    # awaited or executed under. Correlation only: never action parameters.
+    sa.Column("approval_id", sa.Uuid(), nullable=True),
     sa.PrimaryKeyConstraint("run_id", "step_id", "attempt", name="pk_workflow_step_runs"),
     sa.ForeignKeyConstraint(["run_id"], ["product.workflow_runs.run_id"],
                             name="fk_workflow_step_runs_run_id"),
@@ -189,6 +197,50 @@ class PostgresWorkflowRunRepository:
             raise WorkflowClaimConflictError()
         return _rebuild(WorkflowRunRecord, row)
 
+    async def reopen_for_approval(
+        self, company_id: str, run_id: UUID, step_id: str, approval_id: UUID, token: UUID,
+        now: datetime, lease_expires_at: datetime,
+    ) -> WorkflowRunRecord:  # fmt: skip
+        """Task 036: the explicit ``awaiting_approval -> running`` continuation (CAS)."""
+        latest = (sa.select(sa.func.max(_s.attempt))
+                  .where(_s.run_id == run_id, _s.company_id == company_id, _s.step_id == step_id)
+                  .scalar_subquery())  # fmt: skip
+        awaiting = sa.exists().where(
+            _s.run_id == run_id, _s.company_id == company_id, _s.step_id == step_id,
+            _s.attempt == latest, _s.status == StepAttemptStatus.AWAITING_APPROVAL.value,
+            _s.approval_id == approval_id,
+        )  # fmt: skip
+        statement = (
+            sa.update(workflow_runs)
+            .where(_r.run_id == run_id, _r.company_id == company_id,
+                   _r.status == WorkflowRunStatus.AWAITING_APPROVAL.value,
+                   _r.current_step_id == step_id, awaiting)
+            .values(status=WorkflowRunStatus.RUNNING.value, failure_code=None, completed_at=None,
+                    lease_owner=token, lease_expires_at=lease_expires_at, updated_at=now)
+            .returning(*workflow_runs.c)
+        )  # fmt: skip
+        resumed = NewWorkflowEvent(event_type=WorkflowEventType.WORKFLOW_APPROVAL_RESUMED,
+                                   step_id=step_id, status=WorkflowRunStatus.RUNNING,
+                                   occurred_at=now)  # fmt: skip
+        exists = None
+        try:
+            async with self._sessions() as session, session.begin():
+                row = (await session.execute(statement)).mappings().first()
+                if row is None:
+                    exists = (await session.execute(sa.select(_r.run_id).where(
+                        _r.run_id == run_id, _r.company_id == company_id))).first()  # fmt: skip
+                else:
+                    connection = await session.connection()
+                    claim = Claim(run_id=run_id, company_id=company_id, token=token)
+                    await self._append_events(connection, claim, (resumed,))
+        except _DB_ERRORS:
+            raise WorkflowRepositoryError() from None
+        if row is None:
+            if exists is None:
+                raise LookupError("workflow run not found")
+            raise WorkflowClaimConflictError()
+        return _rebuild(WorkflowRunRecord, row)
+
     @staticmethod
     async def _apply_attempts(connection: AsyncConnection, claim: Claim, change: RunChange) -> None:
         if change.start_attempt is not None:
@@ -198,6 +250,7 @@ class PostgresWorkflowRunRepository:
             await connection.execute(sa.insert(workflow_step_runs).values(**attempt.model_dump()))
         finish = change.finish_attempt
         if finish is not None:
+            extra = {} if finish.approval_id is None else {"approval_id": finish.approval_id}
             result = await connection.execute(
                 sa.update(workflow_step_runs)
                 .where(_s.run_id == claim.run_id, _s.company_id == claim.company_id,
@@ -208,7 +261,8 @@ class PostgresWorkflowRunRepository:
                         else finish.failure_code.value,
                         verification_code=None if finish.verification_code is None
                         else finish.verification_code.value,
-                        checkpoint=finish.checkpoint, completed_at=finish.completed_at)
+                        checkpoint=finish.checkpoint, completed_at=finish.completed_at,
+                        **extra)
             )  # fmt: skip
             if getattr(result, "rowcount", 0) != 1:
                 # Never "finish" an attempt that is not running: roll the change back.

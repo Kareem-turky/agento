@@ -258,3 +258,6 @@ select {
   white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.85rem;
   background: var(--surface-muted); border: 1px solid var(--border); border-radius: 6px;
 }
+
+/* Task 036: Approvals (summaries and notes are plain, inert text) */
+.approvals-filter { width: auto; padding: 0.3rem 0.5rem; }

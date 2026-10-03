@@ -109,6 +109,7 @@ def test_no_auth_persistence_jwt_sessions_or_key_management() -> None:
         "0004_create_agent_configurations.py",
         "0005_create_workflow_runtime.py",
         "0006_create_knowledge_context.py",
+        "0007_create_approvals.py",
     ]
     # 0003 stores integration connection metadata, 0004 Agent enable/disable overrides and
     # 0005 Workflow execution control state: no user, key, session or token table.

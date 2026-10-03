@@ -20,6 +20,12 @@ command does not exist or is no longer IN_PROGRESS.
 
 ``get`` returns the stored record or ``None``. It is unscoped: for internal use only.
 
+``resume_after_approval`` (Task 036) atomically moves an AWAITING_APPROVAL command of
+``(company_id, actor_id)`` that awaits exactly ``approval_id`` back to IN_PROGRESS (a
+compare-and-set), so at most ONE caller continues it; it returns the record, or ``None``
+when nothing matched (another caller won, or the state changed). No parameters exist to
+restore: the caller resubmits the exact original request, proven by its fingerprint.
+
 ``WriteCommandReader.get_for_actor`` is the principal-scoped read for product queries:
 it returns the command only when ``command_id``, ``company_id`` AND ``actor_id`` all
 match, and the implementation must apply that scope in the query itself (never fetch
@@ -51,6 +57,10 @@ class WriteCommandStore(Protocol):
     async def complete(
         self, command_id: UUID, outcome: WriteCommandOutcome
     ) -> WriteCommandRecord: ...
+
+    async def resume_after_approval(
+        self, command_id: UUID, company_id: str, actor_id: str, approval_id: UUID
+    ) -> WriteCommandRecord | None: ...
 
 
 @runtime_checkable

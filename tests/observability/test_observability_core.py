@@ -69,6 +69,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
         "workflow.run", "workflow.step_attempt",
         # Task 035: Knowledge retrieval and governed Knowledge writes (labels: enums only).
         "knowledge.query", "knowledge.mutation",
+        # Task 036: approval request / decision / consumption (labels: enums only).
+        "approval.request", "approval.decision", "approval.consume",
     ]  # fmt: skip
     assert [o.value for o in ObservationOutcome] == [
         "completed", "denied", "invalid", "conflict", "not_found", "unavailable", "error",

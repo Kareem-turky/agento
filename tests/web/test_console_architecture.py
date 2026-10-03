@@ -63,6 +63,13 @@ EXPECTED_ROUTES = {
     "knowledge/document/create/route.ts": {"POST": "knowledgeDocumentCreate"},
     "knowledge/document/archive/route.ts": {"POST": "knowledgeDocumentArchive"},
     "knowledge/query/route.ts": {"POST": "knowledgeQuery"},
+    # Task 036: human approvals (there is NO create route).
+    "approvals/route.ts": {"GET": "approvals"},
+    "approvals/approval/route.ts": {"GET": "approval"},
+    "approvals/approval/approve/route.ts": {"POST": "approvalApprove"},
+    "approvals/approval/reject/route.ts": {"POST": "approvalReject"},
+    "approvals/approval/cancel/route.ts": {"POST": "approvalCancel"},
+    "approvals/approval/resume-workflow/route.ts": {"POST": "approvalResumeWorkflow"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -105,6 +112,12 @@ UPSTREAM_PATHS = {
     "knowledgeDocumentCreate": ("POST", "/api/v1/knowledge/document/create"),
     "knowledgeDocumentArchive": ("POST", "/api/v1/knowledge/document/archive"),
     "knowledgeQuery": ("POST", "/api/v1/knowledge/query"),
+    "approvals": ("GET", "/api/v1/approvals"),
+    "approval": ("GET", "/api/v1/approvals/approval"),
+    "approvalApprove": ("POST", "/api/v1/approvals/approval/approve"),
+    "approvalReject": ("POST", "/api/v1/approvals/approval/reject"),
+    "approvalCancel": ("POST", "/api/v1/approvals/approval/cancel"),
+    "approvalResumeWorkflow": ("POST", "/api/v1/approvals/approval/resume-workflow"),
 }
 
 
@@ -261,7 +274,10 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "getKnowledgeOperatingModelVersion", "listKnowledgeDocuments",
                         "getKnowledgeDocument", "getKnowledgeDocumentVersion",
                         "createKnowledgeDocument", "publishKnowledgeDocumentVersion",
-                        "archiveKnowledgeDocument", "queryKnowledge"}  # fmt: skip
+                        "archiveKnowledgeDocument", "queryKnowledge",
+                        # Task 036: no create function (governance creates requests).
+                        "listApprovals", "getApproval", "approveApproval", "rejectApproval",
+                        "cancelApproval", "resumeApprovalWorkflow"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -672,3 +688,63 @@ def test_knowledge_is_linked_from_the_console_and_settings() -> None:
     for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
                  WORKFLOWS_UI / "WorkflowsSettings.tsx"):  # fmt: skip
         assert '<Link href="/settings/knowledge">Knowledge</Link>' in code(path), path.name
+
+
+# ----- Task 036: the Approvals settings page -----------------------------------------------------
+
+
+APPROVALS_UI = WEB / "components" / "approvals"
+
+
+def test_approval_routes_are_fixed_and_there_is_no_create_route() -> None:
+    routes = sorted(
+        str(p.relative_to(API_ROUTES)) for p in (API_ROUTES / "approvals").rglob("route.ts")
+    )
+    assert routes == sorted(r for r in EXPECTED_ROUTES if r.startswith("approvals/"))
+    for path in (API_ROUTES / "approvals").rglob("route.ts"):
+        source = code(path)
+        assert "maxRequestBytes" not in source and "idempotencyKey" not in source, path
+        assert "create" not in str(path.relative_to(API_ROUTES)), path
+    proxy = code(PROXY)
+    assert "/api/v1/approvals/create" not in proxy and '"/api/v1/approvals/request"' not in proxy
+
+
+def test_approvals_page_renders_untrusted_text_inertly() -> None:
+    page = code(WEB / "app" / "settings" / "approvals" / "page.tsx")
+    assert "<ApprovalsSettings />" in page
+    assert {p.name for p in APPROVALS_UI.glob("*.tsx")} == {"ApprovalsSettings.tsx"}
+    settings = code(APPROVALS_UI / "ApprovalsSettings.tsx")
+    assert "fetch(" not in settings and "/api/" not in settings
+    for forbidden in ("dangerouslySetInnerHTML", "innerHTML", "eval(", "new Function",
+                      "JSON.parse", "marked", "remark", "markdown-it", "<iframe",
+                      'type="file"', "FileReader", "localStorage", "sessionStorage",
+                      "setInterval", "setTimeout", "while (", "createApproval",
+                      "requestApproval", "sample", "placeholderApprovals", "mock"):  # fmt: skip
+        assert forbidden not in settings, forbidden
+    calls = set(re.findall(r"\b(\w+Approvals?\w*)\(", settings)) - {"setApprovals"}
+    assert calls == {"listApprovals", "getApproval", "approveApproval", "rejectApproval",
+                     "cancelApproval", "resumeApprovalWorkflow"}  # fmt: skip
+    # Notes and summaries are plain JSX text; a decision needs an explicit confirmation and
+    # reject / cancel need a bounded reason.
+    assert '<p className="knowledge-text">{approval.decision_note}</p>' in settings
+    assert "{approval.summary.description}" in settings
+    assert "maxLength={MAX_NOTE}" in settings and "const MAX_NOTE = 1000;" in settings
+    assert settings.count("<textarea") == 1
+    assert "Confirm approval" in settings and "Confirm rejection" in settings
+    assert "needsReason && !reason" in settings
+    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    # A clean empty state, never fake requests.
+    assert (
+        "No approval requests." in settings and "No requests are awaiting a decision." in settings
+    )
+    joined = settings.lower()
+    for provider in ("shopify", "woocommerce", "whatsapp", "f" + "ulfly"):
+        assert provider not in joined, provider
+
+
+def test_approvals_are_linked_from_the_console_and_settings() -> None:
+    assert '<Link href="/settings/approvals">Approvals</Link>' in component("Console.tsx")
+    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
+                 WORKFLOWS_UI / "WorkflowsSettings.tsx",
+                 KNOWLEDGE_UI / "KnowledgeSettings.tsx"):  # fmt: skip
+        assert '<Link href="/settings/approvals">Approvals</Link>' in code(path), path.name

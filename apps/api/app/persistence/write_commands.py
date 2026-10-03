@@ -13,6 +13,9 @@ first transaction and then does nothing, and the following SELECT (a new stateme
 under READ COMMITTED) sees the committed row.
 
 ``complete`` updates by ``command_id`` only while the row is IN_PROGRESS.
+``resume_after_approval`` (Task 036) is a compare-and-set from AWAITING_APPROVAL (awaiting
+exactly that approval id, of that company and actor) back to IN_PROGRESS: at most one
+caller continues a command.
 ``get_for_actor`` (``WriteCommandReader``) selects by command_id AND company_id AND
 actor_id in a single query. Rows are
 mapped strictly: an unknown status/reason or inconsistent fields raise
@@ -56,6 +59,9 @@ write_commands = sa.Table(
     sa.Column("action_run_id", sa.Uuid(), nullable=True),
     sa.Column("execution_reference_id", sa.String(128), nullable=True),
     sa.Column("audit_complete", sa.Boolean(), nullable=True),
+    # Task 036 (migration 0007): the human-approval request this command awaits or ran
+    # under. Authorization metadata only: never part of the request fingerprint.
+    sa.Column("approval_id", sa.Uuid(), nullable=True),
     sa.Column(
         "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     ),
@@ -73,7 +79,7 @@ _c = write_commands.c
 _RECORD_COLUMNS = (
     _c.command_id, _c.company_id, _c.actor_id, _c.store_id, _c.action_name, _c.status,
     _c.reason, _c.action_run_id, _c.execution_reference_id, _c.audit_complete,
-    _c.created_at, _c.updated_at,
+    _c.created_at, _c.updated_at, _c.approval_id,
 )  # fmt: skip
 
 
@@ -166,6 +172,7 @@ class PostgresWriteCommandStore:
                 action_run_id=outcome.action_run_id,
                 execution_reference_id=outcome.execution_reference_id,
                 audit_complete=outcome.audit_complete,
+                approval_id=outcome.approval_id,
                 updated_at=sa.func.now(),
             )
             .returning(*_RECORD_COLUMNS)
@@ -175,3 +182,29 @@ class PostgresWriteCommandStore:
         if row is None:
             raise WriteCommandStoreError()  # unknown command or no longer IN_PROGRESS
         return _record(row)
+
+    async def resume_after_approval(
+        self, command_id: UUID, company_id: str, actor_id: str, approval_id: UUID
+    ) -> WriteCommandRecord | None:
+        update = (
+            sa.update(write_commands)
+            .where(
+                _c.command_id == command_id,
+                _c.company_id == company_id,
+                _c.actor_id == actor_id,
+                _c.status == CommandStatus.AWAITING_APPROVAL.value,
+                _c.approval_id == approval_id,
+            )
+            .values(
+                status=CommandStatus.IN_PROGRESS.value,
+                reason=None,
+                action_run_id=None,
+                execution_reference_id=None,
+                audit_complete=None,
+                updated_at=sa.func.now(),
+            )
+            .returning(*_RECORD_COLUMNS)
+        )
+        async with self._sessions() as session, session.begin():
+            row = (await session.execute(update)).mappings().first()
+        return None if row is None else _record(row)

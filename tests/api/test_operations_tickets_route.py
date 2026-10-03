@@ -162,6 +162,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     # Task 031 adds the exact integration-management paths and Task 032 the exact
     # Agent-management paths (never a pattern or prefix).
     from app.routes.agents import AGENTS_PATHS
+    from app.routes.approvals import APPROVALS_PATHS
     from app.routes.capabilities import CAPABILITIES_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
     from app.routes.knowledge import KNOWLEDGE_PATHS
@@ -178,11 +179,13 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
             *CAPABILITIES_PATHS,  # Task 033: read-only Skill/Task inspection
             *WORKFLOWS_PATHS,  # Task 034: read-only Workflow inspection
             *KNOWLEDGE_PATHS,  # Task 035: Knowledge (exact paths)
+            *APPROVALS_PATHS,  # Task 036: human approvals (exact paths)
         ]
     )
     assert len(INTEGRATIONS_PATHS) == 7 and len(AGENTS_PATHS) == 6
     assert len(CAPABILITIES_PATHS) == 4 and len(WORKFLOWS_PATHS) == 4
     assert len(KNOWLEDGE_PATHS) == len(set(KNOWLEDGE_PATHS)) == 10
+    assert len(APPROVALS_PATHS) == len(set(APPROVALS_PATHS)) == 6
     assert OPERATIONS_TICKETS_PATH == PATH
 
 

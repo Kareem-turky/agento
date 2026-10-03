@@ -122,6 +122,9 @@ class StepAttemptRecord(BaseModel):
     checkpoint: dict[str, JsonValue] | None
     started_at: AwareDatetime
     completed_at: AwareDatetime | None
+    # Task 036: the human-approval request this governed write attempt awaited (status
+    # awaiting_approval) or executed under (the continuation attempt). Never parameters.
+    approval_id: UUID | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "StepAttemptRecord":

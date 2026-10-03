@@ -73,6 +73,19 @@ class _RecordingOp:
     def create_index(self, *args, **kwargs) -> None:
         pass
 
+    # Task 036 (0007) replaces two audit CHECKs in place and adds correlation columns.
+    def create_check_constraint(self, name, table, condition, **kwargs) -> None:
+        self.checks[str(name)] = str(condition)
+
+    def drop_constraint(self, name, *args, **kwargs) -> None:
+        self.checks.pop(str(name), None)
+
+    def add_column(self, *args, **kwargs) -> None:
+        pass
+
+    def execute(self, *args, **kwargs) -> None:
+        pass
+
 
 def migration_checks(module) -> dict[str, tuple[bool, frozenset[str]]]:
     """The CHECK constraints the migration's upgrade() really creates (not its source)."""
@@ -113,8 +126,18 @@ EXPECTED_0002 = {
         "execution_outcome_uncertain", "verification_failed", "verification_error",
         "audit_incomplete", "verified"})),
 }  # fmt: skip
-# The migration whose CHECK constraints are the ones in force at head (today: 0002).
-HEAD_AUDIT_CHECKS_MIGRATION = MIGRATION
+# The migration that last replaced audit CHECK constraints (Task 036: 0007 replaces the
+# event-type and run-reason CHECKs with supersets; the other five stay 0002's).
+HEAD_AUDIT_CHECKS_MIGRATION = MIGRATION.parent / "0007_create_approvals.py"
+
+
+def head_audit_checks() -> dict[str, tuple[bool, frozenset[str]]]:
+    replaced = migration_checks(migration(HEAD_AUDIT_CHECKS_MIGRATION))
+    audit = {k: v for k, v in replaced.items() if k.startswith("ck_audit_events_")}
+    assert set(audit) == {"ck_audit_events_event_type", "ck_audit_events_run_reason"}
+    for name, (nullable, allowed) in audit.items():  # strict supersets, same NULL handling
+        assert EXPECTED_0002[name][0] == nullable and EXPECTED_0002[name][1] < allowed
+    return {**EXPECTED_0002, **audit}
 
 
 def test_migration_0002_creates_its_frozen_checks() -> None:
@@ -126,7 +149,7 @@ def test_migration_0002_creates_its_frozen_checks() -> None:
 def test_metadata_has_exactly_the_seven_named_checks_of_the_head_migration() -> None:
     checks = metadata_checks(audit_events)
     assert sorted(checks) == sorted(EXPECTED_0002)  # all seven, named exactly, no others
-    head = migration_checks(migration(HEAD_AUDIT_CHECKS_MIGRATION))
+    head = head_audit_checks()
     # Same names, same NULL handling, same allowed vocabulary: the runtime metadata
     # mirrors the schema the head migration creates.
     assert checks == head
@@ -214,4 +237,5 @@ def test_audit_sink_is_not_wired_and_has_no_http_surface() -> None:
     users = [p for p in app_dir.rglob("*.py") if "PostgresAuditSink" in p.read_text()]
     outside = {str(p.relative_to(app_dir)) for p in users if p.parent.name != "persistence"}
     assert outside == {"composition/local_mock.py", "composition/integrations.py",
-                       "composition/agents.py", "composition/knowledge.py"}  # fmt: skip
+                       "composition/agents.py", "composition/knowledge.py",
+                       "composition/approvals.py"}  # fmt: skip

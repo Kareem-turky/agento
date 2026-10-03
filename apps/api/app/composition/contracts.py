@@ -7,7 +7,7 @@ engine, session, store, sink, integration adapter or registry internal.
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from agno.models.base import Model
 
@@ -20,6 +20,9 @@ from app.services.operations_tickets import (
     OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
 )
+
+if TYPE_CHECKING:
+    from app.approval_management.service import ApprovalWorkflowResumer
 
 # Fixed, provider-neutral messages: never a backend id, setting, URL or credential.
 NO_DEPLOYMENT_BACKEND = "no business backend is available for staging/production deployments"
@@ -57,6 +60,9 @@ class DeploymentComposition:
     operations_ticket_service: OperationsTicketCommandService | None = None
     operations_ticket_query_service: OperationsTicketCommandQueryService | None = None
     daily_operations_service: DailyOperationsReportService | None = None
+    # Task 036: the explicit Workflow continuation after a human approval (the business
+    # backend's Workflow engine), handed to the approval management composition.
+    approval_workflow_resumer: "ApprovalWorkflowResumer | None" = None
     close: Callable[[], Awaitable[None]] = _nothing_to_close
     discard: Callable[[], None] = _nothing_to_discard
 

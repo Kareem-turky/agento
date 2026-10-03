@@ -10,9 +10,12 @@ Step attempt::
 
     running ──> succeeded | failed | timed_out | requires_human | awaiting_approval
 
-Terminal states never change. A retry is a NEW attempt row: an attempt's history is never
-overwritten. ``awaiting_approval`` stops the run; v1 has no approval continuation (it is
-never auto-approved or resumed). Every transition not listed is rejected.
+Terminal states never change, with ONE explicit exception (Task 036): a run stopped
+``awaiting_approval`` at a governed write Step may go back to ``running`` only through
+the explicit approval continuation (``WorkflowEngine.resume_after_approval``, a
+repository compare-and-set that also appends ``workflow_approval_resumed``), never
+through the generic transitions below and never automatically. A retry is a NEW attempt
+row: an attempt's history is never overwritten. Every transition not listed is rejected.
 """
 
 from enum import StrEnum
@@ -67,6 +70,8 @@ class WorkflowEventType(StrEnum):
     WORKFLOW_FAILED = "workflow_failed"
     WORKFLOW_REQUIRES_HUMAN = "workflow_requires_human"
     WORKFLOW_AWAITING_APPROVAL = "workflow_awaiting_approval"
+    # Task 036: the explicit continuation of a run after a human approval (not a retry).
+    WORKFLOW_APPROVAL_RESUMED = "workflow_approval_resumed"
 
 
 class VerificationCode(StrEnum):

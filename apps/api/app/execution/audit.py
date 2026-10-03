@@ -29,6 +29,9 @@ class AuditEventType(StrEnum):
     VERIFICATION_STARTED = "verification_started"
     VERIFIED = "verified"
     REQUIRES_HUMAN = "requires_human"
+    # Task 036: a required human approval could not be requested or did not authorize
+    # this execution (run_reason says why). Nothing was executed.
+    APPROVAL_REFUSED = "approval_refused"
 
 
 class AuditEvent(BaseModel):
@@ -51,6 +54,7 @@ class AuditEvent(BaseModel):
     run_reason: ActionRunReason | None = None
     execution_reference_id: SafeReference | None = None
     verification_code: ReasonCode | None = None
+    approval_id: UUID | None = None  # Task 036: correlation with a human approval request
 
 
 class AuditSink(Protocol):

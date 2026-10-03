@@ -39,10 +39,11 @@ def _check(column: str, values: Iterable[str], *, nullable: bool) -> sa.CheckCon
     )
 
 
-# Mirrors the product.audit_events schema at the head migration (0002), including its
-# seven CHECK constraints; never created here. The allowed values come from the
-# trusted contracts. A vocabulary change therefore needs a NEW migration replacing the
-# constraints; 0002 is a frozen snapshot and is never edited
+# Mirrors the product.audit_events schema at the head migration (0002, plus migration
+# 0007's nullable ``approval_id`` and its superset vocabularies for ``event_type`` and
+# ``run_reason``), including its seven CHECK constraints; never created here. The
+# allowed values come from the trusted contracts. A vocabulary change therefore needs a
+# NEW migration replacing the constraints; 0002 is a frozen snapshot and is never edited
 # (tests/persistence/test_audit_schema.py and the live-database parity test check this).
 audit_events = sa.Table(
     "audit_events",
@@ -64,6 +65,7 @@ audit_events = sa.Table(
     sa.Column("run_reason", sa.String(64), nullable=True),
     sa.Column("execution_reference_id", sa.String(128), nullable=True),
     sa.Column("verification_code", sa.String(64), nullable=True),
+    sa.Column("approval_id", sa.Uuid(), nullable=True),  # Task 036 (migration 0007)
     sa.Column(
         "recorded_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     ),
@@ -111,6 +113,7 @@ def _row(event: AuditEvent) -> dict[str, Any]:
         "run_reason": _value(event.run_reason),
         "execution_reference_id": event.execution_reference_id,
         "verification_code": event.verification_code,
+        "approval_id": event.approval_id,
     }
 
 

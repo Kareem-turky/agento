@@ -35,6 +35,8 @@ Sha256Hex = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64
 class CommandStatus(StrEnum):
     IN_PROGRESS = "in_progress"  # claimed durably; outcome not (yet) recorded
     DENIED = "denied"
+    # Task 036: a human decision is pending (nothing executed). Resumable once: the SAME
+    # request resubmitted with the approval id it awaits continues it (never a success).
     AWAITING_APPROVAL = "awaiting_approval"
     FAILED = "failed"
     REQUIRES_HUMAN = "requires_human"
@@ -59,6 +61,14 @@ class CommandReason(StrEnum):
     VERIFICATION_ERROR = ActionRunReason.VERIFICATION_ERROR.value
     AUDIT_INCOMPLETE = ActionRunReason.AUDIT_INCOMPLETE.value
     VERIFIED = ActionRunReason.VERIFIED.value
+    APPROVAL_UNAVAILABLE = ActionRunReason.APPROVAL_UNAVAILABLE.value
+    APPROVAL_NOT_FOUND = ActionRunReason.APPROVAL_NOT_FOUND.value
+    APPROVAL_NOT_DECIDED = ActionRunReason.APPROVAL_NOT_DECIDED.value
+    APPROVAL_REJECTED = ActionRunReason.APPROVAL_REJECTED.value
+    APPROVAL_EXPIRED = ActionRunReason.APPROVAL_EXPIRED.value
+    APPROVAL_CANCELLED = ActionRunReason.APPROVAL_CANCELLED.value
+    APPROVAL_MISMATCH = ActionRunReason.APPROVAL_MISMATCH.value
+    APPROVAL_ALREADY_CONSUMED = ActionRunReason.APPROVAL_ALREADY_CONSUMED.value
     # ExecutionCoordinator raised (or broke its contract) after the durable claim.
     COMMAND_EXECUTION_ERROR = "command_execution_error"
     # The outcome could not be recorded; the durable row stays IN_PROGRESS.
@@ -109,6 +119,7 @@ class WriteCommandOutcome(BaseModel):
     action_run_id: UUID | None = None
     execution_reference_id: SafeReference | None = None
     audit_complete: StrictBool | None = None
+    approval_id: UUID | None = None  # Task 036: authorization metadata, never intent
 
     @model_validator(mode="after")
     def _terminal_and_consistent(self) -> Self:
@@ -135,6 +146,7 @@ class WriteCommandRecord(BaseModel):
     audit_complete: StrictBool | None
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    approval_id: UUID | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -186,6 +198,7 @@ class WriteCommandResult(BaseModel):
     audit_complete: StrictBool | None
     replayed: StrictBool
     persistence_complete: StrictBool
+    approval_id: UUID | None = None
 
 
 ACTION_RUN_STATUS_TO_COMMAND: dict[ActionRunStatus, CommandStatus] = {

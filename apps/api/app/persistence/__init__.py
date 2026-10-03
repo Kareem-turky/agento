@@ -7,7 +7,9 @@ Task 031) and ``app.agent_management.AgentConfigurationRepository`` (Agent enabl
 overrides, Task 032) and ``app.workflow_management.contracts.WorkflowRunRepository``
 (Workflow execution CONTROL state, Task 034) and the ``app.knowledge.contracts``
 repositories (``PostgresKnowledgeRepository``: versioned operating model and Knowledge
-documents, Task 035). Depends on SQLAlchemy and those contracts
+documents, Task 035) and ``app.approval_management.contracts.ApprovalRepository``
+(``PostgresApprovalRepository``: human-approval requests and their append-only events,
+Task 036). Depends on SQLAlchemy and those contracts
 only: no agents, Agno, routes, business integrations or business handlers, and no
 business-data tables. The schema is owned by Alembic migrations, never created here.
 """
@@ -15,6 +17,11 @@ business-data tables. The schema is owned by Alembic migrations, never created h
 from app.persistence.agent_configurations import (
     PostgresAgentConfigurationRepository,
     agent_configurations,
+)
+from app.persistence.approvals import (
+    PostgresApprovalRepository,
+    approval_events,
+    approval_requests,
 )
 from app.persistence.audit import AuditPersistenceError, PostgresAuditSink, audit_events
 from app.persistence.database import (
@@ -44,6 +51,9 @@ from app.persistence.workflow_runs import (
 from app.persistence.write_commands import PostgresWriteCommandStore, write_commands
 
 __all__ = [
+    "PostgresApprovalRepository",
+    "approval_events",
+    "approval_requests",
     "PRODUCT_SCHEMA",
     "PostgresAgentConfigurationRepository",
     "agent_configurations",

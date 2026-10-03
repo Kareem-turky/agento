@@ -114,6 +114,7 @@ export function IntegrationsSettings() {
           <Link href="/settings/agents">Agents</Link>
           <Link href="/settings/workflows">Workflows</Link>
           <Link href="/settings/knowledge">Knowledge</Link>
+          <Link href="/settings/approvals">Approvals</Link>
         </nav>
       </header>
 
