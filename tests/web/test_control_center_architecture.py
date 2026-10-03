@@ -140,6 +140,7 @@ def test_shell_components_exist_and_own_branding_navigation_and_session() -> Non
         "SessionControl.tsx",
         "PageHeader.tsx",
         "session.ts",
+        "authObservation.ts",
     } <= names
     shell = code(SHELL / "AppShell.tsx")
     assert "Agento" in shell and "AI Operating Layer" in shell
@@ -208,15 +209,50 @@ def test_auth_outcomes_follow_401_403_rules() -> None:
     session = code(SHELL / "session.ts")
     assert 'return result.status === 401 ? "rejected" : "other";' in session
     assert 'if (result.ok) return "accepted";' in session
+
+
+def test_auth_outcomes_are_bound_to_the_epoch_their_request_began_in() -> None:
     client = code(WEB / "lib" / "product-api" / "client.ts")
-    # The observer learns only which key was used and the status; never a body.
-    notify = (
-        'authObserver(authorization.slice("Bearer ".length), '
+    send = client.split("async function send<T>(", 1)[1].split("\n}\n", 1)[0]
+    # Phase one runs BEFORE the exchange (network I/O); phase two after, with the token.
+    begin = send.index("const observation = beginAuthObservation(init.headers);")
+    exchange = send.index("const result = await exchange(path, init, guard);")
+    complete = send.index(
+        "observation.observer.complete(observation.token, "
         "{ ok: result.ok, status: result.status });"
     )
-    assert notify in client
+    assert begin < exchange < complete
+    assert send.count("await") == 1  # nothing awaited before the token is captured
+    helper = client.split("function beginAuthObservation(", 1)[1].split("\n}\n", 1)[0]
+    assert "await" not in helper and "async" not in helper  # synchronous request setup
+    assert 'observer.begin(authorization.slice("Bearer ".length))' in helper
+    # The token is the begin() result (an epoch); the key is never kept by the client.
+    assert "begin(apiKey: string): number | null;" in client
+    assert re.findall(r"^let (\w+)", client, re.M) == ["authObserver"]
+    observation = code(SHELL / "authObservation.ts")
+    assert (
+        "return currentKey !== null && apiKey === currentKey ? sessionEpoch : null;" in observation
+    )
+    assert "report(sessionEpoch, result);" in observation
+    assert "import " not in observation and "let " not in observation
     provider = code(SHELL / "ProductSessionProvider.tsx")
-    assert "usedKey !== keyRef.current" in provider  # only the CURRENT key's requests count
+    wiring = provider.split("createAuthObservation(", 1)[1].split("),\n    [],", 1)[0]
+    assert "() => ({ apiKey: keyRef.current, sessionEpoch: epochRef.current })" in wiring
+    report = wiring.split("(sessionEpoch, result) =>", 1)[1]
+    assert 'dispatch({ type: "authResult", sessionEpoch, outcome: authOutcome(result) })' in report
+    assert "epochRef" not in report  # completion never reads the CURRENT epoch
+    for path in (WEB / "lib" / "product-api" / "client.ts", SHELL / "authObservation.ts",
+                 SHELL / "ProductSessionProvider.tsx"):  # fmt: skip
+        source = code(path)
+        for forbidden in ("localStorage", "sessionStorage", "indexedDB", "cookie", "caches."):
+            assert forbidden not in source, (path.name, forbidden)
+    tests = (WEB / "scripts" / "session-epoch.test.mjs").read_text()
+    for case in ("same-key reconnect: a stale 401", "same-key reconnect: a stale success",
+                 "stays ignored after switching to key B",
+                 "accepts on success, rejects on 401 and keeps state on 403"):  # fmt: skip
+        assert case in tests, case
+    browser = (WEB / "scripts" / "control-center.browser.mjs").read_text()
+    assert "same-key reconnect: ${label}" in browser and "/__stub/hold?path=" in browser
 
 
 def test_pages_render_no_header_nav_or_key_form_of_their_own() -> None:

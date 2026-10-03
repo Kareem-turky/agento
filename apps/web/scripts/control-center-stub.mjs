@@ -9,6 +9,12 @@
 //   stub-key-401      every authenticated request is 401 (key not accepted)
 //   stub-key-partial  approvals are 403 (not permitted); knowledge is 503; the rest succeed
 //   stub-key-empty    every list is empty and no integration is installed
+//
+// Test control (reached only by the test script, directly; the Web BFF never proxies it):
+//   POST /__stub/hold?path=/api/v1/...&count=N  hold the next N requests to that path
+//   GET  /__stub/held                           how many requests are being held
+//   POST /__stub/release?status=200|401         answer the OLDEST held request with that
+//                                               status (200 = the normal response)
 import { createServer } from "node:http";
 
 const RID = "00000000-0000-4000-8000-0000000000aa";
@@ -70,8 +76,20 @@ const REPORT = {
 
 export function startStub(port = 0) {
   const requests = [];
+  const holds = new Map(); // path -> how many upcoming requests to hold
+  const held = []; // { reply: (status) => void }
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://stub.invalid");
+    if (url.pathname.startsWith("/__stub/")) {
+      req.resume();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (url.pathname === "/__stub/hold") {
+        holds.set(url.searchParams.get("path"), Number(url.searchParams.get("count") ?? "1"));
+      } else if (url.pathname === "/__stub/release") {
+        held.shift()?.reply(Number(url.searchParams.get("status") ?? "200"));
+      }
+      return res.end(JSON.stringify({ held: held.length }));
+    }
     const authorization = req.headers.authorization ?? "";
     const key = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
     requests.push({ method: req.method, path: url.pathname, query: url.search, authenticated: key !== null });
@@ -81,6 +99,15 @@ export function startStub(port = 0) {
     };
     req.resume();
     const path = url.pathname;
+    if ((holds.get(path) ?? 0) > 0) {
+      holds.set(path, holds.get(path) - 1);
+      // Held until the test releases it: 401 rejects, anything else is the normal answer.
+      held.push({ reply: (status) => (status === 401 ? send(401, { detail: "Invalid API key" }) : answer()) });
+      return;
+    }
+    return answer();
+
+    function answer() {
     if (path === "/health") return send(200, { status: "ok", application: { environment: "local" } });
     if (key === null || key === "stub-key-401") return send(401, { detail: "Invalid API key" });
     const empty = key === "stub-key-empty";
@@ -100,6 +127,7 @@ export function startStub(port = 0) {
       case "/api/v1/operations/runs": return send(200, { request_id: RID, message: "Stub analysis: 2 shipments need attention." });
       case "/api/v1/operations/reports/daily": return send(200, REPORT);
       default: return send(404, { detail: "Not found" });
+    }
     }
   });
   return new Promise((resolve) => {

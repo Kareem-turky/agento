@@ -505,7 +505,8 @@ def test_stale_completions_are_ignored_by_epoch() -> None:
 def test_session_reducer_tests_exist_and_run_offline() -> None:
     script = (WEB / "scripts" / "session-epoch.test.mjs").read_text()
     imports = re.findall(r'from "([^"]+)"', script)
-    assert all(i.startswith("node:") or i == "../components/shell/session.ts" for i in imports)
+    allowed = {"../components/shell/session.ts", "../components/shell/authObservation.ts"}
+    assert all(i.startswith("node:") or i in allowed for i in imports)
     for case in (
         "replacing the Product API key",
         "changing the Store UUID",

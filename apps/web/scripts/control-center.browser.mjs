@@ -361,6 +361,43 @@ try {
     await context.close();
   });
 
+  // Same-key reconnect: a request that BEGAN in an older session epoch may never accept or
+  // reject the newer session, even when the newer session uses the exact same key.
+  const stubControl = async (path) => (await fetch(`http://127.0.0.1:${stub.port}${path}`, { method: "POST" })).json();
+  async function heldCount(count) {
+    for (let i = 0; i < 100; i += 1) {
+      if ((await stubControl("/__stub/held")).held === count) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`stub never held ${count} request(s)`);
+  }
+  async function sameKeyReconnect(page) {
+    await stubControl("/__stub/hold?path=/api/v1/conversations&count=2");
+    await page.goto(`${base}/conversations`);
+    await connect(page); // session epoch 1: its list request is held
+    await heldCount(1);
+    await page.locator(".session-control").getByRole("button", { name: "Disconnect" }).click();
+    await connect(page); // epoch 3 with the SAME key: its own request is held too
+    await heldCount(2);
+    await page.locator(".session-control").getByText("Connected, not yet verified").waitFor();
+  }
+  const keyStatus = (page) => page.locator(".session-control .status-list__row").nth(1).innerText();
+
+  for (const [stale, current, expected] of [[401, 200, "Key accepted"], [200, 401, "Key not accepted"]]) {
+    const label = stale === 401 ? "a stale 401" : "a stale success";
+    await check(`same-key reconnect: ${label} from the old session never changes the new session`, async () => {
+      const { page, context } = await newPage();
+      await sameKeyReconnect(page);
+      await stubControl(`/__stub/release?status=${stale}`); // the OLD epoch-1 request answers
+      await heldCount(1);
+      await page.waitForTimeout(500);
+      assert.match(await keyStatus(page), /Connected, not yet verified/, "old completion ignored");
+      await stubControl(`/__stub/release?status=${current}`); // the new session's own request
+      await page.locator(".session-control").getByText(expected).waitFor();
+      await context.close();
+    });
+  }
+
   await check("mobile and tablet: no horizontal overflow; the menu is an accessible toggle", async () => {
     for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }]) {
       const { page, context } = await newPage(viewport);

@@ -58,10 +58,20 @@ survives client-side navigation between pages.
   without touching other pages. Completions from an older epoch are ignored.
 - **Auth outcomes.** A 401 marks the key *rejected* everywhere. A 403 means authenticated
   but not permitted: the page or card says so, and the key is **not** marked rejected. Any
-  success marks the key *accepted*. Every authenticated request reports only the key it
-  used and its HTTP status to the provider's in-memory observer
-  (`observeAuthOutcomes` in `lib/product-api/client.ts`). Only a request made with the
-  current key counts.
+  success marks the key *accepted*. The provider's in-memory observer
+  (`observeAuthOutcomes` in `lib/product-api/client.ts`, `components/shell/authObservation.ts`)
+  works in two phases, so no call site changes:
+  - **begin**, synchronously **before** any network I/O: the client shows the observer
+    the key in this request's Authorization header. If it is the session's current key,
+    the observer returns the **current session epoch** as an opaque, non-secret token.
+    Otherwise it returns nothing and the request is not observed. The client keeps no key.
+  - **complete**, after the exchange: the outcome (HTTP status only) is dispatched for the
+    **captured** epoch, never the epoch current at completion time.
+
+  The reducer drops any completion of an older epoch. So a request that began before a
+  key replacement, a disconnect or a reconnect with the **same** key can never accept or
+  reject the newer session. That session stays "not yet verified" until one of its own
+  requests completes.
 - **Health is separate from auth.** "API online / Checking / API unavailable" reflects
   `GET /api/product/health` only. It says nothing about the key.
 - **Store.** The Store UUID is chosen on Operations and survives client navigation. It is
@@ -129,7 +139,9 @@ other state. It shows no audit log.
 - `tests/web/test_console_architecture.py`: the existing Operations and page guards,
   updated for the shell.
 - `apps/web/scripts/session-epoch.test.mjs` (`npm run test:session`): the session reducer,
-  including the 401 and 403 rules.
+  including the 401 and 403 rules, and the two-phase observer (stale 401 and stale success
+  after a same-key reconnect, a stale old-key request after a key switch, and a current
+  request's accept/reject/403).
 - `apps/web/scripts/product-proxy-smoke.mjs` (`npm run smoke:proxy`): every page renders
   inside the shell with one `<h1>` and no key, origin or framework name. The legacy routes
   redirect.
@@ -140,6 +152,8 @@ other state. It shows no audit log.
   - a reload forgetting the key;
   - disconnect clearing data;
   - 401 rejection;
+  - same-key reconnect, where a delayed old-session response (401, or success) never
+    changes the new session;
   - 403/503 partial cards that keep the key accepted;
   - Overview read-only calls with no model call and no polling;
   - Operations regression;

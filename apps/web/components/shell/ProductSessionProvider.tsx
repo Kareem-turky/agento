@@ -23,6 +23,7 @@ import {
 } from "react";
 import { getHealth, observeAuthOutcomes } from "../../lib/product-api/client";
 import type { ProductResult } from "../../lib/product-api/types";
+import { createAuthObservation } from "./authObservation";
 import { authOutcome, initialSession, sessionReducer, type KeyStatus } from "./session";
 
 export type HealthState = "checking" | "online" | "unavailable";
@@ -51,7 +52,8 @@ export function ProductSessionProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [session, dispatch] = useReducer(sessionReducer, initialSession);
   const [health, setHealth] = useState<HealthState>("checking");
-  // Mirrors for the auth observer, which runs outside React rendering.
+  // Mirrors read by the auth observer's begin(), which runs outside React rendering. A
+  // request only begins after the render that follows connect/disconnect, so these match.
   const keyRef = useRef<string | null>(null);
   const epochRef = useRef(session.sessionEpoch);
   epochRef.current = session.sessionEpoch;
@@ -69,13 +71,17 @@ export function ProductSessionProvider({ children }: { children: ReactNode }) {
 
   // Any page's authenticated request feeds the one session: 401 marks the key rejected,
   // 403 changes nothing (authenticated, not permitted), a success marks it accepted.
-  // Only a request made with the CURRENT key counts.
+  // Each request is bound to the session epoch captured when it BEGAN (and only when it
+  // used the then-current key); its completion is dispatched for that captured epoch, so
+  // the reducer drops it once the session has moved on, even after a same-key reconnect.
   useEffect(
     () =>
-      observeAuthOutcomes((usedKey, result) => {
-        if (keyRef.current === null || usedKey !== keyRef.current) return;
-        dispatch({ type: "authResult", sessionEpoch: epochRef.current, outcome: authOutcome(result) });
-      }),
+      observeAuthOutcomes(
+        createAuthObservation(
+          () => ({ apiKey: keyRef.current, sessionEpoch: epochRef.current }),
+          (sessionEpoch, result) => dispatch({ type: "authResult", sessionEpoch, outcome: authOutcome(result) }),
+        ),
+      ),
     [],
   );
 

@@ -113,8 +113,15 @@ function classify(status: number): ProductErrorKind {
 
 // One in-memory observer (the ProductSessionProvider) learns how the Product API answered
 // an authenticated request, so a 401 on any page marks the session key as not accepted.
-// It is told only which key was used and the HTTP outcome: never a body, never stored.
-type AuthObserver = (apiKey: string, result: { ok: boolean; status: number | null }) => void;
+// Two phases: BEFORE any network I/O, begin() is shown the key of this one request and
+// returns an opaque non-secret token (the session epoch the request starts in, or null);
+// AFTER the exchange, complete() receives that captured token and the HTTP outcome only.
+// This module never keeps the key: it is read from the request headers synchronously and
+// is not retained after request setup.
+type AuthObserver = {
+  begin(apiKey: string): number | null;
+  complete(sessionEpoch: number, result: { ok: boolean; status: number | null }): void;
+};
 let authObserver: AuthObserver | null = null;
 
 /** Registers the session's auth observer; returns the function that removes it. */
@@ -125,11 +132,22 @@ export function observeAuthOutcomes(observer: AuthObserver): () => void {
   };
 }
 
+/** Phase one, synchronous and before any I/O: the token of the epoch this request starts in. */
+function beginAuthObservation(headers: HeadersInit | undefined): { observer: AuthObserver; token: number } | null {
+  const observer = authObserver;
+  if (observer === null) return null;
+  const authorization = new Headers(headers).get("Authorization");
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = observer.begin(authorization.slice("Bearer ".length));
+  return token === null ? null : { observer, token };
+}
+
 async function send<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
+  const observation = beginAuthObservation(init.headers);
   const result = await exchange(path, init, guard);
-  const authorization = new Headers(init.headers).get("Authorization");
-  if (authorization?.startsWith("Bearer ") && authObserver !== null) {
-    authObserver(authorization.slice("Bearer ".length), { ok: result.ok, status: result.status });
+  // Phase two: the outcome is reported for the CAPTURED epoch, never the current one.
+  if (observation !== null) {
+    observation.observer.complete(observation.token, { ok: result.ok, status: result.status });
   }
   return result;
 }
