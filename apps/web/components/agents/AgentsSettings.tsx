@@ -94,6 +94,7 @@ export function AgentsSettings() {
           <Link href="/settings/workflows">Workflows</Link>
           <Link href="/settings/knowledge">Knowledge</Link>
           <Link href="/settings/approvals">Approvals</Link>
+          <Link href="/conversations">Conversations</Link>
         </nav>
       </header>
 

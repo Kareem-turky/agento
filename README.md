@@ -184,6 +184,26 @@ approval yet: the ticket action stays `LOW_RISK_WRITE`. The routes are
 `/api/v1/approvals/*` and the page is **Settings → Approvals** (`/settings/approvals`).
 See [`docs/APPROVALS.md`](docs/APPROVALS.md).
 
+### Channels & conversations (provider-agnostic foundation)
+
+The Product now owns a canonical **conversation transcript** (migration `0008`):
+
+- one conversation per external thread on one Integration connection, with plain-text
+  messages in Product `sequence` order;
+- idempotent, atomic inbound ingestion with deduplication of provider retries;
+- a provider-independent delivery-state foundation.
+
+Messaging providers will install their connections through the existing Integration
+Foundation and implement the separate `MessagingIntegration` contract.
+
+No provider is connected in this build: the messaging registry is empty, and there is no
+public webhook, no outbound send and no Agent or model use. Inbound text is untrusted
+external data and is only ever stored and shown as text.
+
+Reading needs `conversations.read`. The routes are `GET /api/v1/conversations*` and the
+read-only page is **Conversations** (`/conversations`). See
+[`docs/CONVERSATIONS.md`](docs/CONVERSATIONS.md).
+
 ## 2. High-level architecture
 
 ```

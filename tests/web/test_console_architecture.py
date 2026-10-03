@@ -70,6 +70,10 @@ EXPECTED_ROUTES = {
     "approvals/approval/reject/route.ts": {"POST": "approvalReject"},
     "approvals/approval/cancel/route.ts": {"POST": "approvalCancel"},
     "approvals/approval/resume-workflow/route.ts": {"POST": "approvalResumeWorkflow"},
+    # Task 037: read-only conversations (no ingest, webhook, send or reply route).
+    "conversations/route.ts": {"GET": "conversations"},
+    "conversations/conversation/route.ts": {"GET": "conversation"},
+    "conversations/messages/route.ts": {"GET": "conversationMessages"},
 }  # fmt: skip
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
@@ -118,6 +122,9 @@ UPSTREAM_PATHS = {
     "approvalReject": ("POST", "/api/v1/approvals/approval/reject"),
     "approvalCancel": ("POST", "/api/v1/approvals/approval/cancel"),
     "approvalResumeWorkflow": ("POST", "/api/v1/approvals/approval/resume-workflow"),
+    "conversations": ("GET", "/api/v1/conversations"),
+    "conversation": ("GET", "/api/v1/conversations/conversation"),
+    "conversationMessages": ("GET", "/api/v1/conversations/messages"),
 }
 
 
@@ -277,7 +284,10 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "archiveKnowledgeDocument", "queryKnowledge",
                         # Task 036: no create function (governance creates requests).
                         "listApprovals", "getApproval", "approveApproval", "rejectApproval",
-                        "cancelApproval", "resumeApprovalWorkflow"}  # fmt: skip
+                        "cancelApproval", "resumeApprovalWorkflow",
+                        # Task 037: read-only (no send/reply/ingest function).
+                        "listConversations", "getConversation",
+                        "listConversationMessages"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -748,3 +758,55 @@ def test_approvals_are_linked_from_the_console_and_settings() -> None:
                  WORKFLOWS_UI / "WorkflowsSettings.tsx",
                  KNOWLEDGE_UI / "KnowledgeSettings.tsx"):  # fmt: skip
         assert '<Link href="/settings/approvals">Approvals</Link>' in code(path), path.name
+
+
+# ----- Task 037: the Conversations page ----------------------------------------------------------
+
+
+CONVERSATIONS_UI = WEB / "components" / "conversations"
+
+
+def test_conversation_routes_are_read_only_get_routes() -> None:
+    routes = sorted(str(p.relative_to(API_ROUTES))
+                    for p in (API_ROUTES / "conversations").rglob("route.ts"))  # fmt: skip
+    assert routes == sorted(r for r in EXPECTED_ROUTES if r.startswith("conversations/"))
+    for path in (API_ROUTES / "conversations").rglob("route.ts"):
+        source = code(path)
+        assert "export function GET" in source and "export function POST" not in source
+        assert "body: true" not in source and "maxRequestBytes" not in source
+    proxy = code(PROXY)
+    for word in ("webhook", "/inbound", "conversations/send", "/reply"):
+        assert word not in proxy, word
+
+
+def test_conversations_page_is_read_only_and_renders_text_inertly() -> None:
+    page = code(WEB / "app" / "conversations" / "page.tsx")
+    assert "<ConversationsPage />" in page
+    assert {p.name for p in CONVERSATIONS_UI.glob("*.tsx")} == {"ConversationsPage.tsx"}
+    ui = code(CONVERSATIONS_UI / "ConversationsPage.tsx")
+    assert "fetch(" not in ui and "/api/" not in ui
+    for forbidden in ("dangerouslySetInnerHTML", "innerHTML", "eval(", "new Function",
+                      "JSON.parse", "marked", "remark", "markdown-it", "<iframe",
+                      'type="file"', "FileReader", "localStorage", "sessionStorage",
+                      "setInterval", "setTimeout", "<textarea", "Send", "Reply",
+                      "sendMessage", "method: \"POST\"", "mock", "sample"):  # fmt: skip
+        assert forbidden not in ui, forbidden
+    calls = set(re.findall(r"\b(list\w*Conversation\w*|getConversation)\(", ui))
+    assert calls == {"listConversations", "listConversationMessages"}
+    # Message text is plain JSX text in a layout-safe container.
+    assert '<p className="transcript__text">{message.text}</p>' in ui
+    css = (WEB / "app" / "globals.css").read_text()
+    assert "overflow-wrap: anywhere" in css.split(".transcript__text")[1].split("}")[0]
+    assert "No conversations yet." in ui
+    assert "useState<string | null>(null)" in ui and "busyRef.current" in ui
+    joined = ui.lower()
+    for provider in ("whatsapp", "twilio", "telegram", "messenger", "instagram", "f" + "ulfly"):
+        assert provider not in joined, provider
+
+
+def test_conversations_are_linked_from_the_console_and_settings() -> None:
+    assert '<Link href="/conversations">Conversations</Link>' in component("Console.tsx")
+    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
+                 WORKFLOWS_UI / "WorkflowsSettings.tsx", KNOWLEDGE_UI / "KnowledgeSettings.tsx",
+                 APPROVALS_UI / "ApprovalsSettings.tsx"):  # fmt: skip
+        assert '<Link href="/conversations">Conversations</Link>' in code(path), path.name

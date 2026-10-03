@@ -7,6 +7,9 @@ import type {
   ApprovalListResponse,
   ApprovalResponse,
   ApprovalWorkflowResumeResponse,
+  ConversationListResponse,
+  ConversationMessagesResponse,
+  ConversationResponse,
   AgentListResponse,
   AgentResponse,
   DailyOperationsReportResponse,
@@ -79,6 +82,9 @@ const PATHS = {
   approvalReject: "/api/product/approvals/approval/reject",
   approvalCancel: "/api/product/approvals/approval/cancel",
   approvalResumeWorkflow: "/api/product/approvals/approval/resume-workflow",
+  conversations: "/api/product/conversations",
+  conversation: "/api/product/conversations/conversation",
+  conversationMessages: "/api/product/conversations/messages",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -722,6 +728,51 @@ export function cancelApproval(apiKey: string, approvalId: string, reason: strin
 export function resumeApprovalWorkflow(apiKey: string, approvalId: string): Promise<ProductResult<ApprovalWorkflowResumeResponse>> {
   return send(approvalQuery(PATHS.approvalResumeWorkflow, approvalId), { method: "POST", headers: authorized(apiKey) },
               isWorkflowResume);
+}
+
+// ----- Conversations (Task 037; read-only, Product API only) -------------------------------------
+// There is no send, reply or ingest function: this build exposes no such operation.
+
+const isConversation = (v: unknown): boolean =>
+  isObject(v) && isString(v.conversation_id) && isNullableString(v.store_id) &&
+  isString(v.external_conversation_ref) && isObject(v.channel) && isString(v.channel.connection_id) &&
+  isString(v.channel.integration_id) && isNullableString(v.channel.integration_name) &&
+  isNullableString(v.channel.connection_name) && isString(v.created_at) && isString(v.last_message_at);
+
+const isConversationMessage = (v: unknown): boolean =>
+  isObject(v) && isString(v.message_id) && isNumber(v.sequence) &&
+  (v.direction === "inbound" || v.direction === "outbound") && isString(v.author_kind) &&
+  isNullableString(v.external_sender_ref) && isString(v.text) && isString(v.occurred_at) &&
+  isString(v.recorded_at) && isString(v.delivery_state);
+
+const isConversationList: Guard<ConversationListResponse> = (v): v is ConversationListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.conversations) && v.conversations.every(isConversation);
+
+const isConversationResponse: Guard<ConversationResponse> = (v): v is ConversationResponse =>
+  isObject(v) && isString(v.request_id) && isConversation(v.conversation);
+
+const isConversationMessages: Guard<ConversationMessagesResponse> = (v): v is ConversationMessagesResponse =>
+  isObject(v) && isString(v.request_id) && isString(v.conversation_id) && Array.isArray(v.messages) &&
+  v.messages.every(isConversationMessage) && (v.next_before_sequence === null || isNumber(v.next_before_sequence));
+
+export function listConversations(apiKey: string): Promise<ProductResult<ConversationListResponse>> {
+  return send(PATHS.conversations, { method: "GET", headers: authorized(apiKey) }, isConversationList);
+}
+
+export function getConversation(apiKey: string, conversationId: string): Promise<ProductResult<ConversationResponse>> {
+  const path = `${PATHS.conversation}?${new URLSearchParams({ conversation_id: conversationId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isConversationResponse);
+}
+
+export function listConversationMessages(
+  apiKey: string,
+  conversationId: string,
+  beforeSequence?: number,
+): Promise<ProductResult<ConversationMessagesResponse>> {
+  const query: Record<string, string> = { conversation_id: conversationId };
+  if (beforeSequence !== undefined) query.before_sequence = String(beforeSequence);
+  const path = `${PATHS.conversationMessages}?${new URLSearchParams(query).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isConversationMessages);
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

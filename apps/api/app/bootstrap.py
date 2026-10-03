@@ -20,7 +20,8 @@ inspection (Task 034, ``app.composition.workflows``) is composed the same way: r
 Workflow catalog and run history; Workflows themselves run inside the business backend.
 Product Knowledge (Task 035, ``app.composition.knowledge``) is composed the same way:
 the versioned operating model and Knowledge documents in PostgreSQL. Human approval
-(Task 036, ``app.composition.approvals``) is composed the same way; requests themselves
+(Task 036, ``app.composition.approvals``) and Product Conversations (Task 037,
+``app.composition.conversations``) are composed the same way; requests themselves
 are created by the business composition's ExecutionCoordinator.
 
 ONE Product observability per application: chosen here, then handed to the business
@@ -39,6 +40,7 @@ from fastapi import FastAPI
 from app.composition import build_deployment_composition
 from app.composition.agents import build_agent_management
 from app.composition.approvals import build_approvals
+from app.composition.conversations import build_conversations
 from app.composition.integrations import build_integration_management
 from app.composition.knowledge import build_knowledge
 from app.composition.workflows import build_workflow_inspection
@@ -87,6 +89,8 @@ def create_deployment_app(
         approvals = build_approvals(settings, observability=observer,
                                     workflows=composition.approval_workflow_resumer)  # fmt: skip
         discards.append(approvals.discard)
+        conversations = build_conversations(settings, observability=observer)
+        discards.append(conversations.discard)
     except BaseException:
         discard_all()
         raise
@@ -107,7 +111,10 @@ def create_deployment_app(
                         try:
                             await knowledge.close()
                         finally:
-                            await approvals.close()
+                            try:
+                                await approvals.close()
+                            finally:
+                                await conversations.close()
 
     try:
         return create_app(
@@ -123,6 +130,7 @@ def create_deployment_app(
             workflow_service=workflows.service,
             knowledge_service=knowledge.service,
             approval_service=approvals.service,
+            conversation_service=conversations.service,
             shutdown_callback=close,
             observability=observer,
         )

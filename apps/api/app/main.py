@@ -24,6 +24,7 @@ from app.approval_management.service import ApprovalService
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
+from app.conversations.service import ConversationReadService
 from app.integration_management.service import IntegrationManagementService
 from app.knowledge.service import KnowledgeService
 from app.observability import (
@@ -43,6 +44,8 @@ from app.routes.approvals import APPROVALS_PATHS, APPROVALS_SERVICE_STATE_KEY
 from app.routes.approvals import router as approvals_router
 from app.routes.capabilities import CAPABILITIES_PATHS
 from app.routes.capabilities import router as capabilities_router
+from app.routes.conversations import CONVERSATIONS_PATHS, CONVERSATIONS_SERVICE_STATE_KEY
+from app.routes.conversations import router as conversations_router
 from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
 from app.routes.integrations import router as integrations_router
 from app.routes.knowledge import KNOWLEDGE_PATHS, KNOWLEDGE_SERVICE_STATE_KEY
@@ -89,6 +92,7 @@ def create_app(
     workflow_service: WorkflowInspectionService | None = None,
     knowledge_service: KnowledgeService | None = None,
     approval_service: ApprovalService | None = None,
+    conversation_service: ConversationReadService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -129,7 +133,10 @@ def create_app(
     consumes Knowledge in this build.
     ``approval_service`` is Product human approval (Task 036): reading requests and the
     human decisions on them (there is no create route: requests come only from
-    governance). Without one the Approval routes answer 503."""
+    governance). Without one the Approval routes answer 503.
+    ``conversation_service`` is the read-only Product Conversation inspection (Task 037):
+    canonical conversations and their transcripts (no ingest, webhook or send route).
+    Without one the Conversation routes answer 503."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -197,6 +204,7 @@ def create_app(
     setattr(app.state, WORKFLOWS_SERVICE_STATE_KEY, workflow_service)
     setattr(app.state, KNOWLEDGE_SERVICE_STATE_KEY, knowledge_service)
     setattr(app.state, APPROVALS_SERVICE_STATE_KEY, approval_service)
+    setattr(app.state, CONVERSATIONS_SERVICE_STATE_KEY, conversation_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -220,6 +228,7 @@ def create_app(
     app.include_router(workflows_router)
     app.include_router(knowledge_router)
     app.include_router(approvals_router)
+    app.include_router(conversations_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -238,6 +247,7 @@ def create_app(
             *WORKFLOWS_PATHS,
             *KNOWLEDGE_PATHS,
             *APPROVALS_PATHS,
+            *CONVERSATIONS_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

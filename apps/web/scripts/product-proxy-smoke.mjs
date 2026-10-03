@@ -100,6 +100,7 @@ const stub = createServer((req, res) => {
     if (path.startsWith("/api/v1/workflows/")) return workflowReply(res, req.method, path);
     if (path.startsWith("/api/v1/knowledge/")) return knowledgeReply(res, req.method, path);
     if (path === "/api/v1/approvals" || path.startsWith("/api/v1/approvals/")) return approvalReply(res, req.method, path);
+    if (path === "/api/v1/conversations" || path.startsWith("/api/v1/conversations/")) return conversationReply(res, req.method, path);
     return reply(res, 404, { detail: "Not Found" });
   });
 });
@@ -198,6 +199,19 @@ function approvalReply(res, method, path) {
   };
   const key = `${method} ${path}`;
   return key in routes ? reply(res, 200, routes[key]) : reply(res, 404, { detail: "Not Found" });
+}
+
+// Product conversations (Task 037): read-only canonical transcript.
+const CONVERSATION = "1a1a1a1a-0000-4000-8000-000000000001";
+function conversationReply(res, method, path) {
+  if (method !== "GET") return reply(res, 405, { detail: "Method Not Allowed" });
+  const id = { request_id: UPSTREAM_REQUEST_ID };
+  const routes = {
+    "/api/v1/conversations": { ...id, conversations: [] },
+    "/api/v1/conversations/conversation": { ...id, conversation: {} },
+    "/api/v1/conversations/messages": { ...id, conversation_id: CONVERSATION, messages: [], next_before_sequence: null },
+  };
+  return path in routes ? reply(res, 200, routes[path]) : reply(res, 404, { detail: "Not Found" });
 }
 
 function integrationReply(res, method, path) {
@@ -607,6 +621,42 @@ async function main() {
     }
     check(received.length === 0, "approvals: oversized bodies, refused methods and unknown paths never reached the upstream");
 
+    // 8e. Product conversations (Task 037): fixed READ-ONLY routes, Authorization only.
+    const cv = `conversation_id=${CONVERSATION}`;
+    const conversationCalls = [
+      ["/api/product/conversations", "/api/v1/conversations"],
+      ["/api/product/conversations?limit=20", "/api/v1/conversations?limit=20"],
+      [`/api/product/conversations/conversation?${cv}`, `/api/v1/conversations/conversation?${cv}`],
+      [`/api/product/conversations/messages?${cv}&before_sequence=5&limit=10`,
+       `/api/v1/conversations/messages?${cv}&before_sequence=5&limit=10`],
+    ];
+    for (const [bffPath, upstreamPath] of conversationCalls) {
+      received.length = 0;
+      response = await fetch(`${base}${bffPath}`, { headers: hostile });
+      await response.text();
+      const call = received[0];
+      const name = `conversations: GET ${bffPath.split("?")[0]}`;
+      check(response.status === 200 && received.length === 1 && call.method === "GET" && call.url === upstreamPath,
+            `${name} -> exact upstream (${response.status})`);
+      check(call?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (call?.headers ?? {})),
+            `${name} forwards Authorization only`);
+      check(response.headers.get("cache-control") === "no-store", `${name} no-store`);
+    }
+    received.length = 0;
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+      for (const path of ["/api/product/conversations", "/api/product/conversations/messages"]) {
+        response = await fetch(`${base}${path}?${cv}`, { method, headers: json, body: method === "DELETE" ? undefined : "{}" });
+        check(response.status === 405, `conversations: ${method} ${path} refused (${response.status})`);
+      }
+    }
+    for (const path of ["/api/product/conversations/inbound", "/api/product/conversations/webhook",
+                        "/api/product/conversations/send", "/api/product/conversations/messages/send",
+                        "/api/product/conversations/reply", "/api/product/webhooks/messages"]) {
+      response = await fetch(`${base}${path}`, { method: "POST", headers: json, body: JSON.stringify({ text: "hi" }) });
+      check(response.status === 404 || response.status === 405, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "conversations: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -634,6 +684,9 @@ async function main() {
       `/api/product/approvals?company_id=other`,
       `/api/product/approvals/approval?${ap}&${ap}`,
       `/api/product/approvals/approval?${ap}&requester_actor_id=x`,
+      `/api/product/conversations?company_id=other`,
+      `/api/product/conversations/conversation?${cv}&${cv}`,
+      `/api/product/conversations/messages?${cv}&store_id=x`,
     ];
     for (const path of rejected) {
       response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
@@ -701,6 +754,11 @@ async function main() {
     const knowledgeHtml = await knowledgePage.text();
     check(knowledgePage.status === 200 && knowledgeHtml.includes("Knowledge"), "knowledge settings page renders");
     check(!knowledgeHtml.includes(API_KEY) && !knowledgeHtml.includes(origin), "knowledge settings HTML has no key or origin");
+    const conversationsPage = await fetch(`${base}/conversations`);
+    const conversationsHtml = await conversationsPage.text();
+    check(conversationsPage.status === 200 && conversationsHtml.includes("Conversations"), "conversations page renders");
+    check(!conversationsHtml.includes(API_KEY) && !conversationsHtml.includes(origin),
+          "conversations page HTML has no key or origin");
     const approvalsPage = await fetch(`${base}/settings/approvals`);
     const approvalsHtml = await approvalsPage.text();
     check(approvalsPage.status === 200 && approvalsHtml.includes("Approvals"), "approvals settings page renders");
@@ -723,7 +781,7 @@ async function main() {
           !clientCode.includes("/api/v1/integrations") && !clientCode.includes("/api/v1/agents") &&
           !clientCode.includes("/api/v1/skills") && !clientCode.includes("/api/v1/tasks") &&
           !clientCode.includes("/api/v1/workflows") && !clientCode.includes("/api/v1/knowledge") &&
-          !clientCode.includes("/api/v1/approvals"),
+          !clientCode.includes("/api/v1/approvals") && !clientCode.includes("/api/v1/conversations"),
           "client bundles contain no server origin variable or upstream Product path");
 
     // 14. upstream unavailable (stub stopped).

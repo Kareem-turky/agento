@@ -469,3 +469,44 @@ export type ApprovalWorkflowResumeResponse = {
   status: string;
   failure_code: string | null;
 };
+
+// ----- Conversations (Task 037; read-only) ---------------------------------------------------
+// Message text is UNTRUSTED external data: rendered as plain text only.
+
+export type ConversationChannelView = {
+  connection_id: string;
+  integration_id: string;
+  integration_name: string | null; // null: not installed in this build
+  connection_name: string | null; // null: the connection was removed
+};
+
+export type ConversationView = {
+  conversation_id: string;
+  store_id: string | null;
+  external_conversation_ref: string;
+  channel: ConversationChannelView;
+  created_at: string;
+  last_message_at: string;
+  last_message_id: string | null;
+};
+
+export type ConversationMessageView = {
+  message_id: string;
+  sequence: number;
+  direction: "inbound" | "outbound";
+  author_kind: string;
+  external_sender_ref: string | null;
+  text: string; // untrusted external text when inbound
+  occurred_at: string; // source time
+  recorded_at: string; // Product time
+  delivery_state: string;
+};
+
+export type ConversationListResponse = { request_id: string; conversations: ConversationView[] };
+export type ConversationResponse = { request_id: string; conversation: ConversationView };
+export type ConversationMessagesResponse = {
+  request_id: string;
+  conversation_id: string;
+  messages: ConversationMessageView[];
+  next_before_sequence: number | null;
+};

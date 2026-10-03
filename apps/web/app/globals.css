@@ -261,3 +261,16 @@ select {
 
 /* Task 036: Approvals (summaries and notes are plain, inert text) */
 .approvals-filter { width: auto; padding: 0.3rem 0.5rem; }
+
+/* Task 037: Conversations (external text is plain, inert and layout-safe) */
+.transcript { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.transcript__message {
+  border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.75rem; max-width: 100%;
+  background: var(--surface-muted);
+}
+.transcript__message--outbound { margin-left: 2rem; background: #fff; }
+.transcript__meta { margin: 0 0 0.35rem; }
+.transcript__text {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  max-height: 24rem; overflow: auto;
+}

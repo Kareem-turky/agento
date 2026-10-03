@@ -154,6 +154,15 @@ No real business action requires approval in this release (the ticket action sta
 `LOW_RISK_WRITE`), and raw parameters are never stored. This does not lift the production
 blocker below.
 
+## Channels & conversations (foundation only)
+
+The Product stores a canonical, company-scoped conversation transcript (migration `0008`;
+see [`docs/CONVERSATIONS.md`](CONVERSATIONS.md)) with idempotent inbound ingestion and a
+provider-independent delivery-state model. No messaging provider is connected, and there
+is no public webhook, outbound send, reply UI, Agent or model use. Inbound text is
+untrusted data and is only ever shown as text. This does not lift the production blocker
+below.
+
 ## Product Skills and Tasks (metadata only)
 
 The Operations Agent's capabilities are described by three Skills and three Tasks with

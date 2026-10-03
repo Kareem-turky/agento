@@ -50,7 +50,8 @@ def test_no_task_033_migration() -> None:
                         "0004_create_agent_configurations.py",
                         "0005_create_workflow_runtime.py",
                         "0006_create_knowledge_context.py",
-                        "0007_create_approvals.py"]  # fmt: skip
+                        "0007_create_approvals.py",
+                        "0008_create_conversations.py"]  # fmt: skip
     for name in versions:
         text = (ROOT / "apps/api/migrations/versions" / name).read_text().lower()
         assert "skill" not in text, name
