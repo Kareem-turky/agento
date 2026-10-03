@@ -14,7 +14,7 @@ Browser
                                                   NO host port)
   -> private "database" network            -> postgres (named volume, NO host port)
 
-startup: postgres healthy -> migrate exits 0 -> api healthy -> web healthy
+startup: postgres healthy -> migrate exits 0 -> api healthy (READY) -> web healthy (READY)
 ```
 
 ## 1. Build the two images
@@ -45,12 +45,14 @@ are independently reproducible and contain no secret.
   `--reload`, no migration):
   `python -m uvicorn app.bootstrap:create_deployment_app --factory --app-dir /app/apps/api --host 0.0.0.0 --port 8000`
   (inside the container; the template does not publish it on the host at all).
-- `HEALTHCHECK`: `GET /health` via the Python standard library (no curl).
+- `HEALTHCHECK`: `GET /health/ready` via the Python standard library (no curl). Docker
+  health is Product **readiness**: the lifespan started, the Agent runtime is attached,
+  PostgreSQL is reachable and the Product schema is at the expected revision (Task 039).
 - No secret is an `ARG` or `ENV` of the image. Everything sensitive is a runtime input.
 
-Note: `opentelemetry-sdk` and `pyyaml` are present in the runtime image because the pinned
-`agno[os]` depends on them (through `openinference-instrumentation-agno`). The Product
-configures no SDK and no exporter (see the root README, "Product observability").
+Note: `opentelemetry-sdk` and the OTLP/HTTP exporter are Product runtime dependencies
+(Task 039), used **only** when `APP_OTEL_EXPORT_MODE=otlp_http`; by default nothing is
+exported. `pyyaml` is present because the pinned `agno[os]` depends on it.
 
 ### Web image (`apps/web/Dockerfile`)
 
@@ -66,8 +68,9 @@ configures no SDK and no exporter (see the root README, "Product observability")
   root-owned and read-only for it.
 - Command `node server.js` (exec form, no entrypoint script: Node is PID 1 and receives
   SIGTERM directly; Next's own handler closes the server and exits 143).
-- `HEALTHCHECK`: `GET /api/product/health` with Node's built-in `fetch`, i.e. Next ->
-  same-origin BFF -> private Product API `/health`.
+- `HEALTHCHECK`: `GET /api/product/health/ready` with Node's built-in `fetch`, i.e.
+  Next -> same-origin BFF -> private Product API `/health/ready`: the Web is healthy only
+  while the whole installation is ready. No Product API key is involved.
 - `PRODUCT_API_ORIGIN` is **not** baked into the image: it is deployment wiring, fixed by
   the template to `http://api:8000`. The Product API key is never on the server at all:
   it lives only in the browser tab's memory.
@@ -101,7 +104,7 @@ setting: the packaged BFF can only target the private API service.
 ## 3. Run
 
 ```bash
-docker compose up -d        # postgres -> migrate (exits 0) -> api (healthy) -> web
+docker compose up -d        # postgres -> migrate (exits 0) -> api (ready) -> web (ready)
 docker compose ps
 ```
 
@@ -137,6 +140,31 @@ only. The API is not reachable from the host, so do not try to browse it directl
 Stop with `docker compose down` (keeps the database volume). `docker compose down -v`
 **deletes the database**.
 
+## Operations (Task 039)
+
+See [`docs/PRODUCTION_OPERATIONS.md`](../../docs/PRODUCTION_OPERATIONS.md) for the details.
+
+- **Health.** `GET /health/live` (process alive) and `GET /health/ready` (ready to serve)
+  are public and answer only `{"status": ...}`. During a PostgreSQL outage the API stays
+  alive (200) but not ready (503); it recovers by itself when PostgreSQL returns, with no
+  restart. Detailed reasons are in the Product-authenticated **System Status**
+  (`/api/v1/system/status`, permission `system.read`; the **System** page in the UI).
+- **Logs.** The API writes one JSON completion record per Product operation to stdout,
+  at `APP_LOG_LEVEL`. Logs stay deployment output (no log API).
+- **Telemetry.** `APP_OTEL_EXPORT_MODE=disabled` (default) exports nothing.
+  `otlp_http` sends the bounded Product traces and metrics to
+  `APP_OTEL_EXPORT_ENDPOINT` (a collector base URL you run privately; `/v1/traces` and
+  `/v1/metrics` are appended). No collector is part of this template, and no exporter
+  header or credential is configured.
+- **Backup.** `ops/backup.sh OUTPUT.dump` takes an ONLINE, full, custom-format dump of
+  the installation database (0600, with a `.sha256` file, never overwriting one).
+- **Restore.** `ops/restore-into-empty.sh BACKUP.dump` restores ONLY into an empty
+  database with `api` and `web` stopped, verifies the checksum first, runs the Product
+  migration, and does not start the Product.
+- **Not in the database backup.** The deployment `.env`, `APP_INTEGRATION_SECRETS_DIR`,
+  `APP_BACKEND_SECRETS_DIR` and `APP_BACKEND_CONFIG_DIR` are separate recovery assets:
+  protect them separately.
+
 ## Business backend and its inputs
 
 **No real business backend exists yet.** With `APP_ENVIRONMENT=production` (or staging)
@@ -168,8 +196,8 @@ Not implemented yet (later, explicit tasks):
 
 - a real business backend / provider installation (production cannot start);
 - reverse proxy, public ingress and TLS termination;
-- backup and restore automation: **the `postgres-data` volume needs your own backup
-  policy** until then;
+- scheduled or off-site backups: `ops/backup.sh` and `ops/restore-into-empty.sh`
+  exist, but **scheduling, retention and off-site copies are your own policy**;
 - image registry publication and release automation;
 - container orchestrators (Kubernetes, Helm, Nomad, Terraform, Ansible);
 - login, accounts or server-side sessions (the Product API key is entered per browser

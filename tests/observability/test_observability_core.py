@@ -73,6 +73,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
         "approval.request", "approval.decision", "approval.consume",
         # Task 037: conversation ingest / read / delivery (labels: enums only).
         "conversation.ingest", "conversation.read", "conversation.delivery",
+        # Task 039: the Product-authenticated System Status read (label: overall status).
+        "system.status",
     ]  # fmt: skip
     assert [o.value for o in ObservationOutcome] == [
         "completed", "denied", "invalid", "conflict", "not_found", "unavailable", "error",
@@ -80,6 +82,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
     assert [r.value for r in ProductRoute] == [
         "/health", "/api/v1/operations/runs", "/api/v1/operations/reports/daily",
         "/api/v1/operations/tickets", "/api/v1/operations/tickets/commands",
+        # Task 039: public liveness/readiness and System Status (fixed paths only).
+        "/health/live", "/health/ready", "/api/v1/system/status",
     ]  # fmt: skip
 
 

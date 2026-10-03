@@ -56,9 +56,10 @@ COPY --from=builder /src/.next/static ./.next/static
 USER 10002:10002
 EXPOSE 3000
 
-# Web -> same-origin BFF -> private Product API /health, with Node built-ins only.
+# Web -> same-origin BFF -> private Product API /health/ready (Task 039), with Node
+# built-ins only: Web is healthy only while the whole installation is ready.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/product/health',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/product/health/ready',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"]
 
 # Node is PID 1 and receives SIGTERM directly (no entrypoint script, no shell).
 ENTRYPOINT []

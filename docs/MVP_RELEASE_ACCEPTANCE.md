@@ -93,6 +93,12 @@ the canonical acceptance business date (`2026-03-03`) and follows up on a proble
   pages, a read-only Overview at `/` and Operations at `/operations`. It adds no backend
   change, no migration (head `0008`) and no dependency. See
   [`CONTROL_CENTER.md`](CONTROL_CENTER.md).
+- Production operations (Task 039): public minimal liveness and readiness (Docker health is
+  readiness), the Product-authenticated System Status (`system.read`) and the read-only
+  `/system` page, JSON logs at `APP_LOG_LEVEL`, and optional OTLP/HTTP export (disabled by
+  default). Also an operator online full backup and a restore that runs only into an empty
+  database, proven by the CI backup/restore drill. There is no migration. See
+  [`PRODUCTION_OPERATIONS.md`](PRODUCTION_OPERATIONS.md).
 
 ## Integration foundation (framework only)
 

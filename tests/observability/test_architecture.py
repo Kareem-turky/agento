@@ -1,5 +1,6 @@
 """Observability boundaries: OpenTelemetry isolation, provider/backend independence,
-no remote export, no new configuration, routes or agent tools."""
+no new routes or agent tools. Task 039 (reviewed): OPTIONAL OTLP/HTTP export, disabled by
+default, confined to ``app.observability.deployment`` and two startup settings."""
 
 import ast
 import inspect
@@ -19,6 +20,8 @@ from tests.support.observability import RecordingObservability
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "apps" / "api" / "app"
 OBSERVABILITY = APP / "observability"
+# Task 039: the ONLY module that may touch the OpenTelemetry SDK/exporter and threads.
+DEPLOYMENT = OBSERVABILITY / "deployment.py"
 
 
 def modules(base: Path) -> list[Path]:
@@ -45,7 +48,18 @@ def test_only_the_observability_package_imports_opentelemetry() -> None:
     # Inside the package only the implementation module touches OpenTelemetry.
     users = {p.name for p in modules(OBSERVABILITY)
              if any(n.split(".")[0] == "opentelemetry" for n in imported(p))}  # fmt: skip
-    assert users == {"otel.py"}
+    assert users == {"otel.py", "deployment.py"}
+    # The SDK and the exporter are imported only by the deployment runtime, and only
+    # lazily inside the enabled branch (disabled export never imports them).
+    sdk = {p.name for p in modules(OBSERVABILITY)
+           if any(n.startswith(("opentelemetry.sdk", "opentelemetry.exporter"))
+                  for n in imported(p))}  # fmt: skip
+    assert sdk == {"deployment.py"}
+    top_level = {
+        node.module for node in ast.parse(DEPLOYMENT.read_text()).body
+        if isinstance(node, ast.ImportFrom) and node.module
+    }  # fmt: skip
+    assert not [m for m in top_level if m.startswith("opentelemetry")]
 
 
 @pytest.mark.parametrize(
@@ -72,7 +86,9 @@ def test_one_product_observability_per_application() -> None:
     """Task 034: app.bootstrap chooses the observability ONCE and hands the same instance
     to the business composition and to create_app; the Workflow engine never builds one."""
     bootstrap = (APP / "bootstrap.py").read_text()
-    assert bootstrap.count("build_default_observability()") == 1
+    # Task 039: the deployment observability runtime replaces the bare default, once.
+    assert "build_default_observability" not in bootstrap
+    assert bootstrap.count("build_deployment_observability(settings)") == 1
     assert "build_deployment_composition(settings, model=model, observability=observer)" in (
         bootstrap
     )
@@ -90,8 +106,14 @@ def test_observability_depends_on_no_backend_provider_model_or_storage() -> None
         "psycopg", "redis", "httpx", "requests", "urllib", "aiohttp", "socket", "grpc",
         "threading", "asyncio", "opentelemetry.sdk", "opentelemetry.exporter",
     )  # fmt: skip
+    # Task 039: the deployment runtime alone may use a thread (bounded shutdown) and the
+    # OpenTelemetry SDK / OTLP-HTTP exporter (never another exporter or transport).
+    allowed_for_deployment = ("threading", "opentelemetry.sdk",
+                              "opentelemetry.exporter.otlp.proto.http")  # fmt: skip
     for path in modules(OBSERVABILITY):
         for name in imported(path):
+            if path == DEPLOYMENT and name.startswith(allowed_for_deployment):
+                continue
             assert not name.startswith(forbidden_prefixes), (path.name, name)
 
 
@@ -102,6 +124,8 @@ def test_observability_code_names_no_provider_backend_or_exporter() -> None:
         r"total_tokens|usage|\bcost\b|shopify|woocommerce|salla|zid",
         re.IGNORECASE,
     )
+    # Task 039: the deployment runtime names its OTLP exporter, collector and endpoint.
+    export_words = {"exporter", "otlp", "collector", "endpoint"}
     for path in modules(OBSERVABILITY):
         code = "\n".join(
             line for line in path.read_text().splitlines()
@@ -115,29 +139,49 @@ def test_observability_code_names_no_provider_backend_or_exporter() -> None:
         }
         for docstring in filter(None, docstrings):
             code = code.replace(docstring, "")
-        assert not words.search(code), (path.name, words.search(code))
+        found = [m.group(0).lower() for m in words.finditer(code)]
+        if path == DEPLOYMENT:
+            found = [word for word in found if word not in export_words]
+        assert found == [], (path.name, found)
 
 
 def test_no_exporter_or_vendor_dependency_is_declared() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     declared = pyproject["project"]["dependencies"] + pyproject["dependency-groups"]["dev"]
     otel = sorted(d for d in declared if d.startswith("opentelemetry"))
-    assert otel == ["opentelemetry-api==1.45.0", "opentelemetry-sdk==1.45.0"]
-    assert "opentelemetry-sdk==1.45.0" in pyproject["dependency-groups"]["dev"]
+    # Task 039: the SDK is a runtime dependency and ONE vendor-neutral OTLP/HTTP exporter
+    # is added, all aligned with the API version.
+    assert otel == ["opentelemetry-api==1.45.0",
+                    "opentelemetry-exporter-otlp-proto-http==1.45.0",
+                    "opentelemetry-sdk==1.45.0"]  # fmt: skip
+    assert otel == sorted(d for d in pyproject["project"]["dependencies"]
+                          if d.startswith("opentelemetry"))  # fmt: skip
     lock = (ROOT / "uv.lock").read_text()
-    for vendor in ("opentelemetry-exporter", "prometheus", "jaeger", "zipkin", "datadog",
-                   "ddtrace", "newrelic", "sentry"):  # fmt: skip
+    exporters = sorted(re.findall(r'^name = "(opentelemetry-exporter[^"]*)"', lock, re.MULTILINE))
+    assert exporters == ["opentelemetry-exporter-http-transport",
+                         "opentelemetry-exporter-otlp-common",
+                         "opentelemetry-exporter-otlp-proto-common",
+                         "opentelemetry-exporter-otlp-proto-http"]  # fmt: skip
+    for vendor in ("opentelemetry-exporter-otlp-proto-grpc", "grpcio", "prometheus",
+                   "jaeger", "zipkin", "datadog", "ddtrace", "newrelic", "sentry"):  # fmt: skip
         assert f'name = "{vendor}' not in lock, vendor
 
 
-def test_no_observability_configuration_or_credentials_exist() -> None:
+def test_no_observability_credentials_exist() -> None:
+    # Task 039: exactly two startup settings (mode, collector base URL); no exporter
+    # header, token, key or credential setting of any kind.
+    otel = sorted(f for f in Settings.model_fields if "otel" in f or "telemetry" in f)
+    assert otel == ["otel_export_endpoint", "otel_export_mode"]
     fields = " ".join(Settings.model_fields)
-    for word in ("otel", "telemetry", "trace", "metric", "exporter", "datadog", "grafana",
-                 "new_relic", "sentry"):  # fmt: skip
+    for word in ("header", "trace", "metric", "exporter", "datadog", "grafana", "new_relic",
+                 "sentry"):  # fmt: skip
         assert word not in fields, word
+    assert Settings(_env_file=None).otel_export_mode == "disabled"
     example = (ROOT / ".env.example").read_text()
-    assert not re.search(r"^(APP_OTEL|OTEL_|APP_DATADOG|APP_NEW_RELIC|APP_GRAFANA)", example,
+    assert not re.search(r"^(OTEL_|APP_DATADOG|APP_NEW_RELIC|APP_GRAFANA)", example,
                          re.MULTILINE)  # fmt: skip
+    assert set(re.findall(r"^#?\s*(APP_OTEL_\w+)=", example, re.MULTILINE)) <= {
+        "APP_OTEL_EXPORT_MODE", "APP_OTEL_EXPORT_ENDPOINT"}  # fmt: skip
 
 
 def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option() -> None:
@@ -150,10 +194,11 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
     # Task 031 appended ``integration_service`` after ``observability``; Task 032
     # appended ``agent_service``, Task 034 ``workflow_service`` and Task 035
     # ``knowledge_service``, Task 036 ``approval_service`` and Task 037
-    # ``conversation_service``.
-    assert list(parameters)[-7:] == ["observability", "integration_service", "agent_service",
+    # ``conversation_service``, and Task 039 ``system_probe``.
+    assert list(parameters)[-8:] == ["observability", "integration_service", "agent_service",
                                      "workflow_service", "knowledge_service",
-                                     "approval_service", "conversation_service"]  # fmt: skip
+                                     "approval_service", "conversation_service",
+                                     "system_probe"]  # fmt: skip
     assert parameters["observability"].default is None
     assert parameters["integration_service"].default is None
     assert parameters["agent_service"].default is None
@@ -161,6 +206,7 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
     assert parameters["knowledge_service"].default is None
     assert parameters["approval_service"].default is None
     assert parameters["conversation_service"].default is None
+    assert parameters["system_probe"].default is None
 
 
 def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
@@ -174,7 +220,9 @@ def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
             and not path.startswith(("/api/v1/integrations/", "/api/v1/agents",
                                      "/api/v1/skills/", "/api/v1/tasks/",
                                      "/api/v1/workflows/", "/api/v1/knowledge/",
-                                     "/api/v1/approvals", "/api/v1/conversations")))
+                                     "/api/v1/approvals", "/api/v1/conversations",
+                                     # Task 039: pinned in tests/api and tests/system.
+                                     "/api/v1/system/")))
         or path == "/health"
     )  # fmt: skip
     assert product == [

@@ -48,6 +48,7 @@ class ProductOperation(StrEnum):
     CONVERSATION_INGEST = "conversation.ingest"
     CONVERSATION_READ = "conversation.read"
     CONVERSATION_DELIVERY = "conversation.delivery"
+    SYSTEM_STATUS = "system.status"
 
 
 class ObservationOutcome(StrEnum):
@@ -70,6 +71,10 @@ class ProductRoute(StrEnum):
     OPERATIONS_DAILY_REPORT = "/api/v1/operations/reports/daily"
     OPERATIONS_TICKETS = "/api/v1/operations/tickets"
     OPERATIONS_TICKET_COMMANDS = "/api/v1/operations/tickets/commands"
+    # Task 039: public liveness/readiness and the Product-authenticated System Status.
+    HEALTH_LIVE = "/health/live"
+    HEALTH_READY = "/health/ready"
+    SYSTEM_STATUS = "/api/v1/system/status"
 
 
 HttpMethod = Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "OTHER"]

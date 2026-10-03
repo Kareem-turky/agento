@@ -30,7 +30,7 @@ PRODUCT_KEY="ci-only-product-key-marker-${RUN_ID}-0000000000"
 PRODUCT_KEY_SHA="$(printf '%s' "$PRODUCT_KEY" | sha256sum | cut -d' ' -f1)"
 OPS_MESSAGE="ci-only-operations-message-${RUN_ID}"
 STORE="0b0b0b0b-0000-4000-8000-000000000001"
-PRINCIPALS="[{\"key_id\":\"ci-smoke\",\"key_sha256\":\"$PRODUCT_KEY_SHA\",\"actor_id\":\"ci-smoke-client\",\"role_ids\":[\"operations\"],\"permissions\":[\"orders.read\",\"tickets.create\"],\"store_ids\":[\"$STORE\"]}]"
+PRINCIPALS="[{\"key_id\":\"ci-smoke\",\"key_sha256\":\"$PRODUCT_KEY_SHA\",\"actor_id\":\"ci-smoke-client\",\"role_ids\":[\"operations\"],\"permissions\":[\"orders.read\",\"tickets.create\",\"system.read\"],\"store_ids\":[\"$STORE\"]}]"
 PRIVATE_ORIGIN="http://api:8000"
 
 compose() {
@@ -86,6 +86,8 @@ POSTGRES_USER=platform
 POSTGRES_PASSWORD=$PG_PASSWORD
 APP_ENVIRONMENT=$1
 APP_LOG_LEVEL=INFO
+APP_OTEL_EXPORT_MODE=disabled
+APP_OTEL_EXPORT_ENDPOINT=
 APP_PRODUCT_AUTH_MODE=api_key
 APP_COMPANY_ID=ci-smoke-company
 APP_PRODUCT_API_KEYS=$PRINCIPALS
@@ -123,7 +125,9 @@ docker run --rm -i --network none "$API_IMAGE" python - <<'PY'
 import importlib.util, os, sys
 sys.path.insert(0, "/app/apps/api")
 for name in ("app.bootstrap", "fastapi", "agno", "sqlalchemy", "alembic",
-             "opentelemetry.trace", "httpx", "uvicorn", "psycopg"):
+             "opentelemetry.trace", "httpx", "uvicorn", "psycopg",
+             # Task 039: optional OTLP/HTTP export (used only when explicitly enabled).
+             "opentelemetry.sdk.trace", "opentelemetry.exporter.otlp.proto.http"):
     assert importlib.util.find_spec(name) is not None, name
 for name in ("pytest", "ruff", "_pytest"):
     assert importlib.util.find_spec(name) is None, name
@@ -216,6 +220,78 @@ assert status == "200" and body["status"] == "ok", body
 assert body["agent_runtime"]["status"] == "ready", body
 assert body["application"]["environment"] == "test", body
 print("API healthy internally, agent runtime ready")'
+
+step "Task 039: liveness and readiness are public and minimal; System Status is authenticated"
+for path in /health/live /health/ready; do
+  answer="$(api_internal "$api_id" "$path" none)"
+  expected='200 {"status":"alive"}'
+  [[ "$path" == /health/ready ]] && expected='200 {"status":"ready"}'
+  [[ "$answer" == "$expected" ]] || fail "$path answered: $answer"
+done
+[[ "$(curl -sf "$WEB/api/product/health/ready")" == '{"status":"ready"}' ]] || fail "BFF readiness not ready"
+[[ "$(status_of "$WEB/api/product/system/status")" == 401 ]] || fail "System Status without a key is not 401"
+[[ "$(status_of -H "Authorization: Bearer $OS_KEY" "$WEB/api/product/system/status")" == 401 ]] \
+  || fail "System Status accepted the AgentOS key"
+system_status="$(curl -sf -H "Authorization: Bearer $PRODUCT_KEY" "$WEB/api/product/system/status")"
+python3 -c '
+import json, sys
+body = json.loads(sys.argv[1])
+assert body["overall"] == "ready" and body["reasons"] == [], body
+assert body["components"] == {"application": "ready", "database": "ready",
+                              "product_schema": "ready", "agent_runtime": "ready"}, body
+assert body["observability"] == {"export_mode": "disabled"}, body
+assert body["application"]["environment"] == "test", body
+print("System Status: ready, every component ready, export disabled")' "$system_status"
+for secret in "$PG_PASSWORD" "postgres:5432" "$PRIVATE_ORIGIN" "ci-smoke-company" "ci-smoke-client" \
+              "$PRODUCT_KEY_SHA" "$OS_KEY" "/app"; do
+  grep -qF "$secret" <<< "$system_status" && fail "System Status exposes a private value"
+done
+echo "public health minimal; System Status authenticated and value-free"
+
+step "Task 039: Product completion logs are JSON on stdout, at APP_LOG_LEVEL, without secrets"
+api_log="$(docker logs "$api_id" 2>&1)"
+grep -F '"event":"product.operation.completed"' <<< "$api_log" | head -n 1 | python3 -c '
+import json, sys
+record = json.loads(sys.stdin.read())
+assert record["event"] == "product.operation.completed" and "operation" in record, record
+print("structured completion log:", record["operation"], record["outcome"])'
+for secret in "$PG_PASSWORD" "$OS_KEY" "$PRODUCT_KEY" "$RUN_ID"; do
+  grep -qF "$secret" <<< "$api_log" && fail "API logs contain a credential"
+done
+
+step "Task 039: a database outage keeps the API alive, makes it (and Web) not ready, then recovers without a restart"
+pg_id="$(container_of postgres)"
+api_started="$(docker inspect "$api_id" --format '{{.State.StartedAt}} {{.RestartCount}}')"
+docker stop -t 10 "$pg_id" >/dev/null
+for _ in $(seq 1 30); do
+  [[ "$(api_internal "$api_id" /health/ready none)" == 503 ]] && break
+  sleep 1
+done
+[[ "$(api_internal "$api_id" /health/ready none)" == 503 ]] || fail "readiness did not fail during the outage"
+[[ "$(api_internal "$api_id" /health/live none)" == '200 {"status":"alive"}' ]] \
+  || fail "liveness failed during the outage"
+[[ "$(curl -s "$WEB/api/product/health/ready")" == '{"status":"not_ready"}' ]] || fail "BFF readiness not 503"
+[[ "$(status_of "$WEB/api/product/health/ready")" == 503 ]] || fail "BFF readiness status not 503"
+# The Web container's own health check command reports the installation unhealthy.
+web_check="$(docker inspect "$web_id" --format '{{json .Config.Healthcheck.Test}}' \
+             | python3 -c 'import json, sys; print(json.load(sys.stdin)[-1])')"
+if docker exec "$web_id" node -e "$web_check"; then fail "Web health check passed during the outage"; fi
+outage_status="$(curl -s -H "Authorization: Bearer $PRODUCT_KEY" "$WEB/api/product/system/status")"
+grep -q '"database_unavailable"' <<< "$outage_status" || fail "System Status does not explain the outage"
+grep -qF "$PG_PASSWORD" <<< "$outage_status" && fail "System Status exposes a secret during the outage"
+echo "outage: live 200, ready 503, BFF ready 503, Web health check failing, reason database_unavailable"
+docker start "$pg_id" >/dev/null
+for _ in $(seq 1 60); do
+  [[ "$(api_internal "$api_id" /health/ready none)" == '200 {"status":"ready"}' ]] && break
+  sleep 1
+done
+[[ "$(api_internal "$api_id" /health/ready none)" == '200 {"status":"ready"}' ]] \
+  || fail "readiness did not recover after PostgreSQL returned"
+[[ "$(status_of "$WEB/api/product/health/ready")" == 200 ]] || fail "BFF readiness did not recover"
+docker exec "$web_id" node -e "$web_check" || fail "Web health check did not recover"
+[[ "$(docker inspect "$api_id" --format '{{.State.StartedAt}} {{.RestartCount}}')" == "$api_started" ]] \
+  || fail "the API was restarted"
+echo "recovered: ready again in the SAME API process (no restart)"
 
 step "only Web is host-published, on 127.0.0.1; the API has no host port"
 [[ -z "$(docker port "$api_id")" ]] || fail "api publishes a host port: $(docker port "$api_id")"
@@ -377,6 +453,23 @@ api_exit="$(docker inspect "$api_id" --format '{{.State.ExitCode}}')"
 echo "api stopped in ${elapsed}s with exit code $api_exit"
 [[ "$api_exit" == 0 && "$elapsed" -lt 30 ]] || fail "unclean API shutdown"
 docker logs "$api_id" 2>&1 | grep -q "Finished server process" || fail "no graceful API shutdown"
+
+step "Task 039: enabled OTLP export refuses a hidden OTEL_EXPORTER_OTLP* override before any exporter exists"
+set +e
+output="$(docker run --rm --read-only --tmpfs /tmp --network none \
+  -e APP_ENVIRONMENT=test -e APP_BUSINESS_BACKEND=disabled -e APP_DEFAULT_MODEL_PROVIDER=disabled \
+  -e APP_OTEL_EXPORT_MODE=otlp_http -e APP_OTEL_EXPORT_ENDPOINT=http://collector.invalid:4318 \
+  -e OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20$RUN_ID" \
+  -e OS_SECURITY_KEY="$OS_KEY" -e AGNO_TELEMETRY=false \
+  -e APP_DATABASE_URL="postgresql+psycopg://platform:$PG_PASSWORD@postgres:5432/platform" \
+  "$API_IMAGE" 2>&1)"
+code=$?
+set -e
+[[ "$code" != 0 ]] || fail "the API started with a hidden exporter header"
+grep -qF "OpenTelemetry exporter environment overrides are not allowed" <<< "$output" \
+  || fail "the API failed for another reason"
+grep -qF "$RUN_ID" <<< "$output" && fail "the refusal output contains the header value"
+echo "hidden exporter environment refused (exit $code), value never printed"
 
 step "production without a real business backend still fails closed (and Web never starts)"
 for backend in disabled mock; do

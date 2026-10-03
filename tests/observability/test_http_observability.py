@@ -139,6 +139,11 @@ def exercise(client: TestClient):
             headers={"Idempotency-Key": IDEMPOTENCY_KEY},
         ),  # fmt: skip
         client.get(COMMANDS, params={"command_id": str(COMMAND)}),
+        # Task 039: liveness, readiness (no probe composed here: not ready) and System
+        # Status (this test actor holds no system.read).
+        client.get("/health/live"),
+        client.get("/health/ready"),
+        client.get("/api/v1/system/status"),
     ]
 
 
@@ -162,7 +167,7 @@ def test_every_product_route_is_observed_with_the_server_request_id(
     recorder = RecordingObservability()
     with TestClient(build(settings, runtime_settings, recorder, **all_services())) as client:
         responses = exercise(client)
-    assert [r.status_code for r in responses] == [200, 200, 403, 201, 200]
+    assert [r.status_code for r in responses] == [200, 200, 403, 201, 200, 200, 503, 403]
     http = recorder.of(P.HTTP_REQUEST)
     assert [r.attributes["http.route"] for r in http] == [route.value for route in ProductRoute]
     for record, response in zip(http, responses, strict=True):
@@ -170,7 +175,8 @@ def test_every_product_route_is_observed_with_the_server_request_id(
         assert record.attributes["http.status_code"] == response.status_code
         assert record.attributes["http.method"] == response.request.method
     assert [r.outcome for r in http] == [Out.COMPLETED, Out.COMPLETED, Out.DENIED, Out.COMPLETED,
-                                         Out.COMPLETED]  # fmt: skip
+                                         Out.COMPLETED, Out.COMPLETED, Out.UNAVAILABLE,
+                                         Out.DENIED]  # fmt: skip
 
 
 def test_agentos_and_other_paths_are_not_product_observed(
@@ -417,7 +423,8 @@ def test_failing_observability_leaves_http_behaviour_unchanged(
             "operations_ticket_query_service",
         )
     ] == [1, 1, 1, 1]
-    assert failing.calls == 5 + 4
+    # 8 HTTP observations, 4 service operations and the (denied) system.status operation.
+    assert failing.calls == 8 + 4 + 1
 
 
 # ----- Responses carry no telemetry; health is unchanged -----------------------------------
@@ -426,7 +433,7 @@ def test_failing_observability_leaves_http_behaviour_unchanged(
 def test_product_responses_have_no_observability_fields(settings, runtime_settings) -> None:
     h = harness()
     with TestClient(build(settings, runtime_settings, h.observability, **all_services())) as c:
-        health, run_response, _, ticket, command = exercise(c)
+        health, run_response, _, ticket, command, *_ = exercise(c)
     assert set(run_response.json()) == {"request_id", "message"}
     assert set(ticket.json()) == {"request_id", "command_id", "status", "reason", "ticket_id",
                                   "replayed", "persistence_complete"}  # fmt: skip
@@ -449,7 +456,8 @@ def test_default_observability_is_used_when_none_is_injected(settings, runtime_s
     app = create_app(settings, runtime_settings, actor_resolver=StaticActorResolver(WRITER),
                      **services)  # fmt: skip
     with TestClient(app) as client:
-        assert [r.status_code for r in exercise(client)] == [200, 200, 403, 201, 200]
+        assert [r.status_code for r in exercise(client)] == [200, 200, 403, 201, 200, 200, 503,
+                                                             403]  # fmt: skip
 
 
 def test_report_forbidden_and_invalid_key_http_mappings_are_unchanged(

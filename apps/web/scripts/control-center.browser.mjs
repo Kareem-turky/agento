@@ -29,9 +29,9 @@ const READ_PATHS = new Set([
 ]);
 const NAV_LABELS = [["Overview", "Overview"], ["Operations", "Operations"], ["Approvals", "Approvals"],
   ["Conversations", "Conversations"], ["Workflows", "Workflows"], ["Agents", "Agents"], ["Integrations", "Integrations"],
-  ["Knowledge", "Knowledge"]];
+  ["Knowledge", "Knowledge"], ["System", "System"]];
 const PAGES = ["/", "/operations", "/approvals", "/conversations", "/workflows", "/settings/agents",
-  "/settings/integrations", "/settings/knowledge"];
+  "/settings/integrations", "/settings/knowledge", "/system"];
 
 function freePort() {
   return new Promise((resolve) => {
@@ -359,6 +359,51 @@ try {
     await page.keyboard.press("Tab");
     assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Skip to content");
     await context.close();
+  });
+
+  await check("System page (Task 039): read-only status, manual refresh only, safe failures", async () => {
+    const { page, context } = await newPage();
+    await page.goto(`${base}/system`);
+    await page.getByText("Connect to the Product API to view system status.").waitFor();
+    const nav = page.getByRole("navigation", { name: "Product" });
+    assert.equal(await nav.getByRole("link", { name: "System" }).getAttribute("aria-current"), "page");
+    const mark = stub.requests.length;
+    await connect(page);
+    await page.getByRole("region", { name: "Readiness" }).getByText("Not ready").waitFor();
+    await page.getByText("The Product database schema is not at the revision this build expects.", { exact: false }).waitFor();
+    await page.getByRole("region", { name: "Components" }).getByText("Schema mismatch").waitFor();
+    await page.getByRole("region", { name: "Installation" }).getByText("OTLP over HTTP (enabled)").waitFor();
+    await page.getByRole("region", { name: "Installation" }).getByText("2 h 2 min").waitFor();
+    assert.equal(await page.locator("h1").count(), 1);
+    const calls = since(mark);
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["GET /api/v1/system/status"]);
+    // No polling: nothing more on its own; Refresh reads exactly once more.
+    await page.waitForTimeout(1500);
+    assert.equal(since(mark).length, 1, "no background requests");
+    await page.getByRole("button", { name: "Refresh status" }).click();
+    await page.getByRole("region", { name: "Readiness" }).getByText("Not ready").waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(since(mark).filter((c) => c.path === "/api/v1/system/status").length, 2);
+    assert.ok(since(mark).every((c) => c.method === "GET"), "read-only");
+    const text = await page.locator("main").innerText();
+    for (const secret of ["postgres", "127.0.0.1", "collector", "4318", "company", "sha256", "/app", "key_id"]) {
+      assert.ok(!text.toLowerCase().includes(secret), `no ${secret} rendered`);
+    }
+    assert.equal(await page.locator('main input[type="password"]').count(), 0, "no per-page key form");
+    await noKeyAnywhere(page);
+    await context.close();
+    for (const [key, message] of [["stub-key-partial", "You don't have access to System status."],
+                                  ["stub-key-empty", "System status is unavailable right now."],
+                                  ["stub-key-401", "Product API key not accepted."]]) {
+      const second = await newPage();
+      await second.page.goto(`${base}/system`);
+      await connect(second.page, key);
+      await second.page.getByText(message).waitFor();
+      const status = await second.page.locator(".session-control").innerText();
+      assert.ok(key === "stub-key-401" ? status.includes("Key not accepted") : !status.includes("Key not accepted"),
+                `${key}: 401 rejects the key, 403/503 never do`);
+      await second.context.close();
+    }
   });
 
   // Same-key reconnect: a request that BEGAN in an older session epoch may never accept or

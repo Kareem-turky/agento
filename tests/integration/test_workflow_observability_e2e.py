@@ -15,7 +15,7 @@ import app.bootstrap as bootstrap
 import app.observability.otel as otel
 from app.bootstrap import create_deployment_app
 from app.integrations.commerce.mock import EntityType, canonical_id
-from app.observability import ProductOperation
+from app.observability import ObservabilityRuntime, ProductOperation
 from tests.support.observability import RecordingObservability
 from tests.support.product_auth import deployment_settings, principal
 from tests.support.scripted_tool_model import ScriptedToolModel
@@ -93,13 +93,14 @@ def test_the_default_observability_is_chosen_once_and_shared(
 ) -> None:
     chosen: list[RecordingObservability] = []
 
-    def one_default() -> RecordingObservability:
+    def one_default(_settings) -> ObservabilityRuntime:
         chosen.append(RecordingObservability())
-        return chosen[-1]
+        return ObservabilityRuntime(chosen[-1], "disabled")  # type: ignore[arg-type]
 
     # Observe which instance the factory's own default choice produced (detection only:
-    # the factory still decides when and how often to choose).
-    monkeypatch.setattr(bootstrap, "build_default_observability", one_default)
+    # the factory still decides when and how often to choose). Task 039: the default is
+    # the deployment observability runtime.
+    monkeypatch.setattr(bootstrap, "build_deployment_observability", one_default)
     request_id = report(create_deployment_app(settings_for(settings), runtime_settings,
                                               model=ScriptedToolModel()))  # fmt: skip
     (observer,) = chosen  # chosen exactly once for the whole application

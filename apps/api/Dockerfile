@@ -65,9 +65,12 @@ RUN python -m compileall -q /app/apps/api
 USER 10001:10001
 EXPOSE 8000
 
-# Liveness of the Product API, stdlib only (no curl); unauthenticated /health.
+# Product READINESS (Task 039), stdlib only (no curl): unauthenticated /health/ready is 200
+# only when the lifespan started, the Agent runtime is attached, PostgreSQL is reachable and
+# the Product schema is at the expected revision (a 503 raises: unhealthy). /health/live
+# stays 200 while the process is alive.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=6 \
-  CMD ["python", "-c", "import sys, urllib.request as r; sys.exit(0 if r.build_opener(r.ProxyHandler({})).open('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+  CMD ["python", "-c", "import sys, urllib.request as r; sys.exit(0 if r.build_opener(r.ProxyHandler({})).open('http://127.0.0.1:8000/health/ready', timeout=4).status == 200 else 1)"]
 
 # Exec form: uvicorn is PID 1 and receives SIGTERM directly. No --reload, no migration.
 CMD ["python", "-m", "uvicorn", "app.bootstrap:create_deployment_app", "--factory", \

@@ -10,7 +10,9 @@ repositories (``PostgresKnowledgeRepository``: versioned operating model and Kno
 documents, Task 035) and ``app.approval_management.contracts.ApprovalRepository``
 (``PostgresApprovalRepository``: human-approval requests and their append-only events,
 Task 036) and ``app.conversations.contracts.ConversationRepository``
-(``PostgresConversationRepository``: the canonical conversation transcript, Task 037).
+(``PostgresConversationRepository``: the canonical conversation transcript, Task 037)
+and ``app.system_operations.DatabaseReadinessProbe`` (``PostgresReadinessProbe``: the
+bounded, read-only database and Product schema revision check, Task 039).
 Depends on SQLAlchemy and those contracts
 only: no agents, Agno, routes, business integrations or business handlers, and no
 business-data tables. The schema is owned by Alembic migrations, never created here.
@@ -50,6 +52,10 @@ from app.persistence.knowledge import (
     knowledge_document_versions,
     knowledge_documents,
 )
+from app.persistence.system_readiness import (
+    PostgresReadinessProbe,
+    create_readiness_engine,
+)
 from app.persistence.workflow_runs import (
     PostgresWorkflowRunRepository,
     workflow_events,
@@ -61,6 +67,8 @@ from app.persistence.write_commands import PostgresWriteCommandStore, write_comm
 __all__ = [
     "PostgresApprovalRepository",
     "PostgresConversationRepository",
+    "PostgresReadinessProbe",
+    "create_readiness_engine",
     "conversation_messages",
     "conversations",
     "message_delivery_events",

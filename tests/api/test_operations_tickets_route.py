@@ -167,6 +167,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     from app.routes.conversations import CONVERSATIONS_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
     from app.routes.knowledge import KNOWLEDGE_PATHS
+    from app.routes.system import PUBLIC_HEALTH_PATHS, SYSTEM_PATHS
     from app.routes.workflows import WORKFLOWS_PATHS
 
     assert sorted(excluded) == sorted(
@@ -182,6 +183,8 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
             *KNOWLEDGE_PATHS,  # Task 035: Knowledge (exact paths)
             *APPROVALS_PATHS,  # Task 036: human approvals (exact paths)
             *CONVERSATIONS_PATHS,  # Task 037: read-only conversations (exact paths)
+            *SYSTEM_PATHS,  # Task 039: Product-authenticated System Status (exact path)
+            *PUBLIC_HEALTH_PATHS,  # Task 039: public /health/live and /health/ready
         ]
     )
     assert len(INTEGRATIONS_PATHS) == 7 and len(AGENTS_PATHS) == 6

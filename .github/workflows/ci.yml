@@ -123,6 +123,10 @@ jobs:
         run: >-
           .github/scripts/deployment-smoke.sh
           commerce-ai-platform-api:ci commerce-ai-platform-web:ci
+      - name: Backup and restore drill (disposable project and volume, CI-only values, no model/provider)
+        run: >-
+          .github/scripts/backup-restore-drill.sh
+          commerce-ai-platform-api:ci commerce-ai-platform-web:ci
       - name: Local Product demo smoke test (scripts/demo.sh, mock backend + demo model, no external calls)
         run: >-
           .github/scripts/demo-smoke.sh
@@ -140,6 +144,9 @@ jobs:
         run: |
           docker compose -p cap-deploy-smoke down -v --remove-orphans || true
           docker rm -f cap-deploy-smoke-probe || true
+      - name: Tear down the backup and restore drill
+        if: always()
+        run: docker compose -p cap-restore-drill down -v --remove-orphans || true
       - name: Tear down the demo smoke test
         if: always()
         run: docker compose -p cap-demo-smoke down -v --remove-orphans || true

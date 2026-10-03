@@ -87,8 +87,10 @@ MIGRATIONS_0001_TO_0007 = {
     "0007_create_approvals.py":
         "0bab564c73a9bcc9a1e24568c1627e707b813f37fcd172d41a48df26b280fde4",
 }  # fmt: skip
-PYPROJECT_SHA256 = "b5da90a5d5157ee54af92d388d6f76705da27a6241808e980ee1d89b636184eb"
-UV_LOCK_SHA256 = "db55fc9c21e8f903ca329875eb9d14c5a11486ffb4aac7f2624544b267e7c638"
+# Task 039 (reviewed): opentelemetry-sdk moves to runtime and the OTLP/HTTP exporter is
+# added (optional, disabled-by-default export); nothing else changes.
+PYPROJECT_SHA256 = "449b133228a3c7172e3e0c4b4868401bbf6df521e03bdd1e1ae1e14917a54744"
+UV_LOCK_SHA256 = "bd2ecfa15909b304cb4892c704b0110ed0c008c7c1670b9f2024d40b3348d359"
 
 
 def imports(path: Path) -> list[str]:

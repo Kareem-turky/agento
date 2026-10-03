@@ -32,6 +32,16 @@ npm run typecheck && npm run build && npm run smoke:proxy
 | Workflows (`/workflows`; `/settings/workflows` redirects) | `/api/v1/workflows/*` | **Read-only** Product Workflow inspection: installed Workflow definitions (ordered Steps, read-only/governed-write class, timeouts, bounded attempts, checkpoint policy) and this company's recent runs with Step attempts, safe failure codes and append-only lifecycle events. No Run, Retry or Resume button, no input form and no Workflow, JSON or code editor. See [`docs/WORKFLOWS.md`](../../docs/WORKFLOWS.md). |
 | Settings → Integrations (`/settings/integrations`) | `/api/v1/integrations/*` | Generic Connections UI: installed integration types grouped by category (this build installs none, and says so), connections with enabled state and last-known test result, a generic form (text/URL/boolean/write-only secret fields), Test, Enable/Disable, Edit settings, Replace credentials, Delete. Secret inputs are never pre-filled. See [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md). |
 
+## System and container health (Task 039)
+
+- **System** (`/system`, under Configure) reads `GET /api/product/system/status`, which
+  goes to the Product API `GET /api/v1/system/status`. The route is Product-authenticated
+  (`system.read`) through the shared in-memory session, read-only, with no polling.
+- `GET /api/product/health/ready` goes to the API `GET /health/ready`. It is public and
+  minimal (200 `{"status":"ready"}` / 503 `{"status":"not_ready"}`), forwards no
+  credential, and is used only by the Web container health check, never by the browser.
+  No Product API key is needed for health checks.
+
 ## Security model
 
 - **Same-origin proxy (BFF) only.** The browser calls fixed routes and nothing else:

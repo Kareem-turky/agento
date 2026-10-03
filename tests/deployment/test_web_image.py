@@ -112,7 +112,10 @@ def test_healthcheck_goes_through_the_bff_with_node_builtins() -> None:
     [check] = [a for i, a in stages()["runtime"] if i == "HEALTHCHECK"]
     argv = json.loads(check.split("CMD", 1)[1])
     assert argv[:2] == ["node", "-e"]
-    assert "fetch('http://127.0.0.1:3000/api/product/health'" in argv[2]
+    # Task 039: Web is healthy only when the whole installation is READY (Web -> fixed BFF
+    # route -> API /health/ready), not merely when the API process answers.
+    assert "fetch('http://127.0.0.1:3000/api/product/health/ready'" in argv[2]
+    assert "r.status===200?0:1" in argv[2]
     for _, arguments in instructions():
         assert "curl" not in arguments and "wget" not in arguments
 
