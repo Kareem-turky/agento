@@ -51,7 +51,7 @@ class InMemoryWriteCommandStore:
         row = claim.model_dump() | {
             "status": CommandStatus.IN_PROGRESS, "reason": None, "action_run_id": None,
             "execution_reference_id": None, "audit_complete": None,
-            "created_at": T0, "updated_at": T0,
+            "created_at": T0, "updated_at": T0, "approval_id": None,
         }  # fmt: skip
         self.rows[claim.command_id] = row
         return ClaimResult(outcome=ClaimOutcome.NEW, record=self._record(row))
@@ -76,6 +76,22 @@ class InMemoryWriteCommandStore:
         if row is None or row["status"] is not CommandStatus.IN_PROGRESS:
             raise WriteCommandStoreError()
         row.update(outcome.model_dump())
+        return self._record(row)
+
+    async def resume_after_approval(
+        self, command_id: UUID, company_id: str, actor_id: str, approval_id: UUID
+    ) -> WriteCommandRecord | None:
+        """Task 036: compare-and-set AWAITING_APPROVAL -> IN_PROGRESS (one winner)."""
+        row = self.rows.get(command_id)
+        if (
+            row is None
+            or (row["company_id"], row["actor_id"]) != (company_id, actor_id)
+            or row["status"] is not CommandStatus.AWAITING_APPROVAL
+            or row["approval_id"] != approval_id
+        ):
+            return None
+        row.update(status=CommandStatus.IN_PROGRESS, reason=None, action_run_id=None,
+                   execution_reference_id=None, audit_complete=None)  # fmt: skip
         return self._record(row)
 
 

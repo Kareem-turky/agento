@@ -7,7 +7,10 @@
     ONE MockCommerceSystem -> MockCommerceAdapter                       (governed reads)
                            -> MockTicketingAdapter (+ MockTicketDesk)   (ticket writes)
     CreateOperationalTicketHandler -> ActionHandlerRegistry
-      -> ExecutionCoordinator(gate, registry, PostgresAuditSink)
+      -> ExecutionCoordinator(gate, registry, PostgresAuditSink,
+                              approvals=ProductApprovalBroker(PostgresApprovalRepository))
+         (Task 036: a MEDIUM/HIGH action would request a human decision; the mock
+          backend's only write, the ticket, is LOW_RISK_WRITE and never does)
       -> WriteCommandCoordinator(store, coordinator, catalog)
       -> WriteCommandTicketService / WriteCommandTicketQueryService(store)
     DailyOperationsWorkflow(commerce=<the SAME MockCommerceAdapter>, gate=<the SAME gate>)
@@ -36,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.agents.operations import OperationsAgentRunner, build_operations_agent
 from app.application.operations_ticket_queries import WriteCommandTicketQueryService
 from app.application.operations_tickets import WriteCommandTicketService
+from app.approval_management.broker import ProductApprovalBroker
 from app.commands import WriteCommandCoordinator
 from app.composition.contracts import (
     BACKEND_NOT_ALLOWED,
@@ -57,6 +61,7 @@ from app.integrations.commerce.mock import (
 from app.observability.contracts import ProductObservability
 from app.operations import OPERATIONS_ACTIONS, CreateOperationalTicketHandler
 from app.persistence import (
+    PostgresApprovalRepository,
     PostgresAuditSink,
     PostgresWorkflowRunRepository,
     PostgresWriteCommandStore,
@@ -133,7 +138,10 @@ def build_local_mock_composition(
         ticketing = MockTicketingAdapter(system, MockTicketDesk())
 
         registry = ActionHandlerRegistry([CreateOperationalTicketHandler(ticketing)])
-        coordinator = ExecutionCoordinator(gate, registry, audit)
+        # Durable human approvals, observed through the SAME Product observability.
+        approvals = ProductApprovalBroker(PostgresApprovalRepository(sessions),
+                                          observability=observability)  # fmt: skip
+        coordinator = ExecutionCoordinator(gate, registry, audit, approvals=approvals)
         commands = WriteCommandCoordinator(store, coordinator, catalog)
 
         # ONE deterministic report service, shared by the HTTP report route and the
@@ -157,6 +165,7 @@ def build_local_mock_composition(
             operations_ticket_service=WriteCommandTicketService(commands),
             operations_ticket_query_service=WriteCommandTicketQueryService(store),
             daily_operations_service=daily_operations,
+            approval_workflow_resumer=platform,
             close=lifecycle.close,
             discard=lifecycle.discard,
         )

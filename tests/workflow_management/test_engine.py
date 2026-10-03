@@ -296,13 +296,15 @@ def test_an_unverified_write_is_never_workflow_success_and_never_retried(
 
 
 def test_approval_required_stops_the_workflow_before_any_effect() -> None:
+    """Without a human-approval broker (and a handler able to describe the decision) an
+    approval-required write fails closed before any effect. The awaiting -> approve ->
+    continue path is proven in tests/approval_management/test_workflow_approval.py."""
     platform, repository, handlers, note, sink = write_world(intent="orders.cancel")
     result = run_write(platform)
-    assert (result.status, result.failure_code.value) == (R.AWAITING_APPROVAL,
-                                                          "approval_required")  # fmt: skip
+    assert (result.status, result.failure_code.value) == (R.FAILED, "step_execution_failed")
     assert note.execute_calls == [] and handlers["after"].calls == []
     write_row = [a for a in repository.attempt_rows(result.run_id) if a["step_id"] == "write"][0]
-    assert write_row["status"] == "awaiting_approval"
+    assert write_row["status"] == "failed" and write_row["approval_id"] is None
 
 
 def test_a_governance_denial_fails_the_write_step() -> None:

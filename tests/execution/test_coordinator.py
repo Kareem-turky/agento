@@ -76,28 +76,39 @@ def test_no_actor_is_denied() -> None:
     assert_untouched(hs["notes.add"])
 
 
+def assert_never_executed(handler: FakeHandler) -> None:
+    assert handler.execute_calls == [] and handler.verify_calls == []
+
+
 @pytest.mark.parametrize("name", ["orders.cancel", "orders.refund"])
 def test_require_approval_never_executes(name: str) -> None:
+    """Task 036: without a human-approval broker an action that needs a human decision
+    fails closed (approval_unavailable): no approval id, nothing executed."""
     hs = handlers()
     coord, sink = coordinator(*hs.values())
     result = execute(coord, name)
-    assert (result.status, result.reason) == (S.AWAITING_APPROVAL, R.APPROVAL_REQUIRED)
+    assert (result.status, result.reason) == (S.FAILED, R.APPROVAL_UNAVAILABLE)
     assert result.policy_decision.outcome is PolicyOutcome.REQUIRE_APPROVAL
     assert result.execution_result is None and result.verification_result is None
-    assert_untouched(hs[name])
-    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.AWAITING_APPROVAL]
+    assert result.approval_id is None
+    assert_never_executed(hs[name])
+    assert sink.types == [E.REQUESTED, E.POLICY_DECIDED, E.APPROVAL_REFUSED]
 
 
 def test_no_approval_bypass_exists() -> None:
     hs = handlers()
     coord, _ = coordinator(*hs.values())
     for params in ({"approved": True}, {"approval_token": "x"}, {"status": "approved"}):
-        assert execute(coord, "orders.refund", params=params).status is S.AWAITING_APPROVAL
+        assert execute(coord, "orders.refund", params=params).status is not S.VERIFIED
     import inspect
 
-    assert list(inspect.signature(coord.run).parameters) == ["request", "intent", "scope",
-                                                            "parameters"]  # fmt: skip
-    assert_untouched(hs["orders.refund"])
+    # Task 036: the only approval inputs are an (untrusted) id and trusted source
+    # metadata, keyword-only; a parameter can never carry an approval.
+    parameters = inspect.signature(coord.run).parameters
+    assert list(parameters) == ["request", "intent", "scope", "parameters", "approval_id",
+                                "source"]  # fmt: skip
+    assert parameters["approval_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert_never_executed(hs["orders.refund"])
 
 
 def test_unknown_action_never_touches_any_handler() -> None:
@@ -284,7 +295,9 @@ def test_parameters_cannot_lower_risk_or_change_permission() -> None:
     hs = handlers()
     coord, _ = coordinator(*hs.values())
     result = execute(coord, "orders.refund", params={**VALID_PARAMS, **SMUGGLED})
-    assert result.status is S.AWAITING_APPROVAL
+    assert result.status is not S.VERIFIED and result.policy_decision.outcome is (
+        PolicyOutcome.REQUIRE_APPROVAL
+    )
     assert result.policy_decision.risk.value == "high_risk"
     assert result.policy_decision.permission.required_permission == "orders.refund"
     reader = request(actor(permissions=frozenset({"notes.read"})))
@@ -527,7 +540,7 @@ def test_audit_event_fields_have_no_room_for_payloads() -> None:
         "event_id", "run_id", "request_id", "occurred_at", "event_type", "action_name",
         "actor_id", "actor_type", "company_id", "store_id", "channel", "policy_outcome",
         "policy_reason", "run_status", "run_reason", "execution_reference_id",
-        "verification_code",
+        "verification_code", "approval_id",
     }  # fmt: skip
 
 

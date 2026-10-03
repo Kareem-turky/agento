@@ -38,7 +38,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.context.models import ActorContext, RequestContext
-from app.execution import ActionRun, ActionRunStatus, ExecutionCoordinator
+from app.execution import (
+    ActionRun,
+    ActionRunStatus,
+    ApprovalSource,
+    ApprovalSourceRef,
+    ExecutionCoordinator,
+)
 from app.governance import ActionIntent, ActionScope
 from app.workflow_management.catalog import ProductWorkflowCatalog
 from app.workflow_management.definitions import CheckpointPolicy, StepSideEffect
@@ -62,6 +68,9 @@ class WorkflowStepContext(BaseModel):
     # (governance, ExecutionCoordinator). Never built from Workflow input.
     request: RequestContext
     scope: ActionScope
+    # Task 036: set only on the explicit continuation attempt of a governed write Step
+    # after a human approval (the request it executes under, at most once).
+    approval_id: UUID | None = None
 
 
 class StepOutcome(StrEnum):
@@ -75,6 +84,7 @@ class StepResult:
     outcome: StepOutcome
     checkpoint: BaseModel | None = None
     output: Any = field(default=None, repr=False)  # ephemeral: never persisted or logged
+    approval_id: UUID | None = None  # Task 036: the request an AWAITING_APPROVAL Step waits for
 
 
 class StepDeniedError(Exception):
@@ -147,7 +157,16 @@ class GovernedWriteStepHandler(_StepHandler, ABC):
         self, context: WorkflowStepContext, run_input: BaseModel, checkpoints: Checkpoints
     ) -> StepResult:
         intent, parameters = self.action(context, run_input, checkpoints)
-        outcome = await self._coordinator.run(context.request, intent, context.scope, parameters)
+        # Trusted correlation for a new approval request; on the continuation attempt the
+        # approval id is the one this Step awaited (the coordinator re-checks governance
+        # and consumes it once, for exactly this subject).
+        source = ApprovalSourceRef(
+            kind=ApprovalSource.WORKFLOW_STEP, workflow_run_id=context.workflow_run_id,
+            workflow_id=context.workflow_id, workflow_step_id=context.step_id,
+        )  # fmt: skip
+        outcome = await self._coordinator.run(context.request, intent, context.scope, parameters,
+                                              approval_id=context.approval_id,
+                                              source=source)  # fmt: skip
         if not isinstance(outcome, ActionRun):
             return StepResult(StepOutcome.REQUIRES_HUMAN)
         if outcome.status is ActionRunStatus.VERIFIED:
@@ -156,7 +175,8 @@ class GovernedWriteStepHandler(_StepHandler, ABC):
                               checkpoint=ActionRunCheckpoint(action_run_id=outcome.run_id,
                                                              reference_id=reference))  # fmt: skip
         if outcome.status is ActionRunStatus.AWAITING_APPROVAL:
-            return StepResult(StepOutcome.AWAITING_APPROVAL, output=outcome)
+            return StepResult(StepOutcome.AWAITING_APPROVAL, output=outcome,
+                              approval_id=outcome.approval_id)  # fmt: skip
         if outcome.status is ActionRunStatus.DENIED:
             raise StepDeniedError()
         if outcome.status is ActionRunStatus.FAILED:

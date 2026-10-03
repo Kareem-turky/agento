@@ -12,6 +12,10 @@ from app.config import Settings
 from app.persistence.agent_configurations import (  # noqa: F401 - registers the table
     agent_configurations,
 )
+from app.persistence.approvals import (  # noqa: F401 - registers the tables
+    approval_events,
+    approval_requests,
+)
 from app.persistence.audit import audit_events  # noqa: F401 - registers the table
 from app.persistence.database import PRODUCT_SCHEMA, product_metadata
 from app.persistence.integration_connections import (  # noqa: F401 - registers the table

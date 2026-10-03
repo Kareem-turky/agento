@@ -63,6 +63,7 @@ def test_full_event_is_committed_before_record_returns_and_roundtrips(migrated, 
         "run_reason": "verified",
         "execution_reference_id": "0b0b0b0b-0000-4000-8000-000000000001",
         "verification_code": "ticket_present",
+        "approval_id": None,  # Task 036: approval correlation (none for a LOW_RISK write)
     }  # fmt: skip
     # The row maps back to the exact event.
     assert AuditEvent.model_validate(row) == event
@@ -202,10 +203,11 @@ def test_each_record_is_its_own_committed_transaction(migrated, engine) -> None:
 
 
 def test_live_check_constraints_match_migration_and_metadata(migrated, engine) -> None:
-    """migration 0002 expectation == SQLAlchemy metadata == live PostgreSQL constraints."""
+    """head migrations (0002 + 0007) == SQLAlchemy metadata == live PostgreSQL constraints."""
     from app.persistence import audit_events
     from tests.persistence.test_audit_schema import (
         EXPECTED_0002,
+        head_audit_checks,
         metadata_checks,
         migration,
         migration_checks,
@@ -221,8 +223,9 @@ def test_live_check_constraints_match_migration_and_metadata(migrated, engine) -
         ).all()
     live = {name: parse_check(definition) for name, definition in live_rows}
     assert len(live) == 7
-    assert live == EXPECTED_0002
-    assert live == migration_checks(migration())
+    # 0002 created all seven; Task 036 (0007) replaced two of them with supersets.
+    assert migration_checks(migration()) == EXPECTED_0002
+    assert live == head_audit_checks()
     assert live == metadata_checks(audit_events)
 
 

@@ -19,6 +19,8 @@ KNOWLEDGE_FILES = [*sorted(PACKAGE.glob("*.py")), APP / "persistence" / "knowled
 PROVIDERS = ("shopify", "woocommerce", "whatsapp", "bosta", "shipblu", "meta ads",
              "google ads", "salla", "f" + "ulfly")  # fmt: skip
 # Byte-for-byte as merged before Task 035 (main 5dfcafd): Knowledge changes none of them.
+# Task 036 (human approvals) legitimately changed execution/coordinator.py and
+# workflow_management/engine.py, so their pins were removed (guarded by Task 036 tests).
 PROTECTED = {
     "agents/operations.py": "0e56bb75a6e6decc9285cb8a4774f97696e25ef6359e4cca96d03a5a55a2cfcb",
     "agents/operations_context.py":
@@ -27,8 +29,6 @@ PROTECTED = {
         "21012d7629512df0d064848169c49f38132ddd6f38fa0dc5842ab6d7486501f4",
     "workflows/operations_daily_platform.py":
         "736963930573a5cf10d35e03dce5d432c191d4360079a2a9a3544d2dd692e4a0",
-    "workflow_management/engine.py":
-        "80657cdda0ac9ea30e16e6baf50e3df8384baf5c77525be077fdf645b566aa75",
     "workflow_management/catalog.py":
         "c429500b534a7835dd8b00cfa216825fa8355253fccea9b7198297686ba2f7ad",
     "workflow_management/definitions.py":
@@ -49,8 +49,6 @@ PROTECTED = {
     "governance/permissions.py":
         "e539cfd63f02b731706cd2ed87cf012d658747cba70d4d82f2f1bd67d94c6d78",
     "governance/policy.py": "f2326816bcd83e7e5d765fedc39e930357b397d130a7647f678ad51a73433c41",
-    "execution/coordinator.py":
-        "e733e059c728a4e37547fca0d4b4b608d6c2c5072cea94b8ff79d9e10a02d7c5",
 }  # fmt: skip
 
 
@@ -211,11 +209,12 @@ def test_no_new_dependencies() -> None:
     assert "agno[os,postgres,openai,anthropic]==3.0.11" in project["dependencies"]
 
 
-def test_migrations_0001_to_0005_are_unchanged_and_0006_is_the_single_head() -> None:
+def test_migrations_0001_to_0005_are_unchanged_and_0006_is_the_knowledge_migration() -> None:
     versions = ROOT / "apps/api/migrations/versions"
     names = sorted(p.name for p in versions.glob("*.py"))
-    assert names[-1] == "0006_create_knowledge_context.py" and len(names) == 6
-    text = (versions / names[-1]).read_text()
+    # Task 036 adds 0007 (approvals) on top; 0006 stays the Knowledge migration.
+    assert names[5] == "0006_create_knowledge_context.py" and len(names) == 7
+    text = (versions / names[5]).read_text()
     assert 'revision: str = "0006"' in text and 'down_revision: str | None = "0005"' in text
     for word in ("CASCADE", "DROP SCHEMA", "agno_runtime", "write_commands", "audit_events",
                  "workflow_runs", "agent_configurations", "integration_connections"):  # fmt: skip

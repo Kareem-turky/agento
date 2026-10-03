@@ -93,8 +93,19 @@ KNOWLEDGE_ROUTES = {
     ("POST", "/api/v1/knowledge/document/archive"),
     ("POST", "/api/v1/knowledge/query"),
 }
+# Task 036: human approvals. There is NO create route: approvals are created only
+# internally, by governance (REQUIRE_APPROVAL) through the ExecutionCoordinator.
+APPROVAL_ROUTES = {
+    ("GET", "/api/v1/approvals"),
+    ("GET", "/api/v1/approvals/approval"),
+    ("POST", "/api/v1/approvals/approval/approve"),
+    ("POST", "/api/v1/approvals/approval/reject"),
+    ("POST", "/api/v1/approvals/approval/cancel"),
+    ("POST", "/api/v1/approvals/approval/resume-workflow"),
+}
 MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
-                       "/api/v1/tasks/", "/api/v1/workflows/", "/api/v1/knowledge/")  # fmt: skip
+                       "/api/v1/tasks/", "/api/v1/workflows/", "/api/v1/knowledge/",
+                       "/api/v1/approvals")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -120,6 +131,10 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     # Task 035: Knowledge is exactly these fixed routes (no delete, upload or raw store).
     knowledge = {(m, p) for m, p in routes if p.startswith("/api/v1/knowledge")}
     assert knowledge == KNOWLEDGE_ROUTES
+    # Task 036: approvals are exactly these fixed routes (list, read, decide, continue).
+    approvals = {(m, p) for m, p in routes if p.startswith("/api/v1/approvals")}
+    assert approvals == APPROVAL_ROUTES
+    assert not [p for _, p in approvals if "create" in p or "request" in p]
     assert product == {
         ("GET", "/health"),
         ("POST", "/api/v1/operations/runs"),

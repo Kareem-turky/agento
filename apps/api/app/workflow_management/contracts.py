@@ -73,6 +73,7 @@ class AttemptFinish(BaseModel):
     verification_code: VerificationCode | None = None
     checkpoint: dict[str, JsonValue] | None = None
     completed_at: datetime
+    approval_id: UUID | None = None  # Task 036: the request an awaiting attempt waits for
 
 
 class RunChange(BaseModel):
@@ -107,6 +108,18 @@ class WorkflowRunRepository(Protocol):
         ...
 
     async def advance(self, claim: Claim, change: RunChange) -> WorkflowRunRecord: ...
+
+    async def reopen_for_approval(
+        self, company_id: str, run_id: UUID, step_id: str, approval_id: UUID, token: UUID,
+        now: datetime, lease_expires_at: datetime,
+    ) -> WorkflowRunRecord:  # fmt: skip
+        """Task 036, the ONE way out of ``awaiting_approval``: compare-and-set the run from
+        ``awaiting_approval`` at ``step_id`` (whose latest attempt is ``awaiting_approval``
+        for exactly ``approval_id``) to ``running`` under the caller's new claim, and
+        append ``workflow_approval_resumed`` (one transaction). At most one caller wins:
+        anything else raises ``WorkflowClaimConflictError`` (``LookupError`` if no such
+        run exists for this company)."""
+        ...
 
     async def get_run(self, company_id: str, run_id: UUID) -> WorkflowRunRecord | None: ...
 

@@ -42,6 +42,9 @@ class ProductOperation(StrEnum):
     WORKFLOW_STEP_ATTEMPT = "workflow.step_attempt"
     KNOWLEDGE_QUERY = "knowledge.query"
     KNOWLEDGE_MUTATION = "knowledge.mutation"
+    APPROVAL_REQUEST = "approval.request"
+    APPROVAL_DECISION = "approval.decision"
+    APPROVAL_CONSUME = "approval.consume"
 
 
 class ObservationOutcome(StrEnum):

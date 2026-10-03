@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.agent_management.runtime import AgentGatedOperationsRunService
 from app.agent_management.service import AgentManagementService
+from app.approval_management.service import ApprovalService
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
@@ -38,6 +39,8 @@ from app.observability.services import (
 )
 from app.routes.agents import AGENTS_PATHS, AGENTS_SERVICE_STATE_KEY
 from app.routes.agents import router as agents_router
+from app.routes.approvals import APPROVALS_PATHS, APPROVALS_SERVICE_STATE_KEY
+from app.routes.approvals import router as approvals_router
 from app.routes.capabilities import CAPABILITIES_PATHS
 from app.routes.capabilities import router as capabilities_router
 from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
@@ -85,6 +88,7 @@ def create_app(
     agent_service: AgentManagementService | None = None,
     workflow_service: WorkflowInspectionService | None = None,
     knowledge_service: KnowledgeService | None = None,
+    approval_service: ApprovalService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -122,7 +126,10 @@ def create_app(
     ``knowledge_service`` is Product Knowledge & company operating context (Task 035):
     the versioned CompanyOperatingModel and Knowledge documents with bounded,
     company-scoped retrieval. Without one the Knowledge routes answer 503. No Agent
-    consumes Knowledge in this build."""
+    consumes Knowledge in this build.
+    ``approval_service`` is Product human approval (Task 036): reading requests and the
+    human decisions on them (there is no create route: requests come only from
+    governance). Without one the Approval routes answer 503."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -189,6 +196,7 @@ def create_app(
     setattr(app.state, INTEGRATIONS_SERVICE_STATE_KEY, integration_service)
     setattr(app.state, WORKFLOWS_SERVICE_STATE_KEY, workflow_service)
     setattr(app.state, KNOWLEDGE_SERVICE_STATE_KEY, knowledge_service)
+    setattr(app.state, APPROVALS_SERVICE_STATE_KEY, approval_service)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -211,6 +219,7 @@ def create_app(
     app.include_router(capabilities_router)
     app.include_router(workflows_router)
     app.include_router(knowledge_router)
+    app.include_router(approvals_router)
 
     app.state.agent_os = attach_agent_os(
         app,
@@ -228,6 +237,7 @@ def create_app(
             *CAPABILITIES_PATHS,
             *WORKFLOWS_PATHS,
             *KNOWLEDGE_PATHS,
+            *APPROVALS_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

@@ -56,7 +56,12 @@ from app.workflow_management.records import (
     WorkflowEventRecord,
     WorkflowRunRecord,
 )
-from app.workflow_management.state import ACTIVE_RUN_STATUSES, StepAttemptStatus
+from app.workflow_management.state import (
+    ACTIVE_RUN_STATUSES,
+    StepAttemptStatus,
+    WorkflowEventType,
+    WorkflowRunStatus,
+)
 
 COMPANY = "company-1"
 OTHER_COMPANY = "company-2"
@@ -168,13 +173,44 @@ class InMemoryWorkflowRunRepository:
             if current is None or current["status"] != StepAttemptStatus.RUNNING.value:
                 raise WorkflowRepositoryError()
             done = dict(current)
-            done.update(finish.model_dump(mode="json", exclude={"step_id", "attempt"}))
+            excluded = {"step_id", "attempt"} | ({"approval_id"} if finish.approval_id is None
+                                                 else set())  # same as PostgreSQL  # fmt: skip
+            done.update(finish.model_dump(mode="json", exclude=excluded))
             self._record(StepAttemptRecord, done)
             attempts[key] = done
         # Commit atomically.
         self.runs[claim.run_id] = updated
         self.attempts = attempts
         self._append(claim.run_id, claim.company_id, change.events)
+        return record
+
+    async def reopen_for_approval(
+        self, company_id: str, run_id: UUID, step_id: str, approval_id: UUID, token: UUID,
+        now: datetime, lease_expires_at: datetime,
+    ) -> WorkflowRunRecord:  # fmt: skip
+        """Task 036: the explicit awaiting_approval -> running continuation (CAS)."""
+        self._maybe_fail("reopen")
+        row = self.runs.get(run_id)
+        if row is None or row["company_id"] != company_id:
+            raise LookupError("workflow run not found")
+        latest = max((a for k, a in self.attempts.items()
+                      if k[0] == run_id and a["step_id"] == step_id),
+                     key=lambda a: a["attempt"], default=None)  # fmt: skip
+        if (row["status"] != WorkflowRunStatus.AWAITING_APPROVAL.value
+                or row["current_step_id"] != step_id or latest is None
+                or latest["status"] != StepAttemptStatus.AWAITING_APPROVAL.value
+                or latest.get("approval_id") != str(approval_id)):  # fmt: skip
+            raise WorkflowClaimConflictError()
+        updated = dict(row)
+        updated.update(status=WorkflowRunStatus.RUNNING.value, failure_code=None,
+                       completed_at=None, lease_owner=str(token),
+                       lease_expires_at=lease_expires_at.isoformat(),
+                       updated_at=now.isoformat())  # fmt: skip
+        record = self._record(WorkflowRunRecord, updated)
+        self.runs[run_id] = updated
+        self._append(run_id, company_id, (NewWorkflowEvent(
+            event_type=WorkflowEventType.WORKFLOW_APPROVAL_RESUMED, step_id=step_id,
+            status=WorkflowRunStatus.RUNNING, occurred_at=now),))  # fmt: skip
         return record
 
     async def get_run(self, company_id: str, run_id: UUID) -> WorkflowRunRecord | None:

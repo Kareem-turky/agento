@@ -18,14 +18,25 @@
     read-only Step (another attempt may follow, within ``max_attempts``), and
     ``requires_human`` for a governed write (its effect may exist: never retried).
 
+    resume_after_approval(trusted request, run_id, approval_id) (Task 036): the ONLY way
+    out of ``awaiting_approval``. Only the run's own requester, only when the run stopped
+    at a governed write Step whose latest attempt awaits exactly ``approval_id``. A
+    repository compare-and-set reopens the run (one winner; ``workflow_approval_resumed``),
+    completed Steps are reloaded (never re-run) and the Step continues in ONE new attempt
+    carrying the approval id: the coordinator re-checks governance and consumes the
+    approval once for the exact same subject (the stored validated input yields the same
+    action input). The approval wait is not a retry: it consumes no retry budget and never
+    loosens write retry rules (a governed write still runs at most once per approval).
+
 Failure semantics (never improvised by a model; no LLM is involved anywhere here):
 
 * read-only Step: an unexpected error or timeout is retried immediately while attempts
   remain (each attempt is a durable row); a denial, a confirmed failure, a verification
   failure or an invalid checkpoint stops the run ``failed``;
 * governed write Step: runs once. Approval required -> ``awaiting_approval`` (stops; no
-  later Step, no auto-approval). An uncertain outcome, a timeout, an error, a failed
-  verification or an invalid checkpoint -> ``requires_human``;
+  later Step, no auto-approval; the attempt records the approval id it awaits). An
+  uncertain outcome, a timeout, an error, a failed verification or an invalid checkpoint
+  -> ``requires_human``;
 * durable state not guaranteed (any repository failure) -> stop immediately
   (``WorkflowUnavailableError``); a lost claim -> stop without writing
   (``WorkflowLeaseConflictError``).
@@ -148,6 +159,7 @@ class _Decision:
     verification_code: VerificationCode | None
     retryable: bool = False
     stop_code: WorkflowFailureCode | None = None  # the run's code if the run stops here
+    approval_id: UUID | None = None  # Task 036: the request an awaiting attempt waits for
 
 
 class _StopRun(Exception):
@@ -332,6 +344,74 @@ class WorkflowEngine:
             obs.finish(_run_outcome(result), _run_details(result))
             return result
 
+    async def resume_after_approval(
+        self, request: RequestContext, run_id: UUID, approval_id: UUID
+    ) -> WorkflowRunResult:
+        """Continue a run stopped ``awaiting_approval`` once its approval was granted
+        (explicit continuation; see the module docstring)."""
+        with observe(self._observability, ProductOperation.WORKFLOW_RUN,
+                     getattr(request, "request_id", None)) as obs:  # fmt: skip
+            try:
+                actor = self._trusted_actor(request, None)
+                if not isinstance(run_id, UUID) or not isinstance(approval_id, UUID):
+                    raise WorkflowRunNotFoundError()
+                try:
+                    record = await self._repository.get_run(actor.company_id, run_id)
+                    attempts = await self._repository.list_attempts(actor.company_id, run_id)
+                except WorkflowRepositoryError:
+                    raise WorkflowUnavailableError() from None
+                if record is None:
+                    raise WorkflowRunNotFoundError()
+                if (actor.actor_id, actor.actor_type) != (record.actor_id, record.actor_type):
+                    raise WorkflowAccessDeniedError()  # only the requester continues it
+                definition = self._catalog.get(record.workflow_id)
+                model = self._registry.input_model(record.workflow_id)
+                if definition is None or model is None:
+                    raise WorkflowUnavailableError()
+                step = next((s for s in definition.steps
+                             if s.step_id == record.current_step_id), None)  # fmt: skip
+                waiting = sorted((a for a in attempts if step and a.step_id == step.step_id),
+                                 key=lambda a: a.attempt)  # fmt: skip
+                if (
+                    record.status is not R.AWAITING_APPROVAL
+                    or definition.version != record.workflow_version
+                    or step is None
+                    or step.side_effect is not StepSideEffect.GOVERNED_WRITE
+                    or not waiting
+                    or waiting[-1].status is not S.AWAITING_APPROVAL
+                    or waiting[-1].approval_id != approval_id
+                ):
+                    raise WorkflowNotResumableError()
+                try:
+                    validated = model.model_validate_json(canonical_json(record.input_state))
+                except ValidationError:
+                    raise WorkflowNotResumableError() from None
+                token, now = self._new_id(), self._now()
+                try:
+                    reopened = await self._repository.reopen_for_approval(
+                        record.company_id, record.run_id, step.step_id, approval_id, token,
+                        now, now + self._margin,
+                    )  # fmt: skip
+                except LookupError:
+                    raise WorkflowRunNotFoundError() from None
+                except WorkflowClaimConflictError:
+                    raise WorkflowLeaseConflictError() from None
+                except WorkflowRepositoryError:
+                    raise WorkflowUnavailableError() from None
+                claim = Claim(run_id=reopened.run_id, company_id=reopened.company_id, token=token)
+                scope = ActionScope(company_id=record.company_id, store_id=record.store_id)
+                run = _Run(self, definition, reopened, claim, request, scope, actor, validated)
+                self._log("workflow_approval_resumed", run, step.step_id)
+                try:
+                    result = await self._steps(run, record.company_id, record.run_id)
+                except _StopRun as stop:
+                    result = stop.result
+            except Exception as error:
+                obs.finish(_error_outcome(error))
+                raise
+            obs.finish(_run_outcome(result), _run_details(result))
+            return result
+
     # ----- validation -------------------------------------------------------------------------
 
     def _now(self) -> datetime:
@@ -417,19 +497,23 @@ class WorkflowEngine:
                                          occurred_at=self._now()),),
             ))  # fmt: skip
             self._log("workflow_started" if not resumed else "workflow_resumed", run)
-            try:
-                attempts = await self._repository.list_attempts(record.company_id, record.run_id)
-            except WorkflowRepositoryError:
-                raise WorkflowUnavailableError() from None
-            steps = definition.steps
-            for index, step in enumerate(steps):
-                next_step = steps[index + 1].step_id if index + 1 < len(steps) else None
-                previous = sorted((a for a in attempts if a.step_id == step.step_id),
-                                  key=lambda a: a.attempt)  # fmt: skip
-                await self._run_step(run, step, previous, next_step)
-            return run.result(R.SUCCEEDED, None)
+            return await self._steps(run, record.company_id, record.run_id)
         except _StopRun as stop:
             return stop.result
+
+    async def _steps(self, run: _Run, company_id: str, run_id: UUID) -> WorkflowRunResult:
+        """Every Step IN ORDER from durable state (completed Steps are never re-run)."""
+        try:
+            attempts = await self._repository.list_attempts(company_id, run_id)
+        except WorkflowRepositoryError:
+            raise WorkflowUnavailableError() from None
+        steps = run.definition.steps
+        for index, step in enumerate(steps):
+            next_step = steps[index + 1].step_id if index + 1 < len(steps) else None
+            previous = sorted((a for a in attempts if a.step_id == step.step_id),
+                              key=lambda a: a.attempt)  # fmt: skip
+            await self._run_step(run, step, previous, next_step)
+        return run.result(R.SUCCEEDED, None)
 
     async def _run_step(
         self,
@@ -449,10 +533,22 @@ class WorkflowEngine:
             if isinstance(checkpoint, BaseModel):
                 run.checkpoints[step.step_id] = checkpoint
             return
-        if any(a.status not in (S.RUNNING, S.FAILED, S.TIMED_OUT) for a in previous):
+        allowed = (S.RUNNING, S.FAILED, S.TIMED_OUT, S.AWAITING_APPROVAL)
+        if any(a.status not in allowed for a in previous):
             # A stopped attempt can only belong to a terminal run: never continue past it.
             await self._terminate(run, R.FAILED, F.WORKFLOW_UNAVAILABLE, step.step_id)
         used = len(previous)
+        awaiting = previous[-1] if previous and previous[-1].status is S.AWAITING_APPROVAL else None
+        if awaiting is not None:
+            # Task 036: this run was reopened by the explicit approval continuation. ONE new
+            # attempt executes under the awaited approval (never a retry of the write).
+            write = step.side_effect is StepSideEffect.GOVERNED_WRITE
+            if not write or awaiting.approval_id is None:
+                await self._terminate(run, R.FAILED, F.WORKFLOW_UNAVAILABLE, step.step_id)
+            if await self._attempt(run, step, handler, used + 1, next_step,
+                                   approval_id=awaiting.approval_id):  # fmt: skip
+                return
+            await self._terminate(run, R.FAILED, F.WORKFLOW_UNAVAILABLE, step.step_id)
         orphan = previous[-1] if previous and previous[-1].status is S.RUNNING else None
         if orphan is not None:
             await self._close_orphan(run, step, orphan, attempts_left=used < step.max_attempts)
@@ -483,6 +579,8 @@ class WorkflowEngine:
         handler: StepHandler,
         attempt: int,
         next_step: str | None,
+        *,
+        approval_id: UUID | None = None,
     ) -> bool:
         """Run one attempt. True: the Step succeeded. False: retry. Stops raise."""
         start = self._now()
@@ -490,6 +588,7 @@ class WorkflowEngine:
             run_id=run.record.run_id, company_id=run.record.company_id, step_id=step.step_id,
             attempt=attempt, handler_id=step.handler_id, status=S.RUNNING, failure_code=None,
             verification_code=None, checkpoint=None, started_at=start, completed_at=None,
+            approval_id=approval_id,
         )  # fmt: skip
         await run.advance(RunChange(
             expected_status=R.RUNNING, status=R.RUNNING, current_step_id=step.step_id,
@@ -503,6 +602,7 @@ class WorkflowEngine:
             workflow_version=run.definition.version, step_id=step.step_id, attempt=attempt,
             request_id=run.request.request_id, actor=run.actor, company_id=run.record.company_id,
             store_id=run.record.store_id, request=run.request, scope=run.scope,
+            approval_id=approval_id,
         )  # fmt: skip
         attempts_left = attempt < step.max_attempts
         with observe(self._observability, ProductOperation.WORKFLOW_STEP_ATTEMPT,
@@ -546,8 +646,14 @@ class WorkflowEngine:
                                                                         StepOutcome):  # fmt: skip
                     raise TypeError("invalid step result")
                 if result.outcome is StepOutcome.AWAITING_APPROVAL:
+                    if context.approval_id is not None:
+                        # An approval continuation never requests a second decision.
+                        code = F.STEP_OUTCOME_UNCERTAIN
+                        return _Decision(S.REQUIRES_HUMAN, code, None,
+                                         stop_code=code), None, None  # fmt: skip
                     return _Decision(S.AWAITING_APPROVAL, F.APPROVAL_REQUIRED, None,
-                                     stop_code=F.APPROVAL_REQUIRED), None, None  # fmt: skip
+                                     stop_code=F.APPROVAL_REQUIRED,
+                                     approval_id=result.approval_id), None, None  # fmt: skip
                 if result.outcome is StepOutcome.REQUIRES_HUMAN:
                     return _Decision(S.REQUIRES_HUMAN, F.STEP_OUTCOME_UNCERTAIN, None,
                                      stop_code=F.STEP_OUTCOME_UNCERTAIN), None, None  # fmt: skip
@@ -617,7 +723,8 @@ class WorkflowEngine:
         finish = AttemptFinish(step_id=step.step_id, attempt=attempt, status=status,
                                failure_code=decision.failure_code,
                                verification_code=decision.verification_code,
-                               checkpoint=stored, completed_at=now)  # fmt: skip
+                               checkpoint=stored, completed_at=now,
+                               approval_id=decision.approval_id)  # fmt: skip
         if status is S.SUCCEEDED:
             event(E.STEP_SUCCEEDED, status=status)
             done = next_step is None

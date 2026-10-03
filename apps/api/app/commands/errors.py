@@ -53,3 +53,10 @@ class WriteCommandStoreError(WriteCommandError):
     """
 
     code = "command_store_unavailable"
+
+
+class ApprovalContinuationRefusedError(WriteCommandError):
+    """Task 036: the approval id presented to continue an awaiting command is not the one
+    that command is awaiting. Nothing ran and the command is unchanged."""
+
+    code = "approval_continuation_refused"

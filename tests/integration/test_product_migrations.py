@@ -26,7 +26,7 @@ def agno_snapshot(engine: sa.Engine) -> dict[str, list]:
 
 def test_single_linear_history_with_one_head() -> None:
     script = ScriptDirectory.from_config(alembic_config_for_scripts())
-    assert script.get_heads() == ["0006"]
+    assert script.get_heads() == ["0007"]
     (base,) = script.get_bases()
     assert base == "0001"
     assert script.get_revision("0002").down_revision == "0001"
@@ -34,8 +34,9 @@ def test_single_linear_history_with_one_head() -> None:
     assert script.get_revision("0004").down_revision == "0003"
     assert script.get_revision("0005").down_revision == "0004"
     assert script.get_revision("0006").down_revision == "0005"
+    assert script.get_revision("0007").down_revision == "0006"
     assert [r.revision for r in script.walk_revisions()] == [
-        "0006", "0005", "0004", "0003", "0002", "0001",
+        "0007", "0006", "0005", "0004", "0003", "0002", "0001",
     ]  # fmt: skip
 
 
@@ -53,6 +54,9 @@ KNOWLEDGE_TABLES = {
     "company_operating_model_versions", "company_operating_model_current",
     "knowledge_documents", "knowledge_document_versions", "knowledge_chunks",
 }  # fmt: skip
+APPROVAL_TABLES = {"approval_requests", "approval_events"}
+# Task 036 adds a nullable approval correlation column to these existing tables.
+APPROVAL_CORRELATED = ("write_commands", "audit_events", "workflow_step_runs")
 
 
 _PRIOR_TABLES = (*PRESERVED, *sorted(WORKFLOW_TABLES))
@@ -95,7 +99,8 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
     agno_before = agno_snapshot(engine)
     before_workflows = {"alembic_version", *PRESERVED}
     before_knowledge = before_workflows | WORKFLOW_TABLES  # the prior 7 Product tables
-    head = before_knowledge | KNOWLEDGE_TABLES
+    before_approvals = before_knowledge | KNOWLEDGE_TABLES
+    head = before_approvals | APPROVAL_TABLES
 
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
@@ -123,8 +128,40 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
             "0000000000ac', 1, 'roundtrip-company', 'T', 'text/plain', 'B', repeat('b', 64), "
             "'roundtrip-actor', now())"
         ))  # fmt: skip
+        # An audit row written under the Task 036 vocabulary (kept by the downgrade).
+        connection.execute(sa.text(
+            "INSERT INTO product.audit_events (event_id, run_id, request_id, occurred_at, "
+            "event_type, action_name, company_id, channel, run_status, run_reason, "
+            "approval_id) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), "
+            "now(), 'approval_refused', 'test.budget.update', 'roundtrip-company', 'api', "
+            "'failed', 'approval_unavailable', gen_random_uuid())"
+        ))  # fmt: skip
     rows_before = _counts(engine)
     assert rows_before["agent_configurations"] >= 1 and rows_before["workflow_runs"] >= 1
+    columns = {t: {c["name"] for c in sa.inspect(engine).get_columns(t, schema="product")}
+               for t in APPROVAL_CORRELATED}  # fmt: skip
+    assert all("approval_id" in c for c in columns.values())
+
+    command.downgrade(config, "-1")
+    # 0007 -> 0006 drops only the Task 036 schema (approval tables, trigger function and
+    # correlation columns). Every prior row stays, including audit history written under
+    # the newer vocabulary: the narrower CHECK is restored NOT VALID instead.
+    assert tables(engine, "product") == before_approvals
+    assert _counts(engine) == rows_before
+    assert _version(engine) == "0006"
+    assert _leftovers(engine, "%approval%", "approval_events_append_only") == (0, 0)
+    for table in APPROVAL_CORRELATED:
+        names = {c["name"] for c in sa.inspect(engine).get_columns(table, schema="product")}
+        assert "approval_id" not in names, table
+    with engine.connect() as connection:
+        kept = connection.execute(sa.text(
+            "SELECT count(*) FROM product.audit_events WHERE event_type = 'approval_refused'"
+        )).scalar_one()  # fmt: skip
+        validated = dict(connection.execute(sa.text(
+            "SELECT conname, convalidated FROM pg_constraint WHERE conname IN "
+            "('ck_audit_events_event_type', 'ck_audit_events_run_reason')")).all())  # fmt: skip
+    assert kept >= 1 and validated == {"ck_audit_events_event_type": False,
+                                       "ck_audit_events_run_reason": False}  # fmt: skip
 
     command.downgrade(config, "-1")
     # 0006 -> 0005 drops only the Knowledge tables (with their trigger function): the
@@ -146,7 +183,7 @@ def test_upgrade_downgrade_reupgrade_roundtrip(migrated: str, engine: sa.Engine)
     command.upgrade(config, "head")
     assert tables(engine, "product") == head
     assert _counts(engine, PRESERVED) == {t: rows_before[t] for t in PRESERVED}
-    assert _version(engine) == "0006"
+    assert _version(engine) == "0007"
     with engine.begin() as connection:
         connection.execute(sa.text(
             "DELETE FROM product.agent_configurations WHERE company_id = 'roundtrip-company'"
@@ -246,6 +283,7 @@ def test_schema_constraints(migrated: str, engine: sa.Engine) -> None:
         "command_id", "company_id", "actor_id", "store_id", "action_name",
         "idempotency_key_hash", "request_fingerprint", "status", "reason", "action_run_id",
         "execution_reference_id", "audit_complete", "created_at", "updated_at",
+        "approval_id",  # Task 036: correlation only (never parameters)
     }  # fmt: skip
     assert columns["store_id"]["nullable"] is True
     assert columns["created_at"]["type"].timezone is True
@@ -335,7 +373,10 @@ def test_migration_0005_vocabularies_match_the_contracts() -> None:
     assert set(module.TERMINAL_RUN_STATUSES) == {s.value for s in TERMINAL_RUN_STATUSES}
     assert module.STEP_STATUSES == tuple(s.value for s in StepAttemptStatus)
     assert module.FAILURE_CODES == tuple(c.value for c in WorkflowFailureCode)
-    assert module.EVENT_TYPES == tuple(e.value for e in WorkflowEventType)
+    # 0005 stays frozen; Task 036 (0007) appends ``workflow_approval_resumed``.
+    assert module.EVENT_TYPES == tuple(
+        e.value for e in WorkflowEventType if e is not WorkflowEventType.WORKFLOW_APPROVAL_RESUMED
+    )
     assert module.VERIFICATION_CODES == tuple(c.value for c in VerificationCode)
     assert (module.MAX_INPUT_BYTES, module.MAX_CHECKPOINT_BYTES) == (
         MAX_INPUT_BYTES,
@@ -370,3 +411,60 @@ def test_workflow_runtime_schema(migrated: str, engine: sa.Engine) -> None:
         for t in names
         if any(w in t for w in ("definition", "skill", "task", "commerce", "order", "report"))
     ]
+
+
+# SHA-256 of migration 0006 as merged in Task 035: it must never change either.
+MIGRATION_0006_SHA256 = "ca308ddd3f2f63f8f3b171a5643da2d6832da7c4c712c2f3338174cc53a59b2a"
+
+
+def test_migration_0006_is_byte_for_byte_unchanged() -> None:
+    import hashlib
+
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0006_create_knowledge_context.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == MIGRATION_0006_SHA256
+
+
+def test_migration_0007_vocabularies_match_the_contracts() -> None:
+    """0007 freezes the approval vocabularies (it never imports app enums)."""
+    import importlib.util
+
+    from app.approval_management.models import MAX_NOTE_CHARS
+    from app.approval_management.state import ApprovalEventType, ApprovalStatus
+    from app.execution import ActionRunReason, ApprovalOutcome, ApprovalSource, AuditEventType
+    from app.workflow_management.state import WorkflowEventType
+    from tests.integration.product_db import ROOT
+
+    path = ROOT / "apps" / "api" / "migrations" / "versions" / "0007_create_approvals.py"
+    spec = importlib.util.spec_from_file_location("migration_0007", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert (module.revision, module.down_revision) == ("0007", "0006")
+    assert module.STATUSES == tuple(s.value for s in ApprovalStatus)
+    assert module.EVENT_TYPES == tuple(e.value for e in ApprovalEventType)
+    assert module.SOURCES == tuple(s.value for s in ApprovalSource)
+    assert module.OUTCOMES == tuple(o.value for o in ApprovalOutcome)
+    assert module.RISKS == ("medium_risk", "high_risk")
+    assert module.MAX_NOTE_CHARS == MAX_NOTE_CHARS
+    assert set(module.AUDIT_EVENT_TYPES) == {e.value for e in AuditEventType}
+    assert set(module.RUN_REASONS) == {r.value for r in ActionRunReason}
+    assert module.WORKFLOW_EVENT_TYPES == tuple(e.value for e in WorkflowEventType)
+
+
+def test_approval_schema(migrated: str, engine: sa.Engine) -> None:
+    inspector = sa.inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("approval_requests", schema="product")}
+    assert {"subject_fingerprint", "summary", "status", "expires_at", "consumed_at"} <= columns
+    for column in columns:
+        for word in ("parameter", "payload", "input", "raw", "body", "prompt", "secret",
+                     "token", "password", "credential", "idempotency"):  # fmt: skip
+            assert word not in column, column
+    assert inspector.get_pk_constraint("approval_events", schema="product")[
+        "constrained_columns"
+    ] == ["approval_id", "sequence"]
+    triggers = {r[0] for r in engine.connect().execute(sa.text(
+        "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND "
+        "tgrelid = 'product.approval_events'::regclass"))}  # fmt: skip
+    assert triggers == {"approval_events_append_only"}

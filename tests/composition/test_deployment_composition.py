@@ -264,6 +264,8 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
     assert set(vars(composition)) == {
         "default_model", "operations_service", "operations_ticket_service",
         "operations_ticket_query_service", "daily_operations_service", "close", "discard",
+        # Task 036: the Workflow engine, typed only as the narrow approval-continuation port.
+        "approval_workflow_resumer",
     }  # fmt: skip
 
     # The engine is released exactly once, however often close is called.

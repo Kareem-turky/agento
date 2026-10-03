@@ -26,6 +26,23 @@ The idempotency key is not authorization: authority comes only from the trusted
 request and scope, and governance still decides every NEW command. A replay returns
 the original outcome even if the actor's permissions changed since; a new attempt
 needs a new key. Nothing here retries, resumes or takes over an IN_PROGRESS command.
+
+Human approval (Task 036). An action that needs a human decision ends AWAITING_APPROVAL
+with the ``approval_id`` it awaits (stored on the command; no parameters are stored).
+That is the one resumable state: the requester resubmits the SAME request (same key,
+same parameters, same trusted scope: the fingerprint proves it) WITH that approval id:
+
+    REPLAY of AWAITING_APPROVAL
+      no approval_id          -> the stored awaiting state, nothing runs
+      another approval_id     -> ApprovalContinuationRefusedError, nothing changes
+      the awaited approval_id -> store.resume_after_approval (compare-and-set: at most
+                                 ONE caller continues) -> ExecutionCoordinator.run with
+                                 the approval id (governance re-checked, the approval
+                                 consumed once for this exact subject) -> complete
+      (a caller that loses the race replays the durable state)
+
+The approval id is authorization metadata: it is never part of the request fingerprint.
+Every other terminal state replays exactly as before; VERIFIED never runs again.
 """
 
 from collections.abc import Callable, Mapping
@@ -36,6 +53,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.commands.errors import (
     AnonymousWriteCommandError,
+    ApprovalContinuationRefusedError,
     IdempotencyConflictError,
     InvalidIdempotencyKeyError,
     ReadActionNotAllowedError,
@@ -61,7 +79,7 @@ from app.commands.models import (
 )
 from app.commands.store import WriteCommandStore
 from app.context.models import RequestContext
-from app.execution import ActionRun, ExecutionCoordinator
+from app.execution import ActionRun, ApprovalSource, ApprovalSourceRef, ExecutionCoordinator
 from app.governance import ActionCatalog, ActionIntent, ActionRisk, ActionScope
 
 _KEY = TypeAdapter(IdempotencyKey)
@@ -75,6 +93,7 @@ def _outcome_from_run(run: ActionRun) -> WriteCommandOutcome:
         action_run_id=run.run_id,
         execution_reference_id=execution.reference_id if execution else None,
         audit_complete=run.audit_complete,
+        approval_id=run.approval_id,
     )
 
 
@@ -94,6 +113,7 @@ def _result(record: WriteCommandRecord, *, replayed: bool) -> WriteCommandResult
         audit_complete=record.audit_complete,
         replayed=replayed,
         persistence_complete=True,
+        approval_id=record.approval_id,
     )
 
 
@@ -118,10 +138,13 @@ class WriteCommandCoordinator:
         intent: ActionIntent,
         parameters: Mapping[str, Any],
         idempotency_key: str,
+        *,
+        approval_id: UUID | None = None,
     ) -> WriteCommandResult:
         """Run a side-effect-capable action at most once per idempotency key.
 
-        ``request`` and ``scope`` are trusted; ``intent`` and ``parameters`` are not.
+        ``request`` and ``scope`` are trusted; ``intent``, ``parameters`` and
+        ``approval_id`` are not (an approval id grants nothing by itself).
         Raises a ``WriteCommandError`` subclass for rejections before the claim, for a
         conflict, and for a failed claim (in all those cases nothing was executed).
         """
@@ -162,13 +185,52 @@ class WriteCommandCoordinator:
         if record is None:  # guaranteed by ClaimResult; kept for type narrowing
             raise WriteCommandStoreError()
         if claimed.outcome is ClaimOutcome.REPLAY:
+            if record.status is CommandStatus.AWAITING_APPROVAL and approval_id is not None:
+                return await self._continue(request, scope, definition.name, snapshot, record,
+                                            approval_id)  # fmt: skip
             return _result(record, replayed=True)
         if record.command_id != claim.command_id:
             raise WriteCommandStoreError()  # a NEW claim must be the one just made
 
         # The IN_PROGRESS claim is committed: only now may a side effect happen.
-        outcome = await self._execute(request, scope, definition.name, snapshot)
+        outcome = await self._execute(request, scope, definition.name, snapshot,
+                                      record.command_id, approval_id)  # fmt: skip
         return await self._complete(record, outcome)
+
+    async def _continue(
+        self,
+        request: RequestContext,
+        scope: ActionScope,
+        action_name: str,
+        snapshot: dict[str, Any],
+        record: WriteCommandRecord,
+        approval_id: UUID,
+    ) -> WriteCommandResult:
+        """Continue an AWAITING_APPROVAL command with the approval it awaits (once)."""
+        if record.approval_id is None or record.approval_id != approval_id:
+            raise ApprovalContinuationRefusedError()
+        try:
+            resumed = await self._store.resume_after_approval(
+                record.command_id, record.company_id, record.actor_id, approval_id
+            )
+            if resumed is not None and (
+                not isinstance(resumed, WriteCommandRecord)
+                or resumed.command_id != record.command_id
+                or resumed.status is not CommandStatus.IN_PROGRESS
+            ):
+                raise WriteCommandStoreError()
+            if resumed is None:  # another caller continued it: replay the durable state
+                current = await self._store.get(record.command_id)
+                if not isinstance(current, WriteCommandRecord):
+                    raise WriteCommandStoreError()
+                return _result(current, replayed=True)
+        except WriteCommandStoreError:
+            raise
+        except Exception:  # noqa: BLE001 - no continuation claim, no execution
+            raise WriteCommandStoreError() from None
+        outcome = await self._execute(request, scope, action_name, snapshot, record.command_id,
+                                      approval_id)  # fmt: skip
+        return await self._complete(resumed, outcome)
 
     async def _claim(self, claim: WriteCommandClaim) -> ClaimResult:
         try:
@@ -187,11 +249,16 @@ class WriteCommandCoordinator:
         scope: ActionScope,
         action_name: str,
         snapshot: dict[str, Any],
+        command_id: UUID,
+        approval_id: UUID | None,
     ) -> WriteCommandOutcome:
         """Exactly one ExecutionCoordinator call, on the fingerprinted snapshot. Never
         retried, whatever happens."""
+        source = ApprovalSourceRef(kind=ApprovalSource.WRITE_COMMAND, command_id=command_id)
         try:
-            run = await self._executor.run(request, ActionIntent(name=action_name), scope, snapshot)
+            run = await self._executor.run(request, ActionIntent(name=action_name), scope,
+                                           snapshot, approval_id=approval_id,
+                                           source=source)  # fmt: skip
             if not isinstance(run, ActionRun):
                 raise TypeError("invalid action run")
             return _outcome_from_run(run)
@@ -221,5 +288,6 @@ class WriteCommandCoordinator:
                 audit_complete=outcome.audit_complete,
                 replayed=False,
                 persistence_complete=False,
+                approval_id=outcome.approval_id,
             )
         return _result(stored, replayed=False)
