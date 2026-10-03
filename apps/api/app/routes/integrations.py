@@ -28,10 +28,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -64,6 +61,7 @@ from app.integration_management.service import (
     IntegrationSecretStorageUnavailableError,
     InvalidIntegrationConfigError,
 )
+from app.routes.validation import SafeValidationRoute  # re-exported to the other routers
 
 INTEGRATIONS_SERVICE_STATE_KEY = "integration_management_service"
 INTEGRATIONS_CATALOG_PATH = "/api/v1/integrations/catalog"
@@ -84,31 +82,6 @@ INTEGRATIONS_PATHS = (
 )
 TAG = "integrations"
 MAX_FIELDS = 32
-
-
-class SafeValidationRoute(APIRoute):
-    """422 answers that never contain submitted values (``input``/``ctx`` dropped)."""
-
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        handler = super().get_route_handler()
-
-        async def safe_handler(request: Request) -> Response:
-            try:
-                return await handler(request)
-            except RequestValidationError as error:
-                detail = [
-                    {
-                        "type": e.get("type"),
-                        "loc": [str(p) for p in e.get("loc", ())],
-                        "msg": e.get("msg"),
-                    }
-                    for e in error.errors()
-                ]
-                return JSONResponse(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": detail}
-                )
-
-        return safe_handler
 
 
 router = APIRouter(tags=[TAG], route_class=SafeValidationRoute)

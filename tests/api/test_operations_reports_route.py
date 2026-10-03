@@ -213,3 +213,36 @@ def test_product_and_agentos_credentials_stay_separate(settings, runtime_setting
     excluded = app.state.agent_os.authorization_config.excluded_route_paths
     assert PATH in excluded and not [p for p in excluded if any(c in p for c in "*?[{")]
     assert UUID(SOUTH)
+
+
+# ----- safe validation answers (SafeValidationRoute) ---------------------------------------------
+
+SAFE_KEYS = {"type", "loc", "msg"}
+MARKER = "SUBMITTED-REPORT-MARKER-4b2e1d"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"store_id": MARKER}, {"store_id": SOUTH, "business_date": MARKER},
+     {"store_id": SOUTH, "business_date": f"2026-02-30{MARKER}"}],
+)  # fmt: skip
+def test_malformed_parameters_never_echo_the_submitted_value(
+    settings, runtime_settings, params
+) -> None:
+    service = FakeService()
+    with TestClient(build(settings, runtime_settings, service)) as client:
+        response = client.get(PATH, params=params)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == SAFE_KEYS for entry in detail)
+    assert MARKER not in response.text and '"input"' not in response.text
+    assert service.calls == []
+
+
+def test_unsupported_parameters_keep_their_fixed_answer(settings, runtime_settings) -> None:
+    service = FakeService()
+    with TestClient(build(settings, runtime_settings, service)) as client:
+        response = client.get(PATH, params={"store_id": SOUTH, "company_id": MARKER})
+    assert (response.status_code, response.json()) == (
+        422, {"detail": "Unsupported query parameters"})  # fmt: skip
+    assert service.calls == []

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
+from app.routes.validation import SafeValidationRoute
 from app.services.operations import (
     OperationsAgentDisabledError,
     OperationsRunService,
@@ -33,7 +34,7 @@ OPERATIONS_SERVICE_STATE_KEY = "operations_service"
 OPERATIONS_RUNS_PATH = "/api/v1/operations/runs"
 MAX_MESSAGE_LENGTH = 8000
 
-router = APIRouter(tags=["operations"])
+router = APIRouter(tags=["operations"], route_class=SafeValidationRoute)
 
 
 class OperationsRunRequest(BaseModel):

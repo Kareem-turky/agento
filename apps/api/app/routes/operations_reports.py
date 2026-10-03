@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
+from app.routes.validation import SafeValidationRoute
 from app.services.operations_reports import (
     DailyOperationsForbiddenError,
     DailyOperationsReport,
@@ -35,7 +36,7 @@ OPERATIONS_DAILY_REPORT_PATH = "/api/v1/operations/reports/daily"
 ALLOWED_QUERY_PARAMETERS = frozenset({"store_id", "business_date"})
 UNAVAILABLE = "Daily operations report unavailable"
 
-router = APIRouter(tags=["operations"])
+router = APIRouter(tags=["operations"], route_class=SafeValidationRoute)
 
 
 class DailyOperationsReportResponse(BaseModel):

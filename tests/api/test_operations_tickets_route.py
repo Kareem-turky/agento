@@ -356,3 +356,32 @@ def test_invalid_service_results_fail_closed(settings, runtime_settings, bad) ->
     response = post(build(settings, runtime_settings, service), body())
     assert response.status_code == 503
     assert "FAKE-TICKET-ID" not in response.text and "Misleading" not in response.text
+
+
+# ----- safe validation answers (SafeValidationRoute) ---------------------------------------------
+
+SAFE_KEYS = {"type", "loc", "msg"}
+TITLE_MARKER, TEXT_MARKER = "SUBMITTED-TITLE-MARKER-91c2", "SUBMITTED-TEXT-MARKER-5d7e"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        body(title=TITLE_MARKER + "x" * 161, description=TEXT_MARKER),
+        body(title=TITLE_MARKER, description=TEXT_MARKER + "x" * 4001),
+        {"store_id": STORE, "title": TITLE_MARKER},  # description missing: the whole body
+        body(title=TITLE_MARKER, description=TEXT_MARKER, unknown=TEXT_MARKER),
+        body(title=TITLE_MARKER, description=TEXT_MARKER, store_id=TEXT_MARKER),
+    ],
+)
+def test_invalid_tickets_never_echo_the_submitted_values_or_the_key(
+    settings, runtime_settings, payload
+) -> None:
+    service = FakeTicketService()
+    response = post(build(settings, runtime_settings, service), payload)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == SAFE_KEYS for entry in detail)
+    for value in (TITLE_MARKER, TEXT_MARKER, KEY, '"input"', '"ctx"'):
+        assert value not in response.text
+    assert service.calls == []  # no command, so no WriteCommand and no audit lifecycle

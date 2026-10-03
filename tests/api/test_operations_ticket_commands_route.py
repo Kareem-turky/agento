@@ -236,3 +236,19 @@ def test_none_result_fails_closed(settings, runtime_settings) -> None:
             return None
 
     assert get(build(settings, runtime_settings, ReturnsNone())).status_code == 503
+
+
+# ----- safe validation answers (SafeValidationRoute) ---------------------------------------------
+
+MARKER = "SUBMITTED-COMMAND-MARKER-0e8f"
+
+
+@pytest.mark.parametrize("command_id", [MARKER, f"{COMMAND}{MARKER}", f"{MARKER}-{'x' * 300}"])
+def test_malformed_command_ids_are_never_echoed(settings, runtime_settings, command_id) -> None:
+    service = FakeQueryService()
+    response = get(build(settings, runtime_settings, service), command_id=command_id)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == {"type", "loc", "msg"} for entry in detail)
+    assert MARKER not in response.text and '"input"' not in response.text
+    assert service.calls == []
