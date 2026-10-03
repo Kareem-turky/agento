@@ -45,7 +45,8 @@ def loaded_after_import(module: str) -> set[str]:
 
 def test_route_imports_only_web_context_governance_and_the_ticket_contract() -> None:
     allowed_roots = {"typing", "uuid", "fastapi", "pydantic"}
-    allowed_app = ("app.context", "app.governance", "app.services.operations_tickets")
+    allowed_app = ("app.context", "app.governance", "app.services.operations_tickets",
+                   "app.routes.validation")  # fmt: skip
     bad = [m for m in imports(ROUTE) if m.split(".")[0] not in allowed_roots
            and not m.startswith(allowed_app)]  # fmt: skip
     assert bad == []

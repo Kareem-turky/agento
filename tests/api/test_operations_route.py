@@ -354,3 +354,51 @@ def test_model_failure_inside_the_agent_is_a_safe_response(settings, runtime_set
     assert "10.0.0.7" not in response.text and "refused" not in response.text
     assert_request_id(response)
     assert s.desk.ticket_count == 0
+
+
+# ----- safe validation answers (SafeValidationRoute) ---------------------------------------------
+
+SAFE_KEYS = {"type", "loc", "msg"}
+MARKER = "SUBMITTED-RUN-MARKER-7f3a9c"
+
+
+def assert_safe_422(response, *submitted: str) -> None:
+    """A 422 lists only structural validation data: never a submitted value."""
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail and all(set(entry) == SAFE_KEYS for entry in detail)
+    for value in submitted:
+        assert value not in response.text
+    assert '"input"' not in response.text and '"ctx"' not in response.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"message": MARKER + "x" * 8001, "store_id": STORE},
+        {"message": MARKER, "store_id": MARKER},
+        {"message": MARKER, "store_id": STORE, "session_id": MARKER},
+        {"message": [MARKER], "store_id": STORE},
+        {"store_id": STORE, "requested_write_actions": [MARKER]},
+    ],
+)
+def test_invalid_run_requests_never_echo_submitted_values(
+    settings, runtime_settings, payload
+) -> None:
+    s = ops_stack([ticket_call(), Reply("x")])
+    response = post(app_for(settings, runtime_settings, s), payload)
+    assert_safe_422(response, MARKER)
+    # Nothing ran: no model request, no tool call, no write.
+    assert s.model.requests == [] and s.commerce.get_order_calls == []
+    assert s.desk.ticket_count == 0
+
+
+def test_unauthenticated_invalid_run_is_401_without_validation_details(
+    settings, runtime_settings
+) -> None:
+    s = ops_stack([Reply("x")])
+    app = create_app(settings, runtime_settings, operations_service=s.runner)  # NoActorResolver
+    response = post(app, {"message": MARKER + "x" * 8001, "store_id": MARKER})
+    assert response.status_code == 401
+    assert MARKER not in response.text and "loc" not in response.text
+    assert s.model.requests == []

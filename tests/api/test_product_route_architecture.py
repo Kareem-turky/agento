@@ -57,10 +57,19 @@ def test_route_path_and_schemas() -> None:
 
 def test_route_imports_only_web_context_governance_and_the_service_contract() -> None:
     allowed_roots = {"typing", "uuid", "fastapi", "pydantic"}
-    allowed_app = ("app.context", "app.governance", "app.services.operations")
+    allowed_app = ("app.context", "app.governance", "app.services.operations",
+                   "app.routes.validation")  # fmt: skip
     bad = [m for m in imports(ROUTE) if m.split(".")[0] not in allowed_roots
            and not m.startswith(allowed_app)]  # fmt: skip
     assert bad == []
+
+
+def test_shared_validation_route_is_fastapi_only() -> None:
+    """The Operations routes reuse ``SafeValidationRoute`` from a FastAPI-only module, so
+    importing it loads no Product domain, execution or integration code."""
+    validation = APP_DIR / "routes" / "validation.py"
+    allowed = ("collections", "typing", "fastapi")
+    assert [m for m in imports(validation) if not m.startswith(allowed)] == []
 
 
 def test_service_contract_is_runtime_independent() -> None:

@@ -40,6 +40,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, StringConstraints
 
 from app.context import CurrentActor, CurrentRequestContext
 from app.governance import ActionScope
+from app.routes.validation import SafeValidationRoute
 from app.services.operations_tickets import (
     IdempotencyConflictError,
     InvalidIdempotencyKeyError,
@@ -60,7 +61,7 @@ OPERATIONS_TICKET_QUERY_SERVICE_STATE_KEY = "operations_ticket_query_service"
 OPERATIONS_TICKET_COMMANDS_PATH = "/api/v1/operations/tickets/commands"
 IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
 
-router = APIRouter(tags=["operations"])
+router = APIRouter(tags=["operations"], route_class=SafeValidationRoute)
 
 
 class OperationsTicketRequest(BaseModel):
