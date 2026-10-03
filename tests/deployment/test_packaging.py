@@ -373,7 +373,11 @@ def test_documentation_states_the_current_limitations() -> None:
     overview = flat(ROOT / "deployments" / "README.md")
     readme = flat(ROOT / "README.md")
     for phrase in ("No real business backend exists yet", "must never be directly internet-exposed",
-                   "forbidden for a real deployment", "backup and restore automation",
+                   "forbidden for a real deployment",
+                   # Task 039: the tooling exists; scheduling and off-site copies do not.
+                   "ops/backup.sh", "ops/restore-into-empty.sh",
+                   "scheduling, retention and off-site copies are your own policy",
+                   "are separate recovery assets",
                    "reverse proxy", "UID 10001 / GID 10001", "The API never migrates itself",
                    "127.0.0.1", "never commit it", "docker build -f apps/api/Dockerfile",
                    "docker build -f apps/web/Dockerfile", "UID 10002 / GID 10002",

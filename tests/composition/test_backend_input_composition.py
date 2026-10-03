@@ -585,6 +585,9 @@ def test_no_secret_files_or_deployment_layouts_in_the_repository() -> None:
             "deployments/README.md", "deployments/template/README.md",
             "deployments/template/compose.yaml", "deployments/template/.env.example",
             "deployments/demo/README.md", "deployments/demo/compose.override.yaml",
+            # Task 039: operator backup / restore-into-empty scripts (no values).
+            "deployments/template/ops/backup.sh",
+            "deployments/template/ops/restore-into-empty.sh",
         ), path  # fmt: skip
 
 
