@@ -1,8 +1,12 @@
 # Product Core acceptance (Task 040)
 
-**Status: Task 040 acceptance candidate.** This is the canonical acceptance record of the
-Product Core. The release decision itself is
-[`PRODUCT_CORE_READY.md`](PRODUCT_CORE_READY.md).
+**Status rule:** this record is a **Task 040 acceptance candidate** while the Task 040
+commit is not yet on `main`. It becomes the **final Product Core acceptance record**
+(Agento Product Core Ready, provider-free) once Task 040 is merged to `main` and
+push-to-main CI on that exact merge commit is green. That objective merge and exact
+push-to-main CI gate decides the status; no follow-up documentation commit is required.
+This is the canonical acceptance record of the Product Core. The release decision itself
+is [`PRODUCT_CORE_READY.md`](PRODUCT_CORE_READY.md), which follows the same rule.
 
 Task 040 is an acceptance task, not a feature task. It adds tests, test-only harnesses,
 one CI gate and documentation. It changes **no** production runtime code, migration,

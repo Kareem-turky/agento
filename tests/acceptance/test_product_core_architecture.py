@@ -276,6 +276,16 @@ def test_the_acceptance_record_states_the_core_ready_boundaries() -> None:
         "reverse proxy", "TLS termination", "Audit", "Observability", "Real Integrations",
     ):  # fmt: skip
         assert statement in record, statement
+    # The record itself is self-finalizing too: an objective gate, never a static status.
+    for static in ("Status: Task 040 acceptance candidate", "Status: candidate",
+                   "Status: final"):  # fmt: skip
+        assert static not in record, static
+    for concept in ("Status rule:", "Task 040 acceptance candidate while the Task 040 commit "
+                    "is not yet on `main`", "merged to `main`",
+                    "push-to-main CI on that exact merge commit is green",
+                    "final Product Core acceptance record", "provider-free",
+                    "no follow-up documentation commit is required"):  # fmt: skip
+        assert concept in record, concept
     for area in ("Auth", "Permissions", "Policy", "Agent management", "Skills/Tasks",
                  "Operations", "Workflow", "WriteCommand", "Verification", "Audit",
                  "Integration management", "Knowledge", "Approvals", "Conversations",
