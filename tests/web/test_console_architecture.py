@@ -287,7 +287,9 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "cancelApproval", "resumeApprovalWorkflow",
                         # Task 037: read-only (no send/reply/ingest function).
                         "listConversations", "getConversation",
-                        "listConversationMessages"}  # fmt: skip
+                        "listConversationMessages",
+                        # Task 038: the one session's in-memory auth observer.
+                        "observeAuthOutcomes"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
     assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
                      for relative in EXPECTED_ROUTES}  # fmt: skip
@@ -307,13 +309,21 @@ def component(name: str) -> str:
     return code(WEB / "components" / "console" / name)
 
 
+SHELL = WEB / "components" / "shell"
+
+
+def shell(name: str) -> str:
+    return code(SHELL / name)
+
+
 def test_api_key_input_is_masked_and_never_rendered_back() -> None:
-    session = component("SessionPanel.tsx")
-    assert 'type="password"' in session and 'setDraft("")' in session
-    assert "Show" not in session  # no "show API key" control
-    console = component("Console.tsx")
-    assert "useState<string | null>(null)" in console  # memory only
-    assert "setApiKey(null)" in console and '{ type: "disconnected" }' in console
+    # Task 038: the ONE key form lives in the shell's session control.
+    control = shell("SessionControl.tsx")
+    assert 'type="password"' in control and 'setDraft("")' in control
+    assert "Show" not in control  # no "show API key" control
+    provider = shell("ProductSessionProvider.tsx")
+    assert "useState<string | null>(null)" in provider  # memory only
+    assert "setApiKey(null)" in provider and '{ type: "disconnected" }' in provider
 
 
 def test_ticket_writes_are_explicit_idempotent_and_never_auto_retried() -> None:
@@ -403,10 +413,13 @@ def test_env_example_holds_only_the_server_origin() -> None:
 
 def test_placeholder_replaced_and_metadata_neutral() -> None:
     layout = (WEB / "app" / "layout.tsx").read_text()
-    assert "placeholder" not in layout.lower() and 'title: "Operations Console"' in layout
+    assert "placeholder" not in layout.lower() and 'default: "Agento"' in layout
+    assert 'description: "AI operating layer for commerce operations."' in layout
     assert 'import "./globals.css";' in layout
     page = (WEB / "app" / "page.tsx").read_text()
-    assert "placeholder" not in page.lower() and "<Console />" in page
+    assert "placeholder" not in page.lower() and "<OverviewPage />" in page
+    operations = (WEB / "app" / "operations" / "page.tsx").read_text()
+    assert "<Console initialTab={tabFrom(tab)} />" in operations
 
 
 def test_frontend_ci_runs_the_proxy_smoke_test() -> None:
@@ -444,33 +457,41 @@ PANELS = ("AnalysisPanel.tsx", "ReportPanel.tsx", "TicketPanel.tsx", "CommandPan
 
 def test_panels_are_keyed_by_the_integer_session_epoch_never_the_key() -> None:
     console = component("Console.tsx")
-    assert '<main className="layout__main" key={epoch}>' in console
+    assert '<div className="page-layout__main" key={operationsEpoch}>' in console
     assert not re.search(r"key=\{[^}]*apiKey", console)
     assert "generation" not in console  # the single epoch replaced the disconnect counter
-    session = code(WEB / "components" / "console" / "session.ts")
-    assert "apiKey" not in session and "epoch: number;" in session
-    assert "epoch: state.epoch + 1" in session
+    session = shell("session.ts")
+    assert "apiKey" not in session
+    assert "sessionEpoch: number;" in session and "operationsEpoch: number;" in session
     for forbidden in ("localStorage", "sessionStorage", "indexedDB", "cookie", "sha", "digest"):
         assert forbidden not in session.lower(), forbidden
 
 
 def test_key_store_and_disconnect_all_start_a_new_epoch() -> None:
-    session = code(WEB / "components" / "console" / "session.ts")
+    session = shell("session.ts")
     for action in ('case "keySet":', 'case "storeChanged":', 'case "disconnected":'):
         branch = session.split(action, 1)[1].split("case ", 1)[0]
-        assert "epoch: state.epoch + 1" in branch, action
+        assert "operationsEpoch: state.operationsEpoch + 1" in branch, action
         assert "recentCommandId: null" in branch, action
+    for action in ('case "keySet":', 'case "disconnected":'):
+        branch = session.split(action, 1)[1].split("case ", 1)[0]
+        assert "sessionEpoch: state.sessionEpoch + 1" in branch, action
+    # A store change remounts Operations only; the store is never authorization.
+    store = session.split('case "storeChanged":', 1)[1].split("case ", 1)[0]
+    assert "sessionEpoch" not in store and "keyStatus" not in store
+    provider = shell("ProductSessionProvider.tsx")
+    assert 'dispatch({ type: "keySet" })' in provider
+    assert 'dispatch({ type: "storeChanged", storeId })' in provider
     console = component("Console.tsx")
-    assert 'dispatch({ type: "keySet" })' in console
-    assert 'dispatch({ type: "storeChanged", storeId: value })' in console
-    assert "onStoreChange={changeStore}" in console
+    assert "onChange={(event) => changeStore(event.target.value.trim())}" in console
 
 
 def test_stale_completions_are_ignored_by_epoch() -> None:
-    session = code(WEB / "components" / "console" / "session.ts")
-    for action in ('case "authResult":', 'case "commandCreated":'):
-        branch = session.split(action, 1)[1].split("case ", 1)[0]
-        assert "action.epoch !== state.epoch" in branch, action
+    session = shell("session.ts")
+    auth = session.split('case "authResult":', 1)[1].split("case ", 1)[0]
+    assert "action.sessionEpoch !== state.sessionEpoch" in auth
+    command = session.split('case "commandCreated":', 1)[1].split("case ", 1)[0]
+    assert "action.operationsEpoch !== state.operationsEpoch" in command
     for panel in PANELS:
         source = component(panel)
         assert "epoch: number;" in source, panel
@@ -484,13 +505,15 @@ def test_stale_completions_are_ignored_by_epoch() -> None:
 def test_session_reducer_tests_exist_and_run_offline() -> None:
     script = (WEB / "scripts" / "session-epoch.test.mjs").read_text()
     imports = re.findall(r'from "([^"]+)"', script)
-    assert all(i.startswith("node:") or i == "../components/console/session.ts" for i in imports)
+    allowed = {"../components/shell/session.ts", "../components/shell/authObservation.ts"}
+    assert all(i.startswith("node:") or i in allowed for i in imports)
     for case in (
         "replacing the Product API key",
         "changing the Store UUID",
         "disconnect clears",
         "stale auth result",
         "stale ticket completion",
+        "401 rejects, 403",
         "never holds the key",
     ):
         assert case in script, case
@@ -521,7 +544,7 @@ def test_integrations_page_is_generic_and_renders_no_provider_html() -> None:
     assert "No integrations are installed in this build." in settings  # empty catalog state
     assert "definition.connectable ?" in settings  # Connect only for connectable definitions
     assert "Last known test" in settings and "configured_secret_fields" in settings
-    assert "useState<string | null>(null)" in settings  # key in memory only
+    assert "useProductSession()" in settings and "setApiKey" not in settings  # the one session
     assert "busyRef.current" in settings  # one mutation at a time
     for forbidden in ("setInterval", "setTimeout", "for (", "while ("):
         assert forbidden not in settings, forbidden  # never auto-retried
@@ -545,13 +568,15 @@ def test_secret_inputs_are_write_only_and_never_prefilled() -> None:
     assert "get_secret_value" not in settings
 
 
-def test_console_links_to_integrations_settings() -> None:
-    console = component("Console.tsx")
-    assert '<Link href="/settings/integrations">Integrations</Link>' in console
-    assert '<Link href="/settings/agents">Agents</Link>' in console
-    assert '<Link href="/settings/workflows">Workflows</Link>' in console
-    settings = code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")
-    assert '<Link href="/">Operations Console</Link>' in settings
+def test_product_navigation_links_every_area_once() -> None:
+    # Task 038: pages no longer carry their own navigation; the shell links every area.
+    navigation = shell("ProductNavigation.tsx")
+    hrefs = re.findall(r'href: "([^"]+)"', navigation)
+    assert hrefs == ["/", "/operations", "/approvals", "/conversations", "/workflows",
+                     "/settings/agents", "/settings/integrations",
+                     "/settings/knowledge"]  # fmt: skip
+    for page in (component("Console.tsx"), code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")):
+        assert 'className="topbar__nav"' not in page and "<nav" not in page
 
 
 # ----- Task 032: the Product Agents settings page ------------------------------------------
@@ -576,12 +601,11 @@ def test_agents_page_is_lifecycle_management_only() -> None:
         assert agentos not in settings, agentos
     # No editor of any kind: no text areas, no prompt/model/tool/permission inputs.
     assert "<textarea" not in settings and "contentEditable" not in settings
-    inputs = re.findall(r"<input[^>]*>", settings, flags=re.S)
-    assert len(inputs) == 1 and 'name="product-api-key"' in inputs[0]
+    assert "<input" not in settings  # the key form lives in the shell only
     for word in ("prompt", "instruction", "model_id", "api key field", "tool selection",
                  "dangerouslySetInnerHTML", "innerHTML", "JSON.parse"):  # fmt: skip
         assert word.lower() not in settings.lower(), word
-    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    assert "useProductSession()" in settings and "busyRef.current" in settings
     for forbidden in ("setInterval", "setTimeout", "for (", "while ("):
         assert forbidden not in settings, forbidden
     joined = settings.lower()
@@ -615,7 +639,7 @@ WORKFLOWS_UI = WEB / "components" / "workflows"
 
 
 def test_workflows_page_is_read_only_inspection() -> None:
-    page = code(WEB / "app" / "settings" / "workflows" / "page.tsx")
+    page = code(WEB / "app" / "workflows" / "page.tsx")
     assert "<WorkflowsSettings />" in page
     assert {p.name for p in WORKFLOWS_UI.glob("*.tsx")} == {"WorkflowsSettings.tsx"}
     settings = code(WORKFLOWS_UI / "WorkflowsSettings.tsx")
@@ -624,23 +648,18 @@ def test_workflows_page_is_read_only_inspection() -> None:
     assert calls == {"getWorkflowCatalog", "listWorkflowRuns", "getWorkflowRun"}
     assert "fetch(" not in settings and "/api/" not in settings
     # No Run / Retry / Resume control, no input form, no JSON or code editor.
-    inputs = re.findall(r"<input[^>]*>", settings, flags=re.S)
-    assert len(inputs) == 1 and 'name="product-api-key"' in inputs[0]
+    assert "<input" not in settings  # the key form lives in the shell only
     assert "<textarea" not in settings and "contentEditable" not in settings
     assert "<select" not in settings
-    assert settings.count("<button") == 4  # Use key, Disconnect, Refresh, Details
-    for label in ("Use key", "Disconnect and clear session", "Refresh", "Details"):
-        assert label in settings, label
+    assert settings.count("<button") == 2  # Refresh, Details
     labels = sorted(t.strip() for t in re.findall(r">\s*([^<>{}]+?)\s*</button>", settings))
-    assert labels == ["Details", "Disconnect and clear session", "Refresh", "Use key"]
+    assert labels == ["Details", "Refresh"]
     for word in ("resume", "retry(", "execute", "runWorkflow", "dangerouslySetInnerHTML",
                  "innerHTML", "JSON.parse", "checkpoint\"]", "input_state"):  # fmt: skip
         assert word.lower() not in settings.lower(), word
     for forbidden in ("setInterval", "setTimeout", "while ("):
         assert forbidden not in settings, forbidden
-    assert "useState<string | null>(null)" in settings  # the key lives in memory only
-    for path in ("Console.tsx",):
-        assert '<Link href="/settings/workflows">Workflows</Link>' in component(path)
+    assert "useProductSession()" in settings and "setApiKey" not in settings
 
 
 # ----- Task 035: the Knowledge settings page -----------------------------------------------------
@@ -685,19 +704,12 @@ def test_knowledge_page_renders_untrusted_text_inertly() -> None:
     assert settings.count("<textarea") == 1  # the document text only
     assert "publishKnowledgeOperatingModel" not in settings
     assert "deleteKnowledge" not in settings and '"DELETE"' not in settings
-    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    assert "useProductSession()" in settings and "busyRef.current" in settings
     for forbidden in ("setInterval", "setTimeout", "while ("):
         assert forbidden not in settings, forbidden
     joined = settings.lower()
     for provider in ("shopify", "woocommerce", "whatsapp", "f" + "ulfly"):
         assert provider not in joined, provider
-
-
-def test_knowledge_is_linked_from_the_console_and_settings() -> None:
-    assert '<Link href="/settings/knowledge">Knowledge</Link>' in component("Console.tsx")
-    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
-                 WORKFLOWS_UI / "WorkflowsSettings.tsx"):  # fmt: skip
-        assert '<Link href="/settings/knowledge">Knowledge</Link>' in code(path), path.name
 
 
 # ----- Task 036: the Approvals settings page -----------------------------------------------------
@@ -720,7 +732,7 @@ def test_approval_routes_are_fixed_and_there_is_no_create_route() -> None:
 
 
 def test_approvals_page_renders_untrusted_text_inertly() -> None:
-    page = code(WEB / "app" / "settings" / "approvals" / "page.tsx")
+    page = code(WEB / "app" / "approvals" / "page.tsx")
     assert "<ApprovalsSettings />" in page
     assert {p.name for p in APPROVALS_UI.glob("*.tsx")} == {"ApprovalsSettings.tsx"}
     settings = code(APPROVALS_UI / "ApprovalsSettings.tsx")
@@ -742,7 +754,7 @@ def test_approvals_page_renders_untrusted_text_inertly() -> None:
     assert settings.count("<textarea") == 1
     assert "Confirm approval" in settings and "Confirm rejection" in settings
     assert "needsReason && !reason" in settings
-    assert "useState<string | null>(null)" in settings and "busyRef.current" in settings
+    assert "useProductSession()" in settings and "busyRef.current" in settings
     # A clean empty state, never fake requests.
     assert (
         "No approval requests." in settings and "No requests are awaiting a decision." in settings
@@ -750,14 +762,6 @@ def test_approvals_page_renders_untrusted_text_inertly() -> None:
     joined = settings.lower()
     for provider in ("shopify", "woocommerce", "whatsapp", "f" + "ulfly"):
         assert provider not in joined, provider
-
-
-def test_approvals_are_linked_from_the_console_and_settings() -> None:
-    assert '<Link href="/settings/approvals">Approvals</Link>' in component("Console.tsx")
-    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
-                 WORKFLOWS_UI / "WorkflowsSettings.tsx",
-                 KNOWLEDGE_UI / "KnowledgeSettings.tsx"):  # fmt: skip
-        assert '<Link href="/settings/approvals">Approvals</Link>' in code(path), path.name
 
 
 # ----- Task 037: the Conversations page ----------------------------------------------------------
@@ -798,15 +802,7 @@ def test_conversations_page_is_read_only_and_renders_text_inertly() -> None:
     css = (WEB / "app" / "globals.css").read_text()
     assert "overflow-wrap: anywhere" in css.split(".transcript__text")[1].split("}")[0]
     assert "No conversations yet." in ui
-    assert "useState<string | null>(null)" in ui and "busyRef.current" in ui
+    assert "useProductSession()" in ui and "busyRef.current" in ui
     joined = ui.lower()
     for provider in ("whatsapp", "twilio", "telegram", "messenger", "instagram", "f" + "ulfly"):
         assert provider not in joined, provider
-
-
-def test_conversations_are_linked_from_the_console_and_settings() -> None:
-    assert '<Link href="/conversations">Conversations</Link>' in component("Console.tsx")
-    for path in (AGENTS_UI / "AgentsSettings.tsx", INTEGRATIONS_UI / "IntegrationsSettings.tsx",
-                 WORKFLOWS_UI / "WorkflowsSettings.tsx", KNOWLEDGE_UI / "KnowledgeSettings.tsx",
-                 APPROVALS_UI / "ApprovalsSettings.tsx"):  # fmt: skip
-        assert '<Link href="/conversations">Conversations</Link>' in code(path), path.name

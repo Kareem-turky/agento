@@ -322,9 +322,10 @@ reference at startup and fails closed when it dangles.
   trusted Product services, under those services' own business permissions. There is
   deliberately no `workflows.run` permission.
 
-**Settings → Workflows** (`/settings/workflows`) shows the definitions, recent runs,
-Step attempts and events. It is read-only: no Run, Retry or Resume button, no input form
-and no JSON or code editor. The unified Control Center comes later (Task 038).
+**Workflows** (`/workflows`; the legacy `/settings/workflows` redirects there) shows the
+definitions, recent runs, Step attempts and events. It is read-only: no Run, Retry or
+Resume button, no input form and no JSON or code editor. The Control Center Overview shows
+recent runs and their statuses ([`CONTROL_CENTER.md`](CONTROL_CENTER.md)).
 
 ## Observability and logs
 

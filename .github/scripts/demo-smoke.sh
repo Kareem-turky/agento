@@ -137,7 +137,8 @@ done
 echo "only Web on 127.0.0.1; API on internal networks only; AgentOS not reachable"
 
 step "Operations Console and BFF health through the Web port"
-curl -sf "$WEB/" | grep -q "Operations Console" || fail "Operations Console not served"
+curl -sf "$WEB/" | grep -q "Agento" || fail "Agento Overview not served"
+curl -sf "$WEB/operations" | grep -q "Analyze operations" || fail "Operations Console not served at /operations"
 curl -sf "$WEB/api/product/health" | json '
 assert data["status"] == "ok" and data["application"]["environment"] == "local", data
 assert data["agent_runtime"]["status"] == "ready", data

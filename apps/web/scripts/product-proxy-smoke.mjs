@@ -736,37 +736,35 @@ async function main() {
     mode = "normal";
 
     // 20 / UI secret guard: rendered HTML and client bundles carry no key, origin or upstream path.
-    response = await fetch(`${base}/`);
-    const html = await response.text();
-    check(response.status === 200 && html.includes("Operations Console"), "console page renders");
-    check(!html.includes(API_KEY) && !html.includes(origin) && !html.includes(String(stubPort)),
-          "rendered HTML has no key, origin or upstream port");
-    response = await fetch(`${base}/settings/integrations`);
-    const settingsHtml = await response.text();
-    const agentsPage = await fetch(`${base}/settings/agents`);
-    const agentsHtml = await agentsPage.text();
-    check(agentsPage.status === 200 && agentsHtml.includes("Agents"), "agents settings page renders");
-    const workflowsPage = await fetch(`${base}/settings/workflows`);
-    const workflowsHtml = await workflowsPage.text();
-    check(workflowsPage.status === 200 && workflowsHtml.includes("Workflows"), "workflows settings page renders");
-    check(!workflowsHtml.includes(API_KEY) && !workflowsHtml.includes(origin), "workflows settings HTML has no key or origin");
-    const knowledgePage = await fetch(`${base}/settings/knowledge`);
-    const knowledgeHtml = await knowledgePage.text();
-    check(knowledgePage.status === 200 && knowledgeHtml.includes("Knowledge"), "knowledge settings page renders");
-    check(!knowledgeHtml.includes(API_KEY) && !knowledgeHtml.includes(origin), "knowledge settings HTML has no key or origin");
-    const conversationsPage = await fetch(`${base}/conversations`);
-    const conversationsHtml = await conversationsPage.text();
-    check(conversationsPage.status === 200 && conversationsHtml.includes("Conversations"), "conversations page renders");
-    check(!conversationsHtml.includes(API_KEY) && !conversationsHtml.includes(origin),
-          "conversations page HTML has no key or origin");
-    const approvalsPage = await fetch(`${base}/settings/approvals`);
-    const approvalsHtml = await approvalsPage.text();
-    check(approvalsPage.status === 200 && approvalsHtml.includes("Approvals"), "approvals settings page renders");
-    check(!approvalsHtml.includes(API_KEY) && !approvalsHtml.includes(origin), "approvals settings HTML has no key or origin");
-    check(!agentsHtml.includes(API_KEY) && !agentsHtml.includes(origin), "agents settings HTML has no key or origin");
-    check(response.status === 200 && settingsHtml.includes("Integrations"), "integrations settings page renders");
-    check(!settingsHtml.includes(API_KEY) && !settingsHtml.includes(origin) && !settingsHtml.includes(SECRET_VALUE),
-          "integrations settings HTML has no key, origin or secret value");
+    // Task 038: one Agento shell; "/" is the Overview, Operations moved to /operations.
+    const pages = [
+      ["/", "Overview"],
+      ["/operations", "Operations"],
+      ["/operations?tab=report", "Daily report"],
+      ["/approvals", "Approvals"],
+      ["/conversations", "Conversations"],
+      ["/workflows", "Workflows"],
+      ["/settings/agents", "Agents"],
+      ["/settings/integrations", "Integrations"],
+      ["/settings/knowledge", "Knowledge"],
+    ];
+    for (const [path, heading] of pages) {
+      response = await fetch(`${base}${path}`);
+      const html = await response.text();
+      check(response.status === 200 && html.includes(heading) && html.includes("Agento") &&
+            html.includes("AI Operating Layer"), `${path}: page renders inside the Agento shell`);
+      check((html.match(/<h1[\s>]/g) ?? []).length === 1, `${path}: exactly one h1`);
+      check(!html.includes(API_KEY) && !html.includes(origin) && !html.includes(String(stubPort)) &&
+            !html.includes(SECRET_VALUE), `${path}: rendered HTML has no key, origin, upstream port or secret`);
+      check(!/AgentOS|Agno|FastAPI|Next\.js/.test(html.replace(/<script[\s\S]*?<\/script>/g, "")),
+            `${path}: no internal framework name in the page`);
+    }
+    for (const [legacy, target] of [["/settings/approvals", "/approvals"], ["/settings/workflows", "/workflows"]]) {
+      response = await fetch(`${base}${legacy}`, { redirect: "manual" });
+      check([307, 308].includes(response.status) && new URL(response.headers.get("location"), base).pathname === target,
+            `${legacy}: redirects to ${target}`);
+      await response.body?.cancel();
+    }
     const staticDir = join(WEB_ROOT, ".next", "static");
     const bundles = [];
     (function walk(dir) {

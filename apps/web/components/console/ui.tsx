@@ -1,67 +1,8 @@
-// Small presentational helpers. They only label backend values; they never decide
-// business outcomes.
-import type { ReactNode } from "react";
+// Operations-specific helpers. The generic primitives live in components/ui and are
+// re-exported here so existing imports keep working.
 import type { ProductErrorKind } from "../../lib/product-api/types";
 
-export type Tone = "success" | "pending" | "attention" | "danger" | "neutral";
-
-export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  // The text always carries the meaning; colour is only reinforcement.
-  return <span className={`badge badge--${tone}`}>{children}</span>;
-}
-
-export function Card({ title, subtitle, actions, children }: {
-  title: string;
-  subtitle?: ReactNode;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="card" aria-label={title}>
-      <header className="card__header">
-        <div>
-          <h2 className="card__title">{title}</h2>
-          {subtitle ? <p className="card__subtitle">{subtitle}</p> : null}
-        </div>
-        {actions ? <div className="card__actions">{actions}</div> : null}
-      </header>
-      {children}
-    </section>
-  );
-}
-
-export function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
-  return (
-    <div className="metric">
-      <span className="metric__label">{label}</span>
-      <span className="metric__value">{value}</span>
-      {hint ? <span className="metric__hint">{hint}</span> : null}
-    </div>
-  );
-}
-
-export function KeyValue({ items }: { items: [string, ReactNode][] }) {
-  return (
-    <dl className="kv">
-      {items.map(([key, value]) => (
-        <div className="kv__row" key={key}>
-          <dt>{key}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-export function Mono({ children }: { children: ReactNode }) {
-  return <code className="mono">{children}</code>;
-}
-
-export function Timestamp({ value }: { value: string }) {
-  const parsed = new Date(value);
-  const local = Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-  return <time dateTime={value} title={value}>{local}</time>;
-}
+export { Badge, Card, ErrorNotice, KeyValue, Metric, Mono, Timestamp, type Tone } from "../ui/primitives";
 
 const SERVICE_UNAVAILABLE: Record<string, string> = {
   analysis: "Operations service unavailable",
@@ -93,18 +34,10 @@ export function errorMessage(kind: ProductErrorKind, context: keyof typeof SERVI
   }
 }
 
-export function ErrorNotice({ message }: { message: string }) {
-  return (
-    <div className="notice notice--danger" role="alert">
-      <strong>Request failed.</strong> {message}
-    </div>
-  );
-}
-
 export function NeedsSession() {
   return (
     <div className="notice notice--neutral">
-      Set a Product API key and a Store UUID in <strong>Session</strong> first.
+      Connect to the Product API and set a Store UUID (under Store) first.
     </div>
   );
 }

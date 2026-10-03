@@ -7,10 +7,9 @@
 // Retry or Resume button, no input form and no Workflow, JSON or code editor: Workflows are
 // reviewed Product source code and run only inside trusted Product services.
 //
-// The Product API key lives only in this component's memory; every value is rendered as
-// plain text.
-import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+// The Product API key comes from the shell's ProductSessionProvider (memory only); every
+// value is rendered as plain text.
+import { useCallback, useEffect, useState } from "react";
 import { getWorkflowCatalog, getWorkflowRun, listWorkflowRuns } from "../../lib/product-api/client";
 import type {
   ProductErrorKind,
@@ -19,6 +18,9 @@ import type {
   WorkflowRunView,
 } from "../../lib/product-api/types";
 import { Badge, Card, ErrorNotice, Mono, Timestamp, type Tone } from "../console/ui";
+import { ConnectNotice } from "../shell/ConnectNotice";
+import { PageHeader } from "../shell/PageHeader";
+import { useProductSession } from "../shell/ProductSessionProvider";
 
 const RUN_STATUS: Record<string, [string, Tone]> = {
   pending: ["Pending", "pending"],
@@ -79,79 +81,27 @@ function Failure({ code }: { code: string | null }) {
 }
 
 export function WorkflowsSettings() {
-  // Memory only: reloading or leaving the page forgets the key.
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [epoch, setEpoch] = useState(0);
-  const [draft, setDraft] = useState("");
-
-  function applyKey(event: FormEvent) {
-    event.preventDefault();
-    const key = draft.trim();
-    if (!key) return;
-    setApiKey(key);
-    setEpoch((value) => value + 1);
-    setDraft("");
-  }
-
-  function disconnect() {
-    setApiKey(null);
-    setEpoch((value) => value + 1);
-  }
+  // The key comes from the one ProductSessionProvider (memory only). The workspace is keyed
+  // by the session epoch: a new key or a disconnect remounts it with nothing left over.
+  const { apiKey, sessionEpoch } = useProductSession();
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="topbar__brand">
-          <span className="topbar__mark" aria-hidden="true">◆</span>
-          <div>
-            <p className="topbar__title">Workflows</p>
-            <p className="topbar__subtitle">Settings · Product Workflows over the Product API (read-only)</p>
-          </div>
+    <>
+      <PageHeader
+        title="Workflows"
+        description="Read-only inspection of Workflow definitions and runs."
+      />
+      <div className="page-layout">
+        <div className="page-layout__main" key={sessionEpoch}>
+          {apiKey === null ? <ConnectNotice area="workflows" /> : <WorkflowsWorkspace apiKey={apiKey} />}
         </div>
-        <nav className="topbar__nav" aria-label="Pages">
-          <Link href="/">Operations Console</Link>
-          <Link href="/settings/agents">Agents</Link>
-          <Link href="/settings/integrations">Integrations</Link>
-          <Link href="/settings/knowledge">Knowledge</Link>
-          <Link href="/settings/approvals">Approvals</Link>
-          <Link href="/conversations">Conversations</Link>
-        </nav>
-      </header>
-
-      <div className="layout">
-        <aside className="layout__side">
-          <Card title="Session" subtitle="Held in this page's memory only. Reloading or leaving the page forgets the key.">
-            <form className="form" onSubmit={applyKey} autoComplete="off">
-              <label className="field">
-                <span className="field__label">Product API key</span>
-                <input
-                  type="password"
-                  name="product-api-key"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder={apiKey === null ? "Paste your Product API key" : "Replace the key in memory"}
-                />
-                <span className="field__hint">Viewing needs workflows.read. Nothing here runs a Workflow.</span>
-              </label>
-              <button type="submit" className="button" disabled={!draft.trim()}>Use key</button>
-            </form>
-            <button type="button" className="button button--danger" onClick={disconnect} disabled={apiKey === null}>
-              Disconnect and clear session
-            </button>
+        <aside className="page-layout__side">
+          <Card title="Access">
+            <p className="form__context">Viewing needs workflows.read. Nothing here runs a Workflow.</p>
           </Card>
         </aside>
-
-        <main className="layout__main" key={epoch}>
-          {apiKey === null ? (
-            <div className="notice notice--neutral">Set a Product API key in <strong>Session</strong> first.</div>
-          ) : (
-            <WorkflowsWorkspace apiKey={apiKey} />
-          )}
-        </main>
       </div>
-    </div>
+    </>
   );
 }
 

@@ -111,7 +111,48 @@ function classify(status: number): ProductErrorKind {
   }
 }
 
+// One in-memory observer (the ProductSessionProvider) learns how the Product API answered
+// an authenticated request, so a 401 on any page marks the session key as not accepted.
+// Two phases: BEFORE any network I/O, begin() is shown the key of this one request and
+// returns an opaque non-secret token (the session epoch the request starts in, or null);
+// AFTER the exchange, complete() receives that captured token and the HTTP outcome only.
+// This module never keeps the key: it is read from the request headers synchronously and
+// is not retained after request setup.
+type AuthObserver = {
+  begin(apiKey: string): number | null;
+  complete(sessionEpoch: number, result: { ok: boolean; status: number | null }): void;
+};
+let authObserver: AuthObserver | null = null;
+
+/** Registers the session's auth observer; returns the function that removes it. */
+export function observeAuthOutcomes(observer: AuthObserver): () => void {
+  authObserver = observer;
+  return () => {
+    if (authObserver === observer) authObserver = null;
+  };
+}
+
+/** Phase one, synchronous and before any I/O: the token of the epoch this request starts in. */
+function beginAuthObservation(headers: HeadersInit | undefined): { observer: AuthObserver; token: number } | null {
+  const observer = authObserver;
+  if (observer === null) return null;
+  const authorization = new Headers(headers).get("Authorization");
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = observer.begin(authorization.slice("Bearer ".length));
+  return token === null ? null : { observer, token };
+}
+
 async function send<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
+  const observation = beginAuthObservation(init.headers);
+  const result = await exchange(path, init, guard);
+  // Phase two: the outcome is reported for the CAPTURED epoch, never the current one.
+  if (observation !== null) {
+    observation.observer.complete(observation.token, { ok: result.ok, status: result.status });
+  }
+  return result;
+}
+
+async function exchange<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, { ...init, cache: "no-store", credentials: "omit", redirect: "error" });

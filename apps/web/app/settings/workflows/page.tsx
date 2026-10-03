@@ -1,11 +1,6 @@
-import type { Metadata } from "next";
-import { WorkflowsSettings } from "../../../components/workflows/WorkflowsSettings";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Workflows",
-  robots: { index: false, follow: false },
-};
-
-export default function WorkflowsPage() {
-  return <WorkflowsSettings />;
+// Legacy address: Workflows moved to /workflows (one implementation, no loop).
+export default function LegacyWorkflowsPage() {
+  redirect("/workflows");
 }

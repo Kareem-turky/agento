@@ -203,7 +203,7 @@ fingerprint, raw parameters or an idempotency hash.
 
 ## UI
 
-**Settings → Approvals** (`/settings/approvals`):
+**Approvals** (`/approvals`; the legacy `/settings/approvals` redirects there):
 
 - lists the company's requests, filtered by status;
 - shows the safe summary (before → after) and the append-only history;
