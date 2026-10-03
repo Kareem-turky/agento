@@ -8,7 +8,11 @@ from uuid import uuid4
 import pytest
 
 from app.commands import CommandReason, CommandStatus, WriteCommandCoordinator
-from app.commands.errors import ApprovalContinuationRefusedError, IdempotencyConflictError
+from app.commands.errors import (
+    ApprovalContinuationRefusedError,
+    IdempotencyConflictError,
+    WriteCommandStoreError,
+)
 from app.governance import ActionIntent, ActionScope
 from tests.commands.fakes import InMemoryWriteCommandStore
 from tests.support.approval_fakes import (
@@ -32,12 +36,26 @@ def run(coroutine):
     return asyncio.run(coroutine)
 
 
+class CountingExecutor:
+    """Counts ExecutionCoordinator calls (to prove a refused caller never reaches it)."""
+
+    def __init__(self, inner) -> None:
+        self.inner, self.calls = inner, []
+
+    async def run(self, request, *args, **kwargs):
+        self.calls.append(request.actor.actor_type)
+        return await self.inner.run(request, *args, **kwargs)
+
+
 class Commands:
-    def __init__(self) -> None:
+    def __init__(self, *, guard: bool = True) -> None:
         self.world = ApprovalWorld()
         self.store = InMemoryWriteCommandStore()
-        self.commands = WriteCommandCoordinator(self.store, self.world.coordinator,
-                                                self.world.catalog)  # fmt: skip
+        self.executor = CountingExecutor(self.world.coordinator)
+        self.commands = WriteCommandCoordinator(
+            self.store, self.executor, self.world.catalog,  # type: ignore[arg-type]
+            approvals=self.world.broker if guard else None,
+        )  # fmt: skip
 
     def submit(self, params=None, *, key=KEY, approval_id=None, who=REQ):
         return self.commands.submit(
@@ -128,21 +146,140 @@ def test_the_ticket_style_low_risk_write_never_creates_an_approval() -> None:
     assert ticket.risk.value == "low_risk_write"
 
 
-def test_same_actor_id_under_another_actor_type_never_continues_the_command() -> None:
-    """WriteCommand idempotency is scoped by (company, actor id, key) since Task 013 (no
-    actor type is stored), so a same-id twin of another actor type replays the command.
-    Its continuation still never executes: the approval binds to the exact principal, so
-    the claim is a mismatch, the approval stays unconsumed and nothing runs. The command
-    ends failed/approval_mismatch (fail-closed, no effect)."""
+# ----- the exact requester principal owns an approval-linked command ---------------------------
+
+PRINCIPAL = actor("same-principal", REQUESTER)  # actor_type "user"
+TWIN = actor("same-principal", REQUESTER, actor_type="api_client")
+
+
+def awaiting_for(env: Commands, who=PRINCIPAL):
+    first = run(env.submit(who=who))
+    assert first.status is CommandStatus.AWAITING_APPROVAL and first.approval_id is not None
+    return first
+
+
+def snapshot(env: Commands, first):
+    return (
+        dict(env.store.rows[first.command_id]),
+        env.world.repository.rows[first.approval_id],
+        len(env.world.repository.history),
+    )
+
+
+def test_wrong_actor_type_cannot_poison_a_waiting_command() -> None:
     env = Commands()
-    first = run(env.submit())
+    first = awaiting_for(env)
     run(env.world.service.approve(request(APP), first.approval_id, None))
-    twin = actor("requester-1", REQUESTER, actor_type="api_client")
-    refused = run(env.submit(approval_id=first.approval_id, who=twin))
-    assert (refused.status, refused.reason) == (CommandStatus.FAILED,
-                                                CommandReason.APPROVAL_MISMATCH)  # fmt: skip
-    assert env.world.budget.effects == []
+    before, calls = snapshot(env, first), len(env.executor.calls)
+    with pytest.raises(ApprovalContinuationRefusedError) as info:
+        run(env.submit(approval_id=first.approval_id, who=TWIN))
+    assert str(first.approval_id) not in str(info.value)
+    # Nothing changed: command, approval (unconsumed), approval history, effects, and the
+    # ExecutionCoordinator was never reached after the precheck.
+    assert snapshot(env, first) == before
+    assert env.store.rows[first.command_id]["status"] is CommandStatus.AWAITING_APPROVAL
     assert env.world.repository.rows[first.approval_id].consumed_at is None
-    # Terminal: nothing ever executes for this command again, for anyone.
-    assert run(env.submit(approval_id=first.approval_id)).replayed
-    assert env.world.budget.effects == []
+    assert env.world.budget.effects == [] and len(env.executor.calls) == calls
+    # The real requester still continues it, exactly once.
+    done = run(env.submit(approval_id=first.approval_id, who=PRINCIPAL))
+    assert (done.status, done.replayed) == (CommandStatus.VERIFIED, False)
+    assert env.world.budget.effects == [(STORE_A, "spring", 150)]
+
+
+def test_wrong_actor_type_cannot_inspect_an_approval_linked_replay() -> None:
+    env = Commands()
+    first = awaiting_for(env)
+    before = snapshot(env, first)
+    with pytest.raises(ApprovalContinuationRefusedError) as info:
+        run(env.submit(who=TWIN))  # no approval id: a plain replay attempt
+    assert str(first.approval_id) not in repr(info.value) and info.value.args == (
+        "approval_continuation_refused",
+    )
+    assert snapshot(env, first) == before
+    # The requester's own plain replay is unchanged.
+    again = run(env.submit(who=PRINCIPAL))
+    assert again.replayed and again.approval_id == first.approval_id
+
+
+def test_terminal_approval_linked_replay_is_only_for_the_requester() -> None:
+    env = Commands()
+    first = awaiting_for(env)
+    run(env.world.service.approve(request(APP), first.approval_id, None))
+    done = run(env.submit(approval_id=first.approval_id, who=PRINCIPAL))
+    assert done.status is CommandStatus.VERIFIED
+    calls = len(env.executor.calls)
+    for approval_id in (None, first.approval_id):
+        with pytest.raises(ApprovalContinuationRefusedError):
+            run(env.submit(approval_id=approval_id, who=TWIN))
+    assert len(env.executor.calls) == calls and len(env.world.budget.effects) == 1
+    replay = run(env.submit(who=PRINCIPAL))
+    assert replay.replayed and replay.status is CommandStatus.VERIFIED
+    assert replay.approval_id == first.approval_id
+
+
+def test_concurrent_wrong_and_right_principals() -> None:
+    env = Commands()
+    first = awaiting_for(env)
+    run(env.world.service.approve(request(APP), first.approval_id, None))
+    env.executor.calls.clear()  # only count the race
+
+    async def race():
+        calls = [env.submit(approval_id=first.approval_id, who=TWIN) for _ in range(5)]
+        calls += [env.submit(approval_id=first.approval_id, who=PRINCIPAL) for _ in range(5)]
+        return await asyncio.gather(*calls, return_exceptions=True)
+
+    outcomes = run(race())
+    assert all(isinstance(o, ApprovalContinuationRefusedError) for o in outcomes[:5])
+    right = outcomes[5:]
+    assert not any(isinstance(o, Exception) for o in right)
+    assert [o.replayed for o in right].count(False) == 1
+    assert env.executor.calls == ["user"]  # only the exact principal ever executes
+    assert len(env.world.budget.effects) == 1
+    assert len([e for e in env.world.repository.history
+                if e.event_type.value == "execution_claimed"]) == 1  # fmt: skip
+
+
+def test_the_guard_is_mandatory_and_fails_closed() -> None:
+    env = Commands(guard=False)
+    awaiting_for(env)
+    with pytest.raises(WriteCommandStoreError):  # no guard: never returned or reopened
+        run(env.submit(who=PRINCIPAL))
+    env2 = Commands()
+    first2 = awaiting_for(env2)
+    before = snapshot(env2, first2)
+    env2.world.repository.fail = True
+    with pytest.raises(WriteCommandStoreError):
+        run(env2.submit(approval_id=first2.approval_id, who=PRINCIPAL))
+    env2.world.repository.fail = False
+    assert snapshot(env2, first2) == before
+    assert env.world.budget.effects == [] and env2.world.budget.effects == []
+
+
+def test_the_guard_never_consumes_and_checks_source_and_company() -> None:
+    env = Commands()
+    first = awaiting_for(env)
+    run(env.world.service.approve(request(APP), first.approval_id, None))
+    broker, history = env.world.broker, len(env.world.repository.history)
+
+    def owns(**kw):
+        base = dict(company_id=COMPANY, approval_id=first.approval_id,
+                    requester_actor_id="same-principal", requester_actor_type="user",
+                    command_id=first.command_id)  # fmt: skip
+        args = {**base, **kw}
+        return run(broker.is_command_requester(
+            args.pop("company_id"), args.pop("approval_id"), **args))  # fmt: skip
+
+    assert owns() is True
+    for change in (dict(requester_actor_type="api_client"),
+                   dict(requester_actor_type="system_agent"),
+                   dict(requester_actor_id="other"), dict(command_id=uuid4()),
+                   dict(company_id="00000000-0000-4000-8000-0000000000c2"),
+                   dict(approval_id=uuid4())):  # fmt: skip
+        assert owns(**change) is False, change
+    assert len(env.world.repository.history) == history  # read only: no event
+    assert env.world.repository.rows[first.approval_id].consumed_at is None
+    # An action-sourced request (not this command's) never passes either.
+    direct = run(env.world.run_budget(PRINCIPAL, campaign="other"))
+    assert run(broker.is_command_requester(
+        COMPANY, direct.approval_id, requester_actor_id="same-principal",
+        requester_actor_type="user", command_id=first.command_id)) is False  # fmt: skip

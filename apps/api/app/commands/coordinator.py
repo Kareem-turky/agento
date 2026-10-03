@@ -43,6 +43,18 @@ same parameters, same trusted scope: the fingerprint proves it) WITH that approv
 
 The approval id is authorization metadata: it is never part of the request fingerprint.
 Every other terminal state replays exactly as before; VERIFIED never runs again.
+
+Approval-linked commands belong to ONE principal. The idempotency namespace is
+``(company_id, actor_id, key)`` (Task 013: no actor type), so a different principal with
+the same actor id can find another principal's command. Therefore EVERY replay of a
+command linked to an approval (any status, with or without a presented approval id)
+first asks the non-consuming ``ApprovalContinuationGuard`` whether the caller is that
+approval's exact requester principal for THIS command (WRITE_COMMAND source, same
+command id). If not: ApprovalContinuationRefusedError, with nothing returned (no result,
+no approval id), nothing reopened, nothing executed and nothing written. The guard is
+only a precheck; ExecutionCoordinator still decides execution (governance, exact
+subject, status, expiry, one-time claim). No guard, or a guard that cannot answer,
+fails closed.
 """
 
 from collections.abc import Callable, Mapping
@@ -79,7 +91,13 @@ from app.commands.models import (
 )
 from app.commands.store import WriteCommandStore
 from app.context.models import RequestContext
-from app.execution import ActionRun, ApprovalSource, ApprovalSourceRef, ExecutionCoordinator
+from app.execution import (
+    ActionRun,
+    ApprovalContinuationGuard,
+    ApprovalSource,
+    ApprovalSourceRef,
+    ExecutionCoordinator,
+)
 from app.governance import ActionCatalog, ActionIntent, ActionRisk, ActionScope
 
 _KEY = TypeAdapter(IdempotencyKey)
@@ -125,11 +143,13 @@ class WriteCommandCoordinator:
         catalog: ActionCatalog,
         *,
         id_factory: Callable[[], UUID] = uuid4,
+        approvals: ApprovalContinuationGuard | None = None,
     ) -> None:
         self._store = store
         self._executor = executor
         self._catalog = catalog
         self._new_id = id_factory
+        self._approvals = approvals
 
     async def submit(
         self,
@@ -185,6 +205,8 @@ class WriteCommandCoordinator:
         if record is None:  # guaranteed by ClaimResult; kept for type narrowing
             raise WriteCommandStoreError()
         if claimed.outcome is ClaimOutcome.REPLAY:
+            if record.approval_id is not None:
+                await self._require_approval_requester(request, record)
             if record.status is CommandStatus.AWAITING_APPROVAL and approval_id is not None:
                 return await self._continue(request, scope, definition.name, snapshot, record,
                                             approval_id)  # fmt: skip
@@ -196,6 +218,27 @@ class WriteCommandCoordinator:
         outcome = await self._execute(request, scope, definition.name, snapshot,
                                       record.command_id, approval_id)  # fmt: skip
         return await self._complete(record, outcome)
+
+    async def _require_approval_requester(
+        self, request: RequestContext, record: WriteCommandRecord
+    ) -> None:
+        """Before an approval-linked command is returned or reopened: is the trusted
+        caller the exact requester principal of the approval, for this command? A
+        read-only precheck (nothing is consumed or written); never authorization."""
+        actor = request.actor
+        if actor is None or record.approval_id is None:
+            raise ApprovalContinuationRefusedError()
+        if self._approvals is None:
+            raise WriteCommandStoreError()  # cannot tell who owns it: fail closed
+        try:
+            owner = await self._approvals.is_command_requester(
+                record.company_id, record.approval_id, requester_actor_id=actor.actor_id,
+                requester_actor_type=actor.actor_type, command_id=record.command_id,
+            )  # fmt: skip
+        except Exception:  # noqa: BLE001 - unknown ownership: change and reveal nothing
+            raise WriteCommandStoreError() from None
+        if owner is not True:
+            raise ApprovalContinuationRefusedError()
 
     async def _continue(
         self,

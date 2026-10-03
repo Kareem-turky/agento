@@ -29,6 +29,7 @@ from app.execution.approvals import (
     ApprovalClaim,
     ApprovalClaimStatus,
     ApprovalOutcome,
+    ApprovalSource,
     ApprovalSubject,
 )
 from app.observability.contracts import (
@@ -131,6 +132,19 @@ class ProductApprovalBroker:
             obs.finish(ObservationOutcome.COMPLETED if claimed else ObservationOutcome.DENIED,
                        ObservationDetails(business=BusinessDetails(status=status)))  # fmt: skip
             return status
+
+    async def is_command_requester(
+        self, company_id: str, approval_id: UUID, *, requester_actor_id: str,
+        requester_actor_type: str, command_id: UUID,
+    ) -> bool:  # fmt: skip
+        """Non-consuming: a read only (no expiry write, no claim, no event). Any other
+        company, requester principal, source or command is the same ``False``."""
+        stored = await self._repository.get(company_id, approval_id)
+        return stored is not None and (
+            stored.company_id, stored.requester_actor_id, stored.requester_actor_type,
+            stored.source.kind, stored.source.command_id,
+        ) == (company_id, requester_actor_id, requester_actor_type,
+              ApprovalSource.WRITE_COMMAND, command_id)  # fmt: skip
 
     async def record_execution(
         self, company_id: str, approval_id: UUID, action_run_id: UUID, outcome: ApprovalOutcome

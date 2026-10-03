@@ -254,7 +254,8 @@ def test_write_command_continuation_has_one_winner(migrated, engine) -> None:
 
     async def body(pg: PG):
         commands = WriteCommandCoordinator(PostgresWriteCommandStore(pg.sessions),
-                                           pg.world.coordinator, pg.world.catalog)  # fmt: skip
+                                           pg.world.coordinator, pg.world.catalog,
+                                           approvals=pg.world.broker)  # fmt: skip
         scope = ActionScope(company_id=pg.company, store_id=STORE_A)
 
         def submit(approval_id=None):
@@ -404,3 +405,58 @@ def test_same_actor_id_with_another_actor_type_never_claims(migrated, engine) ->
                    "approval_id = :a AND event_type = 'execution_claimed'",
                    a=first.approval_id)  # fmt: skip
     assert claimed == [{"actor_id": "requester-1", "actor_type": "user"}]
+
+
+def test_wrong_actor_type_never_touches_an_approval_linked_command(migrated, engine) -> None:
+    """PostgresWriteCommandStore + PostgresApprovalRepository: a same-id principal of
+    another actor type finds the requester's command (namespace (company, actor id, key))
+    but changes nothing; the exact requester then continues it exactly once, also when
+    both race."""
+    from app.commands.errors import ApprovalContinuationRefusedError
+
+    key = "budget-change-pg-twin-0001"
+    params = {"campaign": "spring", "amount": 150, "reason": "Spring sale"}
+
+    async def body(pg: PG):
+        commands = WriteCommandCoordinator(PostgresWriteCommandStore(pg.sessions),
+                                           pg.world.coordinator, pg.world.catalog,
+                                           approvals=pg.world.broker)  # fmt: skip
+        scope = ActionScope(company_id=pg.company, store_id=STORE_A)
+        twin = actor("requester-1", REQUESTER, company=pg.company, actor_type="api_client")
+
+        def submit(who, approval_id=None):
+            return commands.submit(request(who), scope, ActionIntent(name=BUDGET_UPDATE.name),
+                                   params, key, approval_id=approval_id)  # fmt: skip
+
+        first = await submit(pg.requester)
+        await pg.world.service.approve(request(pg.approver), first.approval_id, None)
+        refused = []
+        for approval_id in (first.approval_id, None):
+            try:
+                await submit(twin, approval_id)
+            except ApprovalContinuationRefusedError as error:
+                refused.append(error)
+        after_twin = rows(engine, "SELECT status, approval_id FROM product.write_commands "
+                          "WHERE command_id = :c", c=first.command_id)  # fmt: skip
+        unconsumed = await pg.world.repository.get(pg.company, first.approval_id)
+        outcomes = await asyncio.gather(
+            *(submit(twin, first.approval_id) for _ in range(5)),
+            *(submit(pg.requester, first.approval_id) for _ in range(5)),
+            return_exceptions=True)  # fmt: skip
+        return first, refused, after_twin, unconsumed, outcomes, list(pg.world.budget.effects)
+
+    first, refused, after_twin, unconsumed, outcomes, effects = scenario(migrated, body)
+    assert len(refused) == 2
+    assert after_twin == [{"status": "awaiting_approval", "approval_id": first.approval_id}]
+    assert unconsumed.consumed_at is None
+    assert all(isinstance(o, ApprovalContinuationRefusedError) for o in outcomes[:5])
+    right = outcomes[5:]
+    assert not any(isinstance(o, Exception) for o in right)
+    assert [o.replayed for o in right].count(False) == 1 and len(effects) == 1
+    (row,) = rows(engine, "SELECT status FROM product.write_commands WHERE command_id = :c",
+                  c=first.command_id)  # fmt: skip
+    assert row["status"] == "verified"
+    claims = rows(engine, "SELECT actor_type FROM product.approval_events WHERE "
+                  "approval_id = :a AND event_type = 'execution_claimed'",
+                  a=first.approval_id)  # fmt: skip
+    assert claims == [{"actor_type": "user"}]

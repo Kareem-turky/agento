@@ -153,6 +153,24 @@ class ApprovalOutcome(StrEnum):
 
 
 @runtime_checkable
+class ApprovalContinuationGuard(Protocol):
+    """A NON-CONSUMING precheck protecting durable WriteCommand state (Task 036).
+
+    Answers only whether ``approval_id`` is a request of this company, made by this exact
+    requester principal (actor id AND actor type), for the WRITE_COMMAND source with this
+    exact ``command_id``. Unknown, foreign and mismatched requests are the same ``False``.
+    It never consumes, decides, changes or exposes a request, and it authorizes nothing:
+    execution still goes through ``ExecutionCoordinator`` (governance re-check, exact
+    subject fingerprint, status/expiry, one-time claim). Raises when it cannot answer:
+    the caller then fails closed."""
+
+    async def is_command_requester(
+        self, company_id: str, approval_id: UUID, *, requester_actor_id: str,
+        requester_actor_type: str, command_id: UUID,
+    ) -> bool: ...  # fmt: skip
+
+
+@runtime_checkable
 class ApprovalBroker(Protocol):
     async def request(self, subject: ApprovalSubject, validated_input: BaseModel) -> UUID:
         """Durably record the request (state + its first event, atomically) and return

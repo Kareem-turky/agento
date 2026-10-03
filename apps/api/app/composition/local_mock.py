@@ -142,7 +142,7 @@ def build_local_mock_composition(
         approvals = ProductApprovalBroker(PostgresApprovalRepository(sessions),
                                           observability=observability)  # fmt: skip
         coordinator = ExecutionCoordinator(gate, registry, audit, approvals=approvals)
-        commands = WriteCommandCoordinator(store, coordinator, catalog)
+        commands = WriteCommandCoordinator(store, coordinator, catalog, approvals=approvals)
 
         # ONE deterministic report service, shared by the HTTP report route and the
         # Operations Agent's report tool (same adapter, same gate), executed as the

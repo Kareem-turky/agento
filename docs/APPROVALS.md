@@ -136,11 +136,28 @@ ExecutionCoordinator.run(..., approval_id=<id>)
 - The awaiting → in-progress continuation is a compare-and-set, so exactly one caller
   executes and every other caller replays.
 - Terminal commands always replay; nothing executes twice.
-- WriteCommand idempotency is scoped by (company, actor id, key) and stores no actor type
-  (unchanged since Task 013). A same-id caller of another actor type therefore replays
-  the command. Its continuation never executes, because the approval claim is a principal
-  mismatch, but the command then ends `failed` / `approval_mismatch`, and the requester
-  needs a new request.
+- **An approval-linked command belongs to the exact requester principal.** WriteCommand
+  idempotency is scoped by (company, actor id, key) and stores no actor type (Task 013,
+  unchanged). A caller with the same actor id but another actor type can therefore find
+  the requester's command.
+- Before an approval-linked command is replayed (any status, with or without a presented
+  `approval_id`) or reopened, the `WriteCommandCoordinator` asks the non-consuming
+  `ApprovalContinuationGuard` (implemented by `ProductApprovalBroker`). The guard checks
+  that the approval:
+  - belongs to this company;
+  - was requested by this exact requester (actor id **and** actor type);
+  - came from the `write_command` source for this exact `command_id`.
+- If any check fails, the call raises `ApprovalContinuationRefusedError` and returns no
+  result and no `approval_id`. There is no `resume_after_approval` call, no
+  `ExecutionCoordinator` call and no write: the approval-linked command is
+  **inaccessible and unchanged**.
+- The guard only reads. It never consumes, decides or exposes a request, and it
+  authorizes nothing: the `ExecutionCoordinator` claim stays authoritative.
+- If no guard is configured or the guard cannot answer, the call fails closed with
+  `WriteCommandStoreError`, and nothing changes.
+- The order is: idempotency replay found → guard → presented `approval_id` must equal
+  the awaited one → `resume_after_approval` compare-and-set → the winner calls
+  `ExecutionCoordinator`.
 
 ### Workflows
 

@@ -56,7 +56,9 @@ class WriteCommandStoreError(WriteCommandError):
 
 
 class ApprovalContinuationRefusedError(WriteCommandError):
-    """Task 036: the approval id presented to continue an awaiting command is not the one
-    that command is awaiting. Nothing ran and the command is unchanged."""
+    """Task 036: an approval-linked command is not available to this caller: the caller is
+    not the exact requester principal (actor id AND actor type) of the approval the
+    command is linked to, or the approval id presented to continue it is not the one it
+    awaits. Nothing ran, nothing changed and nothing about the command is returned."""
 
     code = "approval_continuation_refused"
