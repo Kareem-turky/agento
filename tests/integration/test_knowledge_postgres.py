@@ -307,8 +307,12 @@ def test_retrieval_quality_and_deterministic_ordering(settings, migrated, databa
         assert [r.document_id for r in ties] == sorted(
             [tie_a.document.document_id, tie_b.document.document_id], key=str
         )
-        stemmed = asyncio.run(kb.service.query(context(company), "refunds", 10)).references
-        assert strong.document.document_id in [r.document_id for r in stemmed]
+        # The language-neutral ``simple`` baseline matches exact (lowercased) terms only:
+        # no language-specific stemming, so "refunds" does not match "refund".
+        exact = asyncio.run(kb.service.query(context(company), "REFUND", 10)).references
+        assert [r.document_id for r in exact] == ids
+        unstemmed = asyncio.run(kb.service.query(context(company), "refunds", 10)).references
+        assert unstemmed == ()
         bounded = asyncio.run(kb.service.query(context(company), "refund exchange", 1))
         assert len(bounded.references) == 1
         # Query text is data: full-text operators, quotes and SQL are inert.
@@ -316,6 +320,73 @@ def test_retrieval_quality_and_deterministic_ordering(settings, migrated, databa
                         "!!!", "refund' | 'x"):  # fmt: skip
             asyncio.run(kb.service.query(context(company), hostile, 5))
         assert asyncio.run(kb.service.query(context(company), "???", 5)).references == ()
+
+
+ARABIC = "سياسة الإرجاع والشحن: يمكن إرجاع المنتج خلال ١٤ يوما."
+MIXED = "Shipping SLA للشحن السريع: express delivery خلال يومين within 2 days."
+
+
+def _ids(kb, company: str, query: str, limit: int = 10) -> list:
+    bundle = asyncio.run(kb.service.query(context(company), query, limit))
+    assert all(r.trust.value == "untrusted_reference" for r in bundle.references)
+    return [(r.document_id, r.chunk_index) for r in bundle.references]
+
+
+def test_language_neutral_retrieval_english_arabic_and_mixed(settings, migrated, engine):
+    """Retrieval v1 uses PostgreSQL ``simple``: language-neutral exact lexical terms (no
+    stemming, no stop words, no language detection), for English, Arabic and mixed text,
+    with the same company / lifecycle / current-version scoping and ordering."""
+    company, other = str(uuid4()), str(uuid4())
+    with Knowledge(settings) as kb:
+        english = _create(kb.service, company, title="Refunds",
+                          body="Our refund policy: contact support first.")  # fmt: skip
+        arabic = _create(kb.service, company, title="سياسة الإرجاع", body=ARABIC)
+        mixed = _create(kb.service, company, title="Shipping / الشحن", category="shipping",
+                        body=MIXED)  # fmt: skip
+        archived = _create(kb.service, company, title="قديم", body=f"{ARABIC} refund policy")
+        asyncio.run(kb.service.archive_document(context(company), archived.document.document_id))
+        superseded = _create(kb.service, company, title="v1", body="سياسة الإرجاع refund")
+        asyncio.run(kb.service.publish_document_version(
+            context(company), superseded.document.document_id, title="v2",
+            content_type="text/plain", body="Unrelated warehouse notes."))  # fmt: skip
+        _create(kb.service, other, title="Foreign", body=f"{ARABIC} {MIXED} refund policy")
+
+        with engine.connect() as connection:  # the STORED vector: simple, exact surface forms
+            stored = connection.execute(
+                sa.text("SELECT search_vector::text FROM product.knowledge_chunks "
+                        "WHERE document_id = :d AND company_id = :c"),
+                {"d": arabic.document.document_id, "c": company},
+            ).scalar_one()  # fmt: skip
+        assert "'سياسة'" in stored and "'الإرجاع'" in stored and "'والشحن'" in stored
+        excluded = {archived.document.document_id, superseded.document.document_id}
+        # English exact lexical retrieval ("refund policy" found by "refund").
+        found = _ids(kb, company, "refund")
+        assert [d for d, _ in found] == [english.document.document_id]
+        # Arabic: exact Arabic terms from the content.
+        for query in ("سياسة", "الإرجاع", "سياسة الإرجاع"):
+            assert [d for d, _ in _ids(kb, company, query)] == [arabic.document.document_id], query
+        # Mixed Arabic/English content is found by either language's term.
+        for query in ("express", "للشحن", "SLA", "السريع"):
+            assert [d for d, _ in _ids(kb, company, query)] == [mixed.document.document_id], query
+        # A mixed query ranks both matching documents, deterministically.
+        both = _ids(kb, company, "الإرجاع express")
+        assert sorted(d for d, _ in both) == sorted(
+            [arabic.document.document_id, mixed.document.document_id], key=str
+        )
+        assert both == _ids(kb, company, "الإرجاع express")
+        # Other companies, archived documents and superseded versions never match.
+        for query in ("refund", "سياسة الإرجاع", "express للشحن"):
+            ids = {d for d, _ in _ids(kb, company, query)}
+            assert not ids & excluded, query
+        assert _ids(kb, other, "سياسة")  # the other company sees only its own document
+        assert {d for d, _ in _ids(kb, other, "سياسة")}.isdisjoint(
+            {english.document.document_id, arabic.document.document_id, mixed.document.document_id}
+        )
+        # Language-neutral: no English stop-word list ("our" is an ordinary term) and no
+        # Arabic or English stemming (a different surface form does not match).
+        assert [d for d, _ in _ids(kb, company, "our")] == [english.document.document_id]
+        assert _ids(kb, company, "الشحن") == []  # stored as "والشحن" / "للشحن"
+        assert _ids(kb, company, "policies") == []
 
 
 def test_prompt_injection_is_stored_and_returned_as_inert_data(settings, migrated, engine):

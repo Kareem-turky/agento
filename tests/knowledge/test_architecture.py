@@ -235,3 +235,21 @@ def test_untrusted_text_is_only_ever_a_bound_parameter() -> None:
     assert "sa.text(" not in text and "text(" not in text.replace("_text(", "")
     assert 'sa.bindparam("terms", expression)' in text
     assert "plainto_tsquery" not in text and "websearch_to_tsquery" not in text
+
+
+def test_lexical_retrieval_is_language_neutral_simple_everywhere() -> None:
+    """Retrieval v1 is PostgreSQL ``simple`` FTS: no language-specific configuration
+    (no stemming, stop words or language detection) in the stored vector or the query."""
+    from app.persistence.knowledge import SEARCH_CONFIGURATION, knowledge_chunks
+
+    assert SEARCH_CONFIGURATION == "simple"
+    computed = knowledge_chunks.c.search_vector.computed
+    assert computed is not None and "to_tsvector('simple'::regconfig, content)" in str(
+        computed.sqltext
+    )
+    assert "to_tsvector('simple'::regconfig, content)" in MIGRATION.read_text()
+    for path in KNOWLEDGE_FILES:
+        lower = path.read_text().lower()
+        for language in ("'english'", '"english"', "'arabic'", '"arabic"', "langdetect",
+                         "snowball", "stemmer", "hunspell", "ispell"):  # fmt: skip
+            assert language not in lower, (path.name, language)

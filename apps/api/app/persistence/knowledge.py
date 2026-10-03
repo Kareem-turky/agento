@@ -16,8 +16,10 @@ then the new immutable rows are inserted; pointer foreign keys are DEFERRED to c
 Concurrent writers are serialized on the pointer row, so versions are never duplicated
 and never skipped visibly (a refused duplicate rolls the increment back).
 
-Retrieval is PostgreSQL full-text search (``english`` configuration) over the chunks of
-the CURRENT version of ACTIVE documents of the company: the query is reduced to word
+Retrieval is PostgreSQL full-text search with the language-neutral ``simple``
+configuration (lowercased exact terms: no stemming, no stop words, no language assumed,
+so Arabic, English and mixed text work alike) over the chunks of the CURRENT version of
+ACTIVE documents of the company: the query is reduced to word
 terms (``query_terms``) and bound as ONE parameter; results are ordered by
 ``ts_rank_cd`` descending, then document id and chunk index (deterministic).
 
@@ -63,7 +65,7 @@ from app.knowledge.operating_context import (
 )
 from app.persistence.database import product_metadata
 
-SEARCH_CONFIGURATION = "english"
+SEARCH_CONFIGURATION = "simple"  # language-neutral: no stemming, no stop words
 _HASH = "~ '^[0-9a-f]{64}$'"
 _CATEGORIES = ", ".join(f"'{c.value}'" for c in KnowledgeCategory)
 _LIFECYCLES = ", ".join(f"'{c.value}'" for c in DocumentLifecycle)

@@ -125,8 +125,26 @@ model:
 
 The same body always yields the same chunks.
 
-**Retrieval** is PostgreSQL full-text search (`english` configuration, so it stems and
-drops stop words):
+**Retrieval** v1 is PostgreSQL full-text search with the language-neutral **`simple`**
+configuration, used for both the stored generated `tsvector` and the query `tsquery`.
+
+- **No language-specific processing.** `simple` lowercases words and matches exact terms.
+  It intentionally does no stemming, uses no stop-word list and detects no language, so
+  Product Core never assumes English. Arabic, English, mixed Arabic/English and other
+  languages work the same way.
+- **What that means in practice:**
+  - `refund` finds "refund policy", but `refunds` does not match `refund`.
+  - Arabic prefixes are not stripped: `الشحن` does not match `والشحن`.
+  - Common words such as `our` or `the` are ordinary terms.
+  - Arabic diacritics are not normalized. Unvocalized text is the expected form.
+- **Future retrieval.** Language-specific or semantic retrieval (stemming, embeddings) may
+  be added later as an optional enhancement behind the same `KnowledgeContextReader`
+  contract, without changing callers. This version adds no language detection,
+  per-document language setting, tokenizer or NLP dependency.
+- **Tests.** Real PostgreSQL tests prove English exact, Arabic and mixed-language retrieval
+  (`test_language_neutral_retrieval_english_arabic_and_mixed`).
+
+Query safety and scoping:
 
 - The query is reduced to at most 16 distinct word terms. Terms contain only word
   characters, so no full-text operator, quote or SQL can survive, and the terms are OR-ed

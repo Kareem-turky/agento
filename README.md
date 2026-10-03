@@ -151,7 +151,9 @@ policies, pricing, returns, shipping and supplier notes):
 
 - versioned and immutable per version, with archive and no delete;
 - chunked deterministically;
-- retrievable through bounded, company-scoped PostgreSQL full-text search;
+- retrievable through bounded, company-scoped, language-neutral PostgreSQL full-text
+  search (the `simple` configuration: exact terms, no stemming, so Arabic, English and
+  mixed text work alike);
 - returned as **untrusted references**, under an explicit precedence in which the
   structured model always outranks a document.
 

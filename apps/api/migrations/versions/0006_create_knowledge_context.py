@@ -6,7 +6,8 @@
     knowledge_documents                document identity, category, lifecycle, pointer
     knowledge_document_versions        immutable text snapshots (title, type, body, hash)
     knowledge_chunks                   immutable deterministic chunks of each version with
-                                       a stored generated tsvector (GIN-indexed)
+                                       a stored generated tsvector (GIN-indexed; the
+                                       language-neutral ``simple`` configuration)
 
 Versions and chunks are append-only (enforced by a trigger). No secret, credential,
 binary file, URL, embedding or provider payload is stored; no row is seeded (a company
@@ -152,7 +153,7 @@ def upgrade() -> None:
         sa.Column("end_offset", sa.Integer(), nullable=False),
         sa.Column("content_hash", sa.String(64), nullable=False),
         sa.Column("search_vector", TSVECTOR(),
-                  sa.Computed("to_tsvector('english'::regconfig, content)", persisted=True),
+                  sa.Computed("to_tsvector('simple'::regconfig, content)", persisted=True),
                   nullable=True),
         sa.PrimaryKeyConstraint("document_id", "version", "chunk_index",
                                 name="pk_knowledge_chunks"),

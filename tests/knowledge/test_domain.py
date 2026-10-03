@@ -240,6 +240,18 @@ def test_query_terms_are_bounded_word_tokens() -> None:
         assert not any(operator in term for term in query_terms(f"a{operator}b {operator}"))
 
 
+def test_query_terms_are_language_neutral() -> None:
+    assert query_terms("سياسة الإرجاع والشحن") == ("سياسة", "الإرجاع", "والشحن")
+    assert query_terms("Shipping SLA للشحن السريع express") == (
+        "shipping",
+        "sla",
+        "للشحن",
+        "السريع",
+        "express",
+    )
+    assert query_terms("Refunds REFUND refund") == ("refunds", "refund")  # no stemming
+
+
 def test_query_validation() -> None:
     assert validate_query("  hello   world ", 3).text == "hello world"
     for bad in ("", "   ", "x" * (MAX_QUERY_CHARS + 1), None, 5, "a\x00b"):
