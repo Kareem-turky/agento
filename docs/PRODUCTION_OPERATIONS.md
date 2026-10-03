@@ -153,7 +153,7 @@ The deployment factory builds it with `build_deployment_observability(settings)`
 | Setting | Values |
 | --- | --- |
 | `APP_OTEL_EXPORT_MODE` | `disabled` (default) or `otlp_http` |
-| `APP_OTEL_EXPORT_ENDPOINT` | Required only for `otlp_http`: an `http`/`https` collector **base** URL with a host. No credentials, query or fragment. |
+| `APP_OTEL_EXPORT_ENDPOINT` | Required for `otlp_http`: an `http`/`https` collector **base** URL with a host. No credentials, query or fragment. A supplied value is validated by the same rules even while export is disabled; it is then unused. |
 
 - **disabled:**
   - no SDK provider, exporter, processor, reader or thread is created;
@@ -178,6 +178,14 @@ The deployment factory builds it with `build_deployment_observability(settings)`
 - **No exporter headers or credentials in v1.** If you need authenticated remote
   telemetry, run a private collector and let it authenticate onward. The template never
   passes `OTEL_*` SDK variables to the API.
+- **No hidden exporter configuration.** The OpenTelemetry OTLP exporter would otherwise
+  read its own `OTEL_EXPORTER_OTLP*` environment (headers, endpoints, certificates,
+  compression, timeouts). With `otlp_http`, the API **refuses to start** if any variable
+  named `OTEL_EXPORTER_OTLP` or `OTEL_EXPORTER_OTLP_*` is present. The refusal happens
+  before any exporter is created, with a fixed error that names no variable or value:
+  "OpenTelemetry exporter environment overrides are not allowed; configure Product
+  telemetry with APP_OTEL_* settings only." With export disabled, no exporter exists,
+  so such variables have no Product effect.
 - **Best effort:**
   - an unreachable collector never fails a Product operation, readiness or System
     Status;
@@ -219,6 +227,12 @@ ops/backup.sh /secure/backups/agento-2026-10-03.dump
   - a `.sha256` companion file is written;
   - an existing backup or checksum is never overwritten;
   - a failed `pg_dump` exits non-zero and leaves no file behind;
+  - success means both final files were published and the checksum verifies;
+  - a failed publication (for example the dump published but the checksum not) rolls
+    back only the files this invocation published. Neither final artifact remains, and
+    a pre-existing file or a concurrent backup's files are never removed (ownership is
+    tracked explicitly). Of two concurrent backups to the same name, at most one
+    succeeds;
   - nothing is uploaded or transferred.
 - Schedule it, keep retention and copy it off the host with your own tooling.
 

@@ -158,14 +158,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _otel_export_is_consistent(self) -> Self:
-        if self.otel_export_mode == "otlp_http":
-            if self.otel_export_endpoint is None:
-                raise ValueError("APP_OTEL_EXPORT_ENDPOINT is required for otlp_http export")
-            if not is_safe_otlp_endpoint(self.otel_export_endpoint):
-                raise ValueError(
-                    "APP_OTEL_EXPORT_ENDPOINT must be an http(s) collector base URL without "
-                    "credentials, query or fragment"
-                )
+        # A supplied endpoint is always validated, even while export is disabled (then it
+        # is unused): a malformed or credential-bearing value never sits silently here.
+        if self.otel_export_endpoint is not None and not is_safe_otlp_endpoint(
+            self.otel_export_endpoint
+        ):
+            raise ValueError(
+                "APP_OTEL_EXPORT_ENDPOINT must be an http(s) collector base URL without "
+                "credentials, query or fragment"
+            )
+        if self.otel_export_mode == "otlp_http" and self.otel_export_endpoint is None:
+            raise ValueError("APP_OTEL_EXPORT_ENDPOINT is required for otlp_http export")
         return self
 
     @field_validator("company_id", mode="before")

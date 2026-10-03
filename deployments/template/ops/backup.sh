@@ -15,8 +15,10 @@
 #
 # Safety: umask 077 (files 0600); written to a temporary file in the target directory and
 # renamed only after pg_dump succeeded and the dump was checked; an existing backup or
-# checksum is never overwritten; a failure leaves no file behind. Nothing is printed but
-# file names and the checksum (never a password, URL or secret); nothing is uploaded.
+# checksum is never overwritten; a failed invocation leaves neither final artifact behind
+# (it rolls back only what it published itself, never another invocation's files).
+# Nothing is printed but file names and the checksum (never a password, URL or secret);
+# nothing is uploaded.
 # There is no scheduler: run it from your own operator tooling.
 set -euo pipefail
 umask 077
@@ -53,8 +55,21 @@ compose() {
 
 TMP="$(mktemp "$DIR/.agento-backup.XXXXXX")"
 TMP_SUM="$TMP.sha256"
-cleanup() { rm -f "$TMP" "$TMP_SUM"; }
+# Explicit publication ownership: only artifacts THIS invocation published are ever rolled
+# back, never a file that already existed (or that a concurrent backup published).
+PUBLISHED_OUTPUT=0
+PUBLISHED_CHECKSUM=0
+SUCCEEDED=0
+cleanup() {
+  rm -f "$TMP" "$TMP_SUM"
+  if [[ "$SUCCEEDED" != 1 ]]; then
+    [[ "$PUBLISHED_CHECKSUM" == 1 ]] && rm -f "$CHECKSUM"
+    [[ "$PUBLISHED_OUTPUT" == 1 ]] && rm -f "$OUTPUT"
+  fi
+  return 0
+}
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 
 # Inside the PostgreSQL container, over its local socket: no password is passed or shown.
 if ! compose exec -T postgres sh -c \
@@ -69,10 +84,18 @@ chmod 600 "$TMP"
 DIGEST="$(sha256sum "$TMP" | cut -d' ' -f1)"
 printf '%s  %s\n' "$DIGEST" "$NAME" > "$TMP_SUM"
 chmod 600 "$TMP_SUM"
-# Atomic, no-clobber publication (the checksum last: a backup without one is incomplete).
-mv -n "$TMP" "$OUTPUT"
-[[ ! -e "$TMP" ]] || fail "refusing to overwrite an existing backup"
-mv -n "$TMP_SUM" "$CHECKSUM"
-[[ ! -e "$TMP_SUM" ]] || fail "refusing to overwrite an existing checksum"
+# Atomic, no-clobber publication. Ownership is decided by whether OUR temporary file
+# actually moved (not by mv's exit status, which differs between coreutils versions when a
+# target already exists): a skipped move publishes nothing and owns nothing.
+mv -n "$TMP" "$OUTPUT" 2>/dev/null || true
+[[ ! -e "$TMP" ]] || fail "refusing to overwrite an existing backup (or it could not be published)"
+PUBLISHED_OUTPUT=1
+mv -n "$TMP_SUM" "$CHECKSUM" 2>/dev/null || true
+[[ ! -e "$TMP_SUM" ]] || fail "the checksum could not be published; the backup was rolled back"
+PUBLISHED_CHECKSUM=1
+# Success only once BOTH final artifacts exist and verify; until then the trap rolls back.
+(cd "$DIR" && sha256sum --check --quiet --strict -- "$NAME.sha256" >/dev/null 2>&1) \
+  || fail "the published backup does not verify; it was rolled back"
+SUCCEEDED=1
 
 printf 'backup written: %s (%s bytes)\nsha256: %s\n' "$NAME" "$(stat -c %s "$OUTPUT")" "$DIGEST"

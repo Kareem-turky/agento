@@ -454,6 +454,23 @@ echo "api stopped in ${elapsed}s with exit code $api_exit"
 [[ "$api_exit" == 0 && "$elapsed" -lt 30 ]] || fail "unclean API shutdown"
 docker logs "$api_id" 2>&1 | grep -q "Finished server process" || fail "no graceful API shutdown"
 
+step "Task 039: enabled OTLP export refuses a hidden OTEL_EXPORTER_OTLP* override before any exporter exists"
+set +e
+output="$(docker run --rm --read-only --tmpfs /tmp --network none \
+  -e APP_ENVIRONMENT=test -e APP_BUSINESS_BACKEND=disabled -e APP_DEFAULT_MODEL_PROVIDER=disabled \
+  -e APP_OTEL_EXPORT_MODE=otlp_http -e APP_OTEL_EXPORT_ENDPOINT=http://collector.invalid:4318 \
+  -e OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20$RUN_ID" \
+  -e OS_SECURITY_KEY="$OS_KEY" -e AGNO_TELEMETRY=false \
+  -e APP_DATABASE_URL="postgresql+psycopg://platform:$PG_PASSWORD@postgres:5432/platform" \
+  "$API_IMAGE" 2>&1)"
+code=$?
+set -e
+[[ "$code" != 0 ]] || fail "the API started with a hidden exporter header"
+grep -qF "OpenTelemetry exporter environment overrides are not allowed" <<< "$output" \
+  || fail "the API failed for another reason"
+grep -qF "$RUN_ID" <<< "$output" && fail "the refusal output contains the header value"
+echo "hidden exporter environment refused (exit $code), value never printed"
+
 step "production without a real business backend still fails closed (and Web never starts)"
 for backend in disabled mock; do
   set +e

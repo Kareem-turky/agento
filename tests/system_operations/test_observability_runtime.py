@@ -363,3 +363,112 @@ def test_agno_telemetry_stays_disabled_alongside_product_export(
     runtime = build_deployment_observability(settings_for(), stream=io.StringIO())
     with pytest.raises(RuntimeConfigurationError):
         create_app(settings, runtime_settings, observability=runtime.observability)
+
+
+# ----- no hidden OTEL_EXPORTER_OTLP* configuration surface -------------------------------------
+
+MARKER = "secret-marker-0c7e"
+HIDDEN_OVERRIDES = [
+    ("OTEL_EXPORTER_OTLP_HEADERS", f"authorization=Bearer%20{MARKER}"),
+    ("OTEL_EXPORTER_OTLP_TRACES_HEADERS", f"authorization=Bearer%20{MARKER}"),
+    ("OTEL_EXPORTER_OTLP_METRICS_HEADERS", f"x-api-key={MARKER}"),
+    ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", f"http://127.0.0.1:9/{MARKER}"),
+    ("OTEL_EXPORTER_OTLP", MARKER),
+]
+
+
+@pytest.fixture
+def exporter_constructions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import opentelemetry.exporter.otlp.proto.http.metric_exporter as metric_exporter
+    import opentelemetry.exporter.otlp.proto.http.trace_exporter as trace_exporter
+
+    built: list[str] = []
+    for module, name in (
+        (trace_exporter, "OTLPSpanExporter"),
+        (metric_exporter, "OTLPMetricExporter"),
+    ):
+        original = getattr(module, name)
+
+        def record(*args, _original=original, _name=name, **kwargs):
+            built.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, record)
+    return built
+
+
+@pytest.mark.parametrize(("variable", "value"), HIDDEN_OVERRIDES)
+def test_enabled_export_refuses_any_exporter_environment_override(
+    monkeypatch: pytest.MonkeyPatch, collector, exporter_constructions, variable, value
+) -> None:
+    from app.observability.deployment import (
+        EXPORTER_ENVIRONMENT_REFUSED,
+        TelemetryConfigurationError,
+    )
+
+    monkeypatch.setenv(variable, value)
+    configured = settings_for(
+        otel_export_mode="otlp_http", otel_export_endpoint=f"http://127.0.0.1:{collector.port}"
+    )
+    threads = {t.ident for t in threading.enumerate()}
+    with pytest.raises(TelemetryConfigurationError) as error:
+        build_deployment_observability(configured, stream=io.StringIO())
+    message = str(error.value)
+    assert message == EXPORTER_ENVIRONMENT_REFUSED  # fixed, value-free
+    assert MARKER not in message and variable not in message and "127.0.0.1" not in message
+    assert exporter_constructions == []  # refused BEFORE any exporter exists
+    assert {t.ident for t in threading.enumerate()} == threads
+    time.sleep(0.3)
+    assert collector.requests == []  # nothing ever reached the collector
+
+
+def test_the_deployment_factory_refuses_to_start_with_an_exporter_override(
+    monkeypatch: pytest.MonkeyPatch, settings, runtime_settings, exporter_constructions
+) -> None:
+    from app.bootstrap import create_deployment_app
+    from app.observability.deployment import TelemetryConfigurationError
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"authorization=Bearer%20{MARKER}")
+    configured = settings.model_copy(
+        update={"otel_export_mode": "otlp_http", "otel_export_endpoint": "http://127.0.0.1:9"}
+    )
+    with pytest.raises(TelemetryConfigurationError) as error:
+        create_deployment_app(configured, runtime_settings)
+    assert MARKER not in str(error.value)
+    assert exporter_constructions == []
+
+
+def test_disabled_export_ignores_exporter_environment_and_still_logs(
+    monkeypatch: pytest.MonkeyPatch, exporter_constructions
+) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"authorization=Bearer%20{MARKER}")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", f"http://127.0.0.1:9/{MARKER}")
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("no network connection may be opened")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    stream = io.StringIO()
+    runtime = build_deployment_observability(settings_for(), stream=stream)
+    assert runtime.export_mode == "disabled"
+    one_operation(runtime.observability)
+    runtime.shutdown()
+    assert exporter_constructions == []
+    record = json.loads(stream.getvalue())
+    assert record["outcome"] == "completed" and MARKER not in stream.getvalue()
+
+
+def test_a_supplied_endpoint_is_validated_even_while_export_is_disabled() -> None:
+    secret = "s3cretpassword"  # noqa: S105 - a test-only marker, not a credential
+    for endpoint in (
+        f"http://user:{secret}@collector:4318",
+        f"ftp://collector/{secret}",
+        f"http://collector/?token={secret}",
+    ):
+        with pytest.raises(ValueError) as error:
+            settings_for(otel_export_mode="disabled", otel_export_endpoint=endpoint)
+        assert secret not in str(error.value)
+    # A valid endpoint may be kept while disabled; it is simply unused.
+    kept = settings_for(otel_export_mode="disabled", otel_export_endpoint="http://collector:4318")
+    assert kept.otel_export_endpoint == "http://collector:4318"

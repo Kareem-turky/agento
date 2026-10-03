@@ -13,6 +13,11 @@
            global provider is installed, so nothing else (Agno included) exports.
         -> ONE ``OpenTelemetryObservability`` for the whole application.
 
+Only ``APP_OTEL_*`` configures export: with export enabled, ANY ``OTEL_EXPORTER_OTLP`` or
+``OTEL_EXPORTER_OTLP_*`` variable in the process environment (headers, endpoints,
+certificates, compression, timeouts, ...) is refused at startup with a fixed, value-free
+error, before any exporter exists, so the SDK can never inherit hidden configuration.
+
 The exported data is exactly the existing bounded Product observations (fixed operation,
 outcome and low-cardinality attributes; ``request_id`` only on spans). The resource
 carries only ``service.name``, ``service.version`` and the deployment environment. No
@@ -24,9 +29,10 @@ failure while doing so is swallowed and never blocks the rest of application shu
 """
 
 import logging
+import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TextIO
 
@@ -42,6 +48,28 @@ EXPORT_TIMEOUT_SECONDS = 5.0
 METRIC_EXPORT_INTERVAL_MILLIS = 30_000
 SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _HANDLER_MARK = "_agento_product_observability_handler"
+# The OpenTelemetry OTLP exporter reads its own environment (headers, endpoints,
+# certificates, compression, timeouts, ...). None of it may shape the Product exporter.
+_EXPORTER_ENVIRONMENT = "OTEL_EXPORTER_OTLP"
+EXPORTER_ENVIRONMENT_REFUSED = (
+    "OpenTelemetry exporter environment overrides are not allowed; configure Product "
+    "telemetry with APP_OTEL_* settings only."
+)
+
+
+class TelemetryConfigurationError(RuntimeError):
+    """A fixed, value-free startup error (never a variable name, value or endpoint)."""
+
+    def __init__(self) -> None:
+        super().__init__(EXPORTER_ENVIRONMENT_REFUSED)
+
+
+def has_exporter_environment_override(environ: Mapping[str, str]) -> bool:
+    """True if any ``OTEL_EXPORTER_OTLP`` / ``OTEL_EXPORTER_OTLP_*`` variable is set."""
+    return any(
+        name == _EXPORTER_ENVIRONMENT or name.startswith(f"{_EXPORTER_ENVIRONMENT}_")
+        for name in environ
+    )
 
 
 def configure_product_logging(level: str, *, stream: TextIO | None = None) -> logging.Logger:
@@ -105,9 +133,16 @@ def build_deployment_observability(
     *,
     stream: TextIO | None = None,
     metric_export_interval_millis: int = METRIC_EXPORT_INTERVAL_MILLIS,
+    environ: Mapping[str, str] | None = None,
 ) -> ObservabilityRuntime:
+    if settings.otel_export_mode == "otlp_http" and has_exporter_environment_override(
+        os.environ if environ is None else environ
+    ):
+        # Fail closed BEFORE any exporter exists: only APP_OTEL_* configures Product export.
+        raise TelemetryConfigurationError()
     logger = configure_product_logging(settings.log_level, stream=stream)
     if settings.otel_export_mode != "otlp_http" or settings.otel_export_endpoint is None:
+        # Disabled: no exporter is ever constructed, so OTEL_EXPORTER_OTLP* has no effect.
         return ObservabilityRuntime(OpenTelemetryObservability(logger=logger), "disabled")
 
     # Imported only when export is explicitly enabled.

@@ -45,6 +45,18 @@ def test_backup_is_a_full_online_custom_format_dump_published_atomically() -> No
     assert backup.index('mv -n "$TMP" "$OUTPUT"') < backup.index('mv -n "$TMP_SUM" "$CHECKSUM"')
     assert "refusing to overwrite an existing backup" in backup
     assert "trap cleanup EXIT" in backup and 'rm -f "$TMP" "$TMP_SUM"' in backup
+    # A failed invocation rolls back ONLY what it published itself (explicit ownership),
+    # never unconditionally, so a concurrent winner's or a pre-existing file is kept.
+    cleanup = backup.split("cleanup() {", 1)[1].split("\n}\n", 1)[0]
+    assert '[[ "$PUBLISHED_CHECKSUM" == 1 ]] && rm -f "$CHECKSUM"' in cleanup
+    assert '[[ "$PUBLISHED_OUTPUT" == 1 ]] && rm -f "$OUTPUT"' in cleanup
+    assert 'if [[ "$SUCCEEDED" != 1 ]]; then' in cleanup
+    assert not re.search(r'rm -f "\$OUTPUT" "\$CHECKSUM"', backup)
+    assert (
+        backup.index("PUBLISHED_CHECKSUM=1")
+        < backup.index("sha256sum --check")
+        < (backup.index("SUCCEEDED=1"))
+    )
     assert 'chmod 600 "$TMP"' in backup and "sha256sum" in backup
     assert '"PGDMP"' in backup  # verified before publication
 
