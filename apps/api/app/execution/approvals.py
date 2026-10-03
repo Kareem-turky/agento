@@ -129,6 +129,7 @@ class ApprovalClaim(BaseModel):
     store_id: str | None
     action_name: str
     requester_actor_id: str
+    requester_actor_type: ActorType  # the exact principal: id AND type
     action_run_id: UUID
 
 
@@ -139,7 +140,7 @@ class ApprovalClaimStatus(StrEnum):
     REJECTED = "rejected"
     EXPIRED = "expired"
     CANCELLED = "cancelled"
-    MISMATCH = "mismatch"  # another action, requester, store or input
+    MISMATCH = "mismatch"  # another action, requester principal, store or input
     ALREADY_CONSUMED = "already_consumed"
 
 

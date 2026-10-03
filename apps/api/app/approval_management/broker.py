@@ -92,6 +92,7 @@ class ProductApprovalBroker:
                     subject_fingerprint=subject_fingerprint(
                         action_name=subject.action_name,
                         requester_actor_id=subject.requester_actor_id,
+                        requester_actor_type=subject.requester_actor_type,
                         company_id=subject.company_id, store_id=subject.store_id,
                         validated_input=validated_input),
                     status=ApprovalStatus.REQUESTED, summary=subject.summary,
@@ -112,6 +113,7 @@ class ProductApprovalBroker:
                 now = self._now()
                 fingerprint = subject_fingerprint(
                     action_name=claim.action_name, requester_actor_id=claim.requester_actor_id,
+                    requester_actor_type=claim.requester_actor_type,
                     company_id=claim.company_id, store_id=claim.store_id,
                     validated_input=validated_input,
                 )  # fmt: skip
@@ -119,6 +121,7 @@ class ProductApprovalBroker:
                 status = await self._repository.claim(
                     claim.company_id, claim.approval_id, store_id=claim.store_id,
                     action_name=claim.action_name, requester_actor_id=claim.requester_actor_id,
+                    requester_actor_type=claim.requester_actor_type,
                     subject_fingerprint=fingerprint, action_run_id=claim.action_run_id, now=now,
                 )  # fmt: skip
             except Exception:

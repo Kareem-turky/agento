@@ -58,9 +58,11 @@ ExecutionCoordinator.run(request, intent, scope, parameters)
   `failed` / `approval_unavailable`, and no request or id is created. The same happens
   when storage is down.
 - The **subject fingerprint** is a SHA-256 over:
-  - a version tag;
+  - a version tag (`approval-subject-v2`);
   - the action name;
-  - the requester;
+  - the requester **principal**: actor id **and** actor type (from the trusted
+    `RequestContext.actor`). The same id under another actor type (for example a `user`
+    and an `api_client` both called `ops-1`) is a different principal and never matches;
   - the company and store;
   - the canonical JSON of the **validated** input.
 
@@ -101,7 +103,8 @@ ExecutionCoordinator.run(..., approval_id=<id>)
        DENY -> denied (the approval is untouched)
   -> handler.validate(parameters)
   -> ApprovalBroker.claim: one atomic compare-and-set that
-       - matches company, action, requester, store and the fingerprint of the NEW input
+       - matches company, action, requester principal (actor id AND actor type), store
+         and the fingerprint of the NEW input
        - requires status approved, not expired, not yet consumed
        - sets consumed_at / consumed_by_action_run_id
   -> CLAIMED -> execute -> verify -> record_execution (best effort)
@@ -113,13 +116,14 @@ ExecutionCoordinator.run(..., approval_id=<id>)
 | unknown id, or another company's id | `approval_not_found` |
 | still awaiting a decision | `approval_not_decided` |
 | rejected / expired / cancelled | `approval_rejected` / `approval_expired` / `approval_cancelled` |
-| another action, requester, store or input | `approval_mismatch` |
+| another action, requester principal (id or type), store or input | `approval_mismatch` |
 | already used | `approval_already_consumed` |
 
 - An approval is **one-time**: concurrent attempts produce exactly one execution, and the
   rest fail with `approval_already_consumed`.
 - A mismatch never consumes the approval.
 - A refusal is audited as `approval_refused` and never creates a replacement request.
+- The `execution_claimed` event names the consuming principal (actor id and actor type).
 
 ### WriteCommands
 
@@ -132,6 +136,11 @@ ExecutionCoordinator.run(..., approval_id=<id>)
 - The awaiting → in-progress continuation is a compare-and-set, so exactly one caller
   executes and every other caller replays.
 - Terminal commands always replay; nothing executes twice.
+- WriteCommand idempotency is scoped by (company, actor id, key) and stores no actor type
+  (unchanged since Task 013). A same-id caller of another actor type therefore replays
+  the command. Its continuation never executes, because the approval claim is a principal
+  mismatch, but the command then ends `failed` / `approval_mismatch`, and the requester
+  needs a new request.
 
 ### Workflows
 

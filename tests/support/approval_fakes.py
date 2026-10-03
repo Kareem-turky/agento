@@ -287,14 +287,16 @@ class InMemoryApprovalRepository:
         return decided
 
     async def claim(self, company_id: str, approval_id: UUID, *, store_id: str | None,
-                    action_name: str, requester_actor_id: str, subject_fingerprint: str,
+                    action_name: str, requester_actor_id: str, requester_actor_type: str,
+                    subject_fingerprint: str,
                     action_run_id: UUID, now: datetime) -> ApprovalClaimStatus:  # fmt: skip
         self._check()
         row = await self.get(company_id, approval_id)
         if row is None:
             return ApprovalClaimStatus.NOT_FOUND
-        if (row.action_name, row.requester_actor_id, row.store_id,
-                row.subject_fingerprint) != (action_name, requester_actor_id, store_id,
+        if (row.action_name, row.requester_actor_id, row.requester_actor_type, row.store_id,
+                row.subject_fingerprint) != (action_name, requester_actor_id,
+                                             requester_actor_type, store_id,
                                              subject_fingerprint):  # fmt: skip
             return ApprovalClaimStatus.MISMATCH
         refusal = {ApprovalStatus.REQUESTED: ApprovalClaimStatus.NOT_DECIDED,
@@ -311,7 +313,8 @@ class InMemoryApprovalRepository:
                                           "consumed_by_action_run_id": action_run_id})  # fmt: skip
         self.rows[approval_id] = consumed
         self._event(consumed, ApprovalEventType.EXECUTION_CLAIMED, now,
-                    actor_id=requester_actor_id, action_run_id=action_run_id)  # fmt: skip
+                    actor_id=requester_actor_id, actor_type=requester_actor_type,
+                    action_run_id=action_run_id)  # fmt: skip
         return ApprovalClaimStatus.CLAIMED
 
     async def record_execution(self, company_id: str, approval_id: UUID, action_run_id: UUID,

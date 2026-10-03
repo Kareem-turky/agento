@@ -235,7 +235,8 @@ def test_another_companys_request_is_invisible(migrated, engine) -> None:
         foreign = await pg.world.run_budget(stranger, approval_id=first.approval_id)
         claim = await repository.claim(
             other, first.approval_id, store_id=STORE_A, action_name=BUDGET_UPDATE.name,
-            requester_actor_id="requester-1", subject_fingerprint="0" * 64,
+            requester_actor_id="requester-1", requester_actor_type="user",
+            subject_fingerprint="0" * 64,
             action_run_id=uuid4(), now=pg.world.clock())  # fmt: skip
         return first, seen, events, foreign, claim
 
@@ -355,3 +356,51 @@ def test_deployment_app_serves_an_empty_approval_inbox(settings, runtime_setting
                              params={"approval_id": str(uuid4())})  # fmt: skip
         assert missing.status_code == 404
         assert client.get("/api/v1/approvals").status_code == 401
+
+
+def test_same_actor_id_with_another_actor_type_never_claims(migrated, engine) -> None:
+    """The requester principal is (actor id, actor type): the same id as an api_client
+    or system_agent is a different principal. Proven on the real CAS: even a claim that
+    presents the exact subject fingerprint of the user principal but another actor type
+    matches nothing and changes nothing."""
+    from app.approval_management.fingerprint import subject_fingerprint
+    from tests.support.approval_fakes import BudgetInput
+
+    async def body(pg: PG):
+        first = await pg.pending()  # requested by ("requester-1", "user")
+        await pg.world.service.approve(request(pg.approver), first.approval_id, None)
+        twins = [actor("requester-1", REQUESTER, company=pg.company, actor_type=kind)
+                 for kind in ("api_client", "system_agent")]  # fmt: skip
+        via_coordinator = [await pg.world.run_budget(t, approval_id=first.approval_id)
+                           for t in twins]  # fmt: skip
+        validated = BudgetInput(campaign="spring", amount=150, reason="Spring sale")
+        user_print = subject_fingerprint(
+            action_name=BUDGET_UPDATE.name, requester_actor_id="requester-1",
+            requester_actor_type="user", company_id=pg.company, store_id=STORE_A,
+            validated_input=validated)  # fmt: skip
+        direct = await pg.world.repository.claim(
+            pg.company, first.approval_id, store_id=STORE_A, action_name=BUDGET_UPDATE.name,
+            requester_actor_id="requester-1", requester_actor_type="api_client",
+            subject_fingerprint=user_print, action_run_id=uuid4(),
+            now=pg.world.clock())  # fmt: skip
+        unconsumed = await pg.world.repository.get(pg.company, first.approval_id)
+        # Concurrent: 5 twins and 5 real requesters; only the real principal can win.
+        race = await asyncio.gather(
+            *(pg.world.run_budget(twins[0], approval_id=first.approval_id) for _ in range(5)),
+            *(pg.world.run_budget(pg.requester, approval_id=first.approval_id)
+              for _ in range(5)))  # fmt: skip
+        return first, via_coordinator, direct, unconsumed, race, list(pg.world.budget.effects)
+
+    first, via_coordinator, direct, unconsumed, race, effects = scenario(migrated, body)
+    assert [r.reason for r in via_coordinator] == [R.APPROVAL_MISMATCH, R.APPROVAL_MISMATCH]
+    assert direct is ApprovalClaimStatus.MISMATCH and unconsumed.consumed_at is None
+    assert [r.reason for r in race[:5]] == [R.APPROVAL_MISMATCH] * 5
+    assert sorted(r.status.value for r in race[5:]) == ["failed"] * 4 + ["verified"]
+    assert len(effects) == 1
+    (row,) = rows(engine, "SELECT consumed_by_action_run_id FROM product.approval_requests "
+                  "WHERE approval_id = :a", a=first.approval_id)  # fmt: skip
+    assert row["consumed_by_action_run_id"] in {r.run_id for r in race[5:]}
+    claimed = rows(engine, "SELECT actor_id, actor_type FROM product.approval_events WHERE "
+                   "approval_id = :a AND event_type = 'execution_claimed'",
+                   a=first.approval_id)  # fmt: skip
+    assert claimed == [{"actor_id": "requester-1", "actor_type": "user"}]

@@ -52,12 +52,14 @@ class ApprovalRepository(Protocol):
 
     async def claim(
         self, company_id: str, approval_id: UUID, *, store_id: str | None, action_name: str,
-        requester_actor_id: str, subject_fingerprint: str, action_run_id: UUID,
-        now: datetime,
+        requester_actor_id: str, requester_actor_type: str, subject_fingerprint: str,
+        action_run_id: UUID, now: datetime,
     ) -> ApprovalClaimStatus:  # fmt: skip
         """Consume an approved, unconsumed, unexpired request whose subject matches
-        EXACTLY, atomically (at most one caller ever gets ``CLAIMED``), with its
-        ``execution_claimed`` event. Otherwise the reason, without changing anything."""
+        EXACTLY (including the requester principal: actor id AND actor type),
+        atomically (at most one caller ever gets ``CLAIMED``), with its
+        ``execution_claimed`` event (naming that principal). Otherwise the reason,
+        without changing anything."""
         ...
 
     async def record_execution(

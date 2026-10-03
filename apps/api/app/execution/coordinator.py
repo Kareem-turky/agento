@@ -31,7 +31,8 @@ permission: a denied actor is DENIED whatever approval id it presents.
        -> broker.request(subject, validated input)  (durable; no raw parameters)
        -> audit AWAITING_APPROVAL -> AWAITING_APPROVAL + approval_id  (nothing runs)
     approval_id: execute under a granted request, at most once
-       -> broker.claim(exact subject: action, requester, company, store, validated input)
+       -> broker.claim(exact subject: action, requester principal (id + type), company,
+                       store, validated input)
           anything but CLAIMED -> audit APPROVAL_REFUSED -> FAILED approval_<reason>
        -> the ALLOW path from EXECUTION_STARTED (the request stays consumed even if that
           audit write fails: a new request is needed; conservative by design)
@@ -317,7 +318,8 @@ class ExecutionCoordinator:
             claim = ApprovalClaim(
                 approval_id=approval_id, company_id=run.scope.company_id,
                 store_id=run.scope.store_id, action_name=context.action_name,
-                requester_actor_id=actor.actor_id, action_run_id=run.run_id,
+                requester_actor_id=actor.actor_id, requester_actor_type=actor.actor_type,
+                action_run_id=run.run_id,
             )  # fmt: skip
             try:
                 status = ApprovalClaimStatus(await broker.claim(claim, validated))

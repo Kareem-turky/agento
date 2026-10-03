@@ -159,7 +159,7 @@ def test_notes_are_bounded_inert_text() -> None:
 
 def fp(**changes) -> str:
     base = dict(action_name="test.budget.update", requester_actor_id="requester-1",
-                company_id=COMPANY, store_id=STORE_A,
+                requester_actor_type="user", company_id=COMPANY, store_id=STORE_A,
                 validated_input=Frozen(campaign="spring", amount=150))  # fmt: skip
     return subject_fingerprint(**{**base, **changes})
 
@@ -169,6 +169,10 @@ def test_fingerprint_binds_every_part_of_the_subject() -> None:
     assert len(reference) == 64 and reference == fp()  # deterministic, hex SHA-256
     for change in (dict(action_name="test.payout.release"),
                    dict(requester_actor_id="requester-2"), dict(company_id="other"),
+                   # The requester is a principal: the same id under another actor type
+                   # is another subject.
+                   dict(requester_actor_type="api_client"),
+                   dict(requester_actor_type="system_agent"),
                    dict(store_id=STORE_B), dict(store_id=None),
                    dict(validated_input=Frozen(campaign="spring", amount=151)),
                    dict(validated_input=Frozen(campaign="summer", amount=150))):  # fmt: skip

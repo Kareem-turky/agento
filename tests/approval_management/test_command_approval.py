@@ -126,3 +126,23 @@ def test_the_ticket_style_low_risk_write_never_creates_an_approval() -> None:
 
     (ticket,) = [a for a in OPERATIONS_ACTIONS if a.name == "operations.ticket.create"]
     assert ticket.risk.value == "low_risk_write"
+
+
+def test_same_actor_id_under_another_actor_type_never_continues_the_command() -> None:
+    """WriteCommand idempotency is scoped by (company, actor id, key) since Task 013 (no
+    actor type is stored), so a same-id twin of another actor type replays the command.
+    Its continuation still never executes: the approval binds to the exact principal, so
+    the claim is a mismatch, the approval stays unconsumed and nothing runs. The command
+    ends failed/approval_mismatch (fail-closed, no effect)."""
+    env = Commands()
+    first = run(env.submit())
+    run(env.world.service.approve(request(APP), first.approval_id, None))
+    twin = actor("requester-1", REQUESTER, actor_type="api_client")
+    refused = run(env.submit(approval_id=first.approval_id, who=twin))
+    assert (refused.status, refused.reason) == (CommandStatus.FAILED,
+                                                CommandReason.APPROVAL_MISMATCH)  # fmt: skip
+    assert env.world.budget.effects == []
+    assert env.world.repository.rows[first.approval_id].consumed_at is None
+    # Terminal: nothing ever executes for this command again, for anyone.
+    assert run(env.submit(approval_id=first.approval_id)).replayed
+    assert env.world.budget.effects == []

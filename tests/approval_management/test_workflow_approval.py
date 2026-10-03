@@ -31,7 +31,7 @@ from app.workflow_management.definitions import (
     WorkflowStepDefinition,
 )
 from app.workflow_management.engine import WorkflowEngine
-from app.workflow_management.errors import WorkflowNotResumableError
+from app.workflow_management.errors import WorkflowAccessDeniedError, WorkflowNotResumableError
 from app.workflow_management.handlers import (
     Checkpoints,
     GovernedWriteStepHandler,
@@ -267,3 +267,22 @@ def test_concurrent_resume_writes_once() -> None:
     assert all(isinstance(o, (ApprovalConflictError, ApprovalNotResumableError))
                for o in outcomes if isinstance(o, Exception))  # fmt: skip
     assert len(env.world.budget.effects) == 1 and env.report.calls == 1
+
+
+def test_same_actor_id_under_another_actor_type_never_resumes_or_executes() -> None:
+    env = Env()
+    result, approval = awaiting(env)
+    run(env.world.service.approve(request(APP), approval.approval_id, None))
+    for kind in ("api_client", "system_agent"):
+        twin = actor("requester-1", REQUESTER | APPROVER, actor_type=kind)
+        with pytest.raises(ApprovalAccessDeniedError):
+            run(env.service.resume_workflow(request(twin), approval.approval_id))
+        with pytest.raises(WorkflowAccessDeniedError):
+            run(env.engine.resume_after_approval(request(twin), result.run_id,
+                                                 approval.approval_id))  # fmt: skip
+    assert env.world.budget.effects == [] and env.report.calls == 0
+    assert env.repository.runs[result.run_id]["status"] == "awaiting_approval"
+    assert env.world.repository.rows[approval.approval_id].consumed_at is None
+    # The real principal still continues it, exactly once.
+    resumed = run(env.service.resume_workflow(request(REQ), approval.approval_id))
+    assert resumed.status == "succeeded" and len(env.world.budget.effects) == 1

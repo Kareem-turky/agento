@@ -250,3 +250,23 @@ def test_raw_parameters_never_reach_the_approval_store() -> None:
     assert len(stored.subject_fingerprint) == 64
     assert set(type(stored).model_fields) >= {"subject_fingerprint", "summary"}
     assert not {"parameters", "raw", "payload", "input"} & set(type(stored).model_fields)
+
+
+@pytest.mark.parametrize("requested_as, presented_as", [
+    ("user", "api_client"), ("user", "system_agent"), ("api_client", "user"),
+])  # fmt: skip
+def test_same_actor_id_under_another_actor_type_never_executes(requested_as, presented_as):
+    world = ApprovalWorld()
+    owner = actor("requester-1", REQUESTER, stores=REQ.store_ids, actor_type=requested_as)
+    first = requested(world, who=owner)
+    run(world.service.approve(request(APP), first.approval_id, None))
+    twin = actor("requester-1", REQUESTER, stores=REQ.store_ids, actor_type=presented_as)
+    refused = run(world.run_budget(twin, approval_id=first.approval_id))
+    assert (refused.status, refused.reason) == (S.FAILED, R.APPROVAL_MISMATCH)
+    assert world.budget.effects == []
+    assert world.repository.rows[first.approval_id].consumed_at is None  # still usable
+    done = run(world.run_budget(owner, approval_id=first.approval_id))
+    assert done.status is S.VERIFIED and len(world.budget.effects) == 1
+    (claimed,) = [e for e in world.repository.history
+                  if e.event_type is ApprovalEventType.EXECUTION_CLAIMED]  # fmt: skip
+    assert (claimed.actor_id, claimed.actor_type) == ("requester-1", requested_as)

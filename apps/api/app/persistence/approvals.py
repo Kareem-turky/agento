@@ -280,8 +280,8 @@ class PostgresApprovalRepository:
 
     async def claim(
         self, company_id: str, approval_id: UUID, *, store_id: str | None, action_name: str,
-        requester_actor_id: str, subject_fingerprint: str, action_run_id: UUID,
-        now: datetime,
+        requester_actor_id: str, requester_actor_type: str, subject_fingerprint: str,
+        action_run_id: UUID, now: datetime,
     ) -> ApprovalClaimStatus:  # fmt: skip
         statement = (
             sa.update(approval_requests)
@@ -290,6 +290,7 @@ class PostgresApprovalRepository:
                 _r.status == ApprovalStatus.APPROVED.value, _r.consumed_at.is_(None),
                 _r.expires_at > now, _r.action_name == action_name,
                 _r.requester_actor_id == requester_actor_id,
+                _r.requester_actor_type == requester_actor_type,
                 _r.store_id.is_not_distinct_from(store_id),
                 _r.subject_fingerprint == subject_fingerprint,
             )
@@ -303,6 +304,7 @@ class PostgresApprovalRepository:
                     await session.execute(_append(
                         approval_id, company_id, ApprovalEventType.EXECUTION_CLAIMED,
                         ApprovalStatus.APPROVED, now, actor_id=requester_actor_id,
+                        actor_type=requester_actor_type,
                         action_run_id=action_run_id))  # fmt: skip
                     return ApprovalClaimStatus.CLAIMED
                 row = (await session.execute(sa.select(approval_requests).where(
@@ -313,9 +315,10 @@ class PostgresApprovalRepository:
         if row is None:
             return ApprovalClaimStatus.NOT_FOUND
         current = _request(row)
-        if (current.action_name, current.requester_actor_id, current.store_id,
-                current.subject_fingerprint) != (action_name, requester_actor_id, store_id,
-                                                 subject_fingerprint):  # fmt: skip
+        if (current.action_name, current.requester_actor_id, current.requester_actor_type,
+                current.store_id, current.subject_fingerprint) != (
+                action_name, requester_actor_id, requester_actor_type, store_id,
+                subject_fingerprint):  # fmt: skip
             return ApprovalClaimStatus.MISMATCH
         return _refusal(current, now)
 
