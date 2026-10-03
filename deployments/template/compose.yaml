@@ -3,7 +3,7 @@
 # docker-compose.yml). Run from this directory of a checked-out Product repository:
 #
 #   cp .env.example .env        # then fill in real values (never commit .env)
-#   docker compose up -d        # postgres -> migrate (exits 0) -> api (healthy) -> web
+#   docker compose up -d        # postgres -> migrate (exits 0) -> api (ready) -> web (ready)
 #
 # The API and Web images are built separately (see README.md) and referenced by
 # API_IMAGE and WEB_IMAGE. Only Web is published, on 127.0.0.1; the API is private.
@@ -71,6 +71,10 @@ services:
     environment:
       APP_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT must be set}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      # Product OpenTelemetry export (optional, disabled by default). No OTEL_* SDK
+      # variable and no exporter header or credential is ever passed to the API.
+      APP_OTEL_EXPORT_MODE: ${APP_OTEL_EXPORT_MODE:-disabled}
+      APP_OTEL_EXPORT_ENDPOINT: ${APP_OTEL_EXPORT_ENDPOINT:-}
       APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-platform}
       APP_AGNO_DB_SCHEMA: ${APP_AGNO_DB_SCHEMA:-agno_runtime}
       APP_PRODUCT_AUTH_MODE: ${APP_PRODUCT_AUTH_MODE:?APP_PRODUCT_AUTH_MODE must be set}
@@ -104,7 +108,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Starts only once the Product API is healthy.
+    # Starts only once the Product API is healthy, i.e. READY (/health/ready): PostgreSQL
+    # reachable and the Product schema at the expected revision.
     depends_on:
       api:
         condition: service_healthy

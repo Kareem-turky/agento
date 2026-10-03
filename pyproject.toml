@@ -22,9 +22,12 @@ dependencies = [
     "redis==8.1.0",
     # Product schema migrations (product-owned tables only; never Agno's schema)
     "alembic==1.20.0",
-    # Product observability: OpenTelemetry API only (traces + metrics). No SDK is
-    # configured and no exporter is installed by the Product: nothing leaves the host.
+    # Product observability: OpenTelemetry API (traces + metrics). The SDK and the
+    # OTLP/HTTP exporter are used ONLY when a deployment explicitly sets
+    # APP_OTEL_EXPORT_MODE=otlp_http (Task 039); disabled by default: nothing leaves the host.
     "opentelemetry-api==1.45.0",
+    "opentelemetry-sdk==1.45.0",
+    "opentelemetry-exporter-otlp-proto-http==1.45.0",
     # Secure outbound HTTP transport for integration adapters (app.integrations.http).
     "httpx==0.28.1",
 ]
@@ -34,8 +37,6 @@ dev = [
     "pytest==9.1.1",
     "ruff==0.16.9",
     "pyyaml==6.0.3",
-    # In-memory span/metric readers for observability tests only (no exporter).
-    "opentelemetry-sdk==1.45.0",
 ]
 
 [tool.uv]

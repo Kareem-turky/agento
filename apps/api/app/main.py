@@ -10,6 +10,7 @@ the Product services and then calls this function:
 ``uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api``.
 """
 
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -64,6 +65,8 @@ from app.routes.operations_tickets import (
     OPERATIONS_TICKETS_PATH,
 )
 from app.routes.operations_tickets import router as operations_tickets_router
+from app.routes.system import PUBLIC_HEALTH_PATHS, SYSTEM_PATHS, SYSTEM_SERVICE_STATE_KEY
+from app.routes.system import router as system_router
 from app.routes.workflows import WORKFLOWS_PATHS, WORKFLOWS_SERVICE_STATE_KEY
 from app.routes.workflows import router as workflows_router
 from app.runtime import attach_agent_os, resolve_runtime_settings, runtime_status
@@ -72,6 +75,12 @@ from app.services.operations_reports import DailyOperationsReportService
 from app.services.operations_tickets import (
     OperationsTicketCommandQueryService,
     OperationsTicketCommandService,
+)
+from app.system_operations import (
+    DatabaseReadinessProbe,
+    LifecycleSnapshot,
+    SystemOperationsService,
+    TelemetryExportMode,
 )
 from app.workflow_management.service import WorkflowInspectionService
 
@@ -93,6 +102,7 @@ def create_app(
     knowledge_service: KnowledgeService | None = None,
     approval_service: ApprovalService | None = None,
     conversation_service: ConversationReadService | None = None,
+    system_probe: DatabaseReadinessProbe | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -136,7 +146,12 @@ def create_app(
     governance). Without one the Approval routes answer 503.
     ``conversation_service`` is the read-only Product Conversation inspection (Task 037):
     canonical conversations and their transcripts (no ingest, webhook or send route).
-    Without one the Conversation routes answer 503."""
+    Without one the Conversation routes answer 503.
+    ``system_probe`` is the bounded PostgreSQL / Product schema readiness probe (Task 039),
+    composed by the caller. ``/health/live`` never uses it; ``/health/ready`` and the
+    Product-authenticated ``/api/v1/system/status`` evaluate it FRESH on every call
+    together with the lifespan and Agent runtime state. Without one the instance is never
+    ready (``/health/ready`` answers 503), because PostgreSQL readiness cannot be shown."""
     settings = settings or get_settings()
     observer = observability if observability is not None else build_default_observability()
     runtime_settings = resolve_runtime_settings(settings, runtime_settings)
@@ -156,6 +171,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.started_at = time.monotonic()
         app.state.runtime_started = True
         try:
             yield
@@ -175,6 +191,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.runtime_started = False
+    app.state.started_at = None
     if agent_service is not None:
         # Which Product Agents' trusted runtimes this deployment actually composed.
         agent_service = agent_service.with_runtime(
@@ -206,6 +223,26 @@ def create_app(
     setattr(app.state, APPROVALS_SERVICE_STATE_KEY, approval_service)
     setattr(app.state, CONVERSATIONS_SERVICE_STATE_KEY, conversation_service)
 
+    def lifecycle() -> LifecycleSnapshot:
+        return LifecycleSnapshot(
+            application_started=bool(app.state.runtime_started),
+            agent_runtime_attached=getattr(app.state, "agent_os", None) is not None,
+            started_at=app.state.started_at,
+        )
+
+    setattr(
+        app.state,
+        SYSTEM_SERVICE_STATE_KEY,
+        SystemOperationsService(
+            probe=system_probe,
+            lifecycle=lifecycle,
+            version=__version__,
+            environment=settings.environment,
+            export_mode=TelemetryExportMode(settings.otel_export_mode),
+            observability=observer,
+        ),
+    )
+
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
         return {
@@ -229,7 +266,10 @@ def create_app(
     app.include_router(knowledge_router)
     app.include_router(approvals_router)
     app.include_router(conversations_router)
+    app.include_router(system_router)
 
+    # Excluded from the AgentOS key: the Product-authenticated paths, plus the public
+    # container health probes (no credential at all, like AgentOS's own /health).
     app.state.agent_os = attach_agent_os(
         app,
         settings,
@@ -248,6 +288,8 @@ def create_app(
             *KNOWLEDGE_PATHS,
             *APPROVALS_PATHS,
             *CONVERSATIONS_PATHS,
+            *SYSTEM_PATHS,
+            *PUBLIC_HEALTH_PATHS,
         ),
     )
     # Product HTTP observability sits just inside the request context: it observes only

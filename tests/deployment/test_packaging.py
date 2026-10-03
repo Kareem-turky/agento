@@ -154,7 +154,8 @@ def test_healthcheck_uses_the_stdlib_against_health() -> None:
     assert "CMD [" in check
     argv = json.loads(check.split("CMD", 1)[1])
     assert argv[:2] == ["python", "-c"]
-    assert "urllib.request" in argv[2] and "http://127.0.0.1:8000/health" in argv[2]
+    # Task 039: Docker health is Product READINESS (not mere process liveness).
+    assert "urllib.request" in argv[2] and "'http://127.0.0.1:8000/health/ready'" in argv[2]
     for _, arguments in instructions():  # comments aside: no curl/wget anywhere
         assert "curl" not in arguments and "wget" not in arguments
 
@@ -303,6 +304,10 @@ def test_deployments_hold_only_the_generic_template_and_the_local_demo() -> None
         "deployments/template/.env.example",
         "deployments/template/README.md",
         "deployments/template/compose.yaml",
+        # Task 039: operator-run backup and restore-into-empty tooling (no scheduler,
+        # no backup container, no API or UI).
+        "deployments/template/ops/backup.sh",
+        "deployments/template/ops/restore-into-empty.sh",
     ]
 
 

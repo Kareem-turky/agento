@@ -473,21 +473,25 @@ PostgreSQL. It lives in `app/observability/`:
 - **Structured completion logs:** one deterministic JSON record per operation
   (`event=product.operation.completed`, `operation`, `outcome`, `duration_ms`, UTC
   `timestamp`, `request_id`, `trace_id`/`span_id`, bounded details) on the stdlib
-  logger `app.product.observability`. Root logging is not reconfigured.
+  logger `app.product.observability`, written to stdout at `APP_LOG_LEVEL` by the
+  deployment factory (Task 039). Root logging is not reconfigured.
 - **OpenTelemetry API traces and metrics:** one span per operation
   (`product.<operation>`, scope `commerce-ai-platform.product`; the HTTP span is the
   parent of the service span), a `product.operation.count` counter and a
-  `product.operation.duration` histogram (seconds). Only the OpenTelemetry **API** is a
-  runtime dependency (`opentelemetry-api==1.45.0`).
+  `product.operation.duration` histogram (seconds). The OpenTelemetry API, SDK and the
+  OTLP/HTTP exporter (`1.45.0`) are runtime dependencies; the SDK and exporter are used
+  only when export is enabled (Task 039).
 - **Request correlation:** the server-generated `request_id` (the `X-Request-ID`
   header) appears in the HTTP and the service log/span of the same request. It is never
   a metric attribute (metrics stay low-cardinality). `trace_id`/`span_id` are logged
   only when an OpenTelemetry SDK provides a valid span context; otherwise they are
   `null` (never invented).
-- **No remote export by default:** the Product installs no SDK, exporter, collector or
-  global provider, opens no connection and starts no thread; without a deployment-side
-  OpenTelemetry configuration traces and metrics are no-ops and only the local logs
-  remain. There is no telemetry setting, endpoint, credential or HTTP route.
+- **No remote export by default:** `APP_OTEL_EXPORT_MODE=disabled` (the default) creates
+  no SDK provider, exporter or thread and opens no connection; only the local logs
+  remain. `APP_OTEL_EXPORT_MODE=otlp_http` with `APP_OTEL_EXPORT_ENDPOINT` (an http(s)
+  collector base URL, no credentials) exports the same bounded traces and metrics over
+  OTLP/HTTP (Task 039). There is no exporter header, credential, collector container or
+  metrics/telemetry HTTP route.
 - **No business payloads:** never company, store, actor, roles, permissions, messages,
   ticket titles/descriptions, idempotency keys or hashes, command/ticket/order/shipment
   or customer identifiers, business dates, report contents, provider values,
@@ -499,6 +503,17 @@ PostgreSQL. It lives in `app/observability/`:
 - **Deferred:** only operation count/latency/outcome are measured. Token or model-cost
   telemetry is intentionally not implemented. Agno usage telemetry stays disabled (see
   above); Product observability is a separate, Product-owned concern.
+
+### Production operations (Task 039)
+
+Liveness (`GET /health/live`) and readiness (`GET /health/ready`) are public and
+minimal; the Product-authenticated System Status (`GET /api/v1/system/status`,
+`system.read`, the **System** page) explains readiness with stable codes. A PostgreSQL
+outage makes an instance not ready (never not alive), and it recovers without a restart.
+Docker health is readiness. Operator tooling takes an online full backup
+(`deployments/template/ops/backup.sh`) and restores only into an empty database
+(`ops/restore-into-empty.sh`). `GET /health` is unchanged. See
+[`docs/PRODUCTION_OPERATIONS.md`](docs/PRODUCTION_OPERATIONS.md).
 
 ### Commerce domain (canonical, provider-independent)
 
@@ -1527,13 +1542,13 @@ docker compose up -d                               # then open http://127.0.0.1:
   from `uv.lock` without the dev group (`uv sync --locked --no-dev`, uv 0.8.17); only the
   virtual environment, `alembic.ini`, `apps/api/app/` and `apps/api/migrations/`.
   Non-root (UID/GID 10001), the same `app.bootstrap` deployment factory as a source
-  checkout, a stdlib `HEALTHCHECK` on `/health`. **Migrations stay explicit**: the same
+  checkout, a stdlib `HEALTHCHECK` on `/health/ready` (Task 039 readiness). **Migrations stay explicit**: the same
   image runs `alembic -c /app/alembic.ini upgrade head` as a one-shot job; the API never
   migrates at startup.
 - **Web image**: multi-stage on a digest-pinned Node 22 slim base, `npm ci` from
   `package-lock.json`, Next **standalone** output (only `server.js`, the compiled server,
   traced runtime modules and static assets). Non-root (UID/GID 10002), `node server.js`
-  as PID 1, a `HEALTHCHECK` through the BFF to the private API's `/health`.
+  as PID 1, a `HEALTHCHECK` through the BFF to the private API's `/health/ready`.
   `PRODUCT_API_ORIGIN` is not baked in.
 
 Topology: **Browser → localhost Web (Operations Console + same-origin BFF) → private

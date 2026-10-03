@@ -26,6 +26,11 @@ are created by the business composition's ExecutionCoordinator.
 
 ONE Product observability per application: chosen here, then handed to the business
 composition (the Workflow engine), the Knowledge composition and ``create_app`` alike.
+By default it is the deployment observability runtime (Task 039): the Product logger at
+``APP_LOG_LEVEL`` and, only when ``APP_OTEL_EXPORT_MODE=otlp_http``, OTLP export. Its
+telemetry is flushed and stopped LAST on shutdown (bounded, best-effort), after every
+Product resource was released. The system readiness probe (Task 039,
+``app.composition.system``) is composed like the others.
 
 The composition-owned resources are released when the application shuts down, or
 immediately if the application cannot be built. Startup never migrates the database.
@@ -43,10 +48,15 @@ from app.composition.approvals import build_approvals
 from app.composition.conversations import build_conversations
 from app.composition.integrations import build_integration_management
 from app.composition.knowledge import build_knowledge
+from app.composition.system import build_system_readiness
 from app.composition.workflows import build_workflow_inspection
 from app.config import Settings, get_settings
 from app.main import create_app
-from app.observability import ProductObservability, build_default_observability
+from app.observability import (
+    ObservabilityRuntime,
+    ProductObservability,
+    build_deployment_observability,
+)
 
 
 def create_deployment_app(
@@ -59,12 +69,28 @@ def create_deployment_app(
     """``model`` is an explicit model override for deterministic tests. ``observability``
     is the Product observability of the application (default: the Product's own); it is
     chosen ONCE here and the SAME instance is given to the business composition (Workflow
-    runs and Step attempts) and to ``create_app`` (HTTP and service observations).
+    runs and Step attempts) and to ``create_app`` (HTTP and service observations). Without
+    one, the deployment observability runtime is built from settings (and stopped last).
     Product authentication and the services always come from settings."""
     settings = settings or get_settings()
-    observer = observability if observability is not None else build_default_observability()
-    composition = build_deployment_composition(settings, model=model, observability=observer)
-    discards: list[Callable[[], None]] = [composition.discard]
+    telemetry: ObservabilityRuntime | None = None
+    if observability is not None:
+        observer = observability
+    else:
+        telemetry = build_deployment_observability(settings)
+        observer = telemetry.observability
+
+    def stop_telemetry() -> None:
+        if telemetry is not None:
+            telemetry.shutdown()  # bounded and never raises
+
+    try:
+        composition = build_deployment_composition(settings, model=model, observability=observer)
+    except BaseException:
+        stop_telemetry()
+        raise
+    # discard_all releases in reverse order: telemetry (first in the list) stops last.
+    discards: list[Callable[[], None]] = [stop_telemetry, composition.discard]
 
     def discard_all() -> None:
         # Release everything built so far, in reverse order; every release is attempted.
@@ -91,6 +117,8 @@ def create_deployment_app(
         discards.append(approvals.discard)
         conversations = build_conversations(settings, observability=observer)
         discards.append(conversations.discard)
+        system = build_system_readiness(settings)
+        discards.append(system.discard)
     except BaseException:
         discard_all()
         raise
@@ -114,7 +142,14 @@ def create_deployment_app(
                             try:
                                 await approvals.close()
                             finally:
-                                await conversations.close()
+                                try:
+                                    await conversations.close()
+                                finally:
+                                    try:
+                                        await system.close()
+                                    finally:
+                                        # Telemetry last: it observed everything above.
+                                        stop_telemetry()
 
     try:
         return create_app(
@@ -131,6 +166,7 @@ def create_deployment_app(
             knowledge_service=knowledge.service,
             approval_service=approvals.service,
             conversation_service=conversations.service,
+            system_probe=system.probe,
             shutdown_callback=close,
             observability=observer,
         )

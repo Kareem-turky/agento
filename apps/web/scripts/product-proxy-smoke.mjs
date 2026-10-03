@@ -83,6 +83,10 @@ const stub = createServer((req, res) => {
     }
     if (mode === "huge") return reply(res, 200, { padding: "x".repeat(2 * 1024 * 1024) });
     if (path === "/health") return reply(res, 200, { status: "ok", agent_runtime: { status: "ready" } });
+    if (path === "/health/ready") {
+      return readiness === "ready" ? reply(res, 200, { status: "ready" }) : reply(res, 503, { status: "not_ready" });
+    }
+    if (path === "/api/v1/system/status") return reply(res, 200, SYSTEM_STATUS);
     if (path === "/api/v1/operations/runs") return reply(res, 200, { request_id: UPSTREAM_REQUEST_ID, message: "stub analysis" });
     if (path === "/api/v1/operations/reports/daily") return reply(res, 200, REPORT);
     if (path === "/api/v1/operations/tickets") {
@@ -104,6 +108,16 @@ const stub = createServer((req, res) => {
     return reply(res, 404, { detail: "Not Found" });
   });
 });
+
+// Task 039: the stub's readiness (the smoke flips it) and a System Status body.
+let readiness = "ready";
+const SYSTEM_STATUS = {
+  request_id: UPSTREAM_REQUEST_ID,
+  application: { version: "0.1.0", environment: "test", uptime_seconds: 42 },
+  overall: "ready", reasons: [],
+  components: { application: "ready", database: "ready", product_schema: "ready", agent_runtime: "ready" },
+  observability: { export_mode: "disabled" },
+};
 
 // Metadata only: the stub (like the Product) never returns a secret value.
 const CONNECTION_VIEW = {
@@ -657,6 +671,47 @@ async function main() {
     }
     check(received.length === 0, "conversations: refused methods and unknown paths never reached the upstream");
 
+    // 8f. Task 039: public readiness (no credential, minimal status passed through, 503
+    // included) and the Product-authenticated, read-only System Status.
+    received.length = 0;
+    response = await fetch(`${base}/api/product/health/ready`, { headers: hostile });
+    body = await response.json();
+    check(response.status === 200 && JSON.stringify(body) === '{"status":"ready"}', "readiness: 200 ready from the stub");
+    check(received.length === 1 && received[0].method === "GET" && received[0].url === "/health/ready",
+          "readiness: only GET /health/ready upstream");
+    check(!("authorization" in received[0].headers) && !("cookie" in received[0].headers),
+          "readiness: no Authorization or Cookie forwarded");
+    check(response.headers.get("cache-control") === "no-store", "readiness: no-store");
+    readiness = "not_ready";
+    response = await fetch(`${base}/api/product/health/ready`);
+    body = await response.json();
+    check(response.status === 503 && JSON.stringify(body) === '{"status":"not_ready"}',
+          "readiness: 503 not_ready passed through unchanged");
+    readiness = "ready";
+    received.length = 0;
+    response = await fetch(`${base}/api/product/system/status`, { headers: hostile });
+    body = await response.json();
+    check(response.status === 200 && body.overall === "ready" && received.length === 1 &&
+          received[0].method === "GET" && received[0].url === "/api/v1/system/status",
+          "system status: exact GET upstream");
+    check(received[0]?.headers.authorization === `Bearer ${API_KEY}` && !("cookie" in (received[0]?.headers ?? {})),
+          "system status forwards Authorization only");
+    check(response.headers.get("cache-control") === "no-store", "system status: no-store");
+    received.length = 0;
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+      for (const path of ["/api/product/system/status", "/api/product/health/ready"]) {
+        response = await fetch(`${base}${path}`, { method, headers: json, body: method === "DELETE" ? undefined : "{}" });
+        check(response.status === 405, `system: ${method} ${path} refused (${response.status})`);
+      }
+    }
+    for (const path of ["/api/product/system/restart", "/api/product/system/backup", "/api/product/system/restore",
+                        "/api/product/system/migrate", "/api/product/system/logs", "/api/product/metrics",
+                        "/api/product/logs", "/api/product/health/live"]) {
+      response = await fetch(`${base}${path}`, { method: "POST", headers: json, body: "{}" });
+      check(response.status === 404 || response.status === 405, `not proxied: ${path} (${response.status})`);
+    }
+    check(received.length === 0, "system: refused methods and unknown paths never reached the upstream");
+
     // 9-10. extra and duplicate query parameters are rejected before the upstream call.
     received.length = 0;
     const rejected = [
@@ -687,6 +742,8 @@ async function main() {
       `/api/product/conversations?company_id=other`,
       `/api/product/conversations/conversation?${cv}&${cv}`,
       `/api/product/conversations/messages?${cv}&store_id=x`,
+      `/api/product/health/ready?verbose=1`,
+      `/api/product/system/status?company_id=other`,
     ];
     for (const path of rejected) {
       response = await fetch(`${base}${path}`, { method: path.includes("/test") ? "POST" : "GET", headers: hostile });
@@ -747,6 +804,7 @@ async function main() {
       ["/settings/agents", "Agents"],
       ["/settings/integrations", "Integrations"],
       ["/settings/knowledge", "Knowledge"],
+      ["/system", "System"],
     ];
     for (const [path, heading] of pages) {
       response = await fetch(`${base}${path}`);

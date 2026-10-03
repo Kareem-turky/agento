@@ -54,6 +54,7 @@ const AREAS: [string, string, string][] = [
   ["/settings/agents", "Agents", "Product Agents, their availability, Skills and Tasks."],
   ["/settings/integrations", "Integrations", "Connections to external systems."],
   ["/settings/knowledge", "Knowledge", "Operating model and reference documents."],
+  ["/system", "System", "Operational status of this installation (read-only)."],
 ];
 
 const AVAILABILITY: Record<string, [string, Tone]> = {

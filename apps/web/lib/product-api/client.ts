@@ -38,6 +38,7 @@ import type {
   WorkflowResponse,
   WorkflowRunListResponse,
   WorkflowRunResponse,
+  SystemStatusResponse,
 } from "./types";
 
 const PATHS = {
@@ -76,6 +77,7 @@ const PATHS = {
   knowledgeDocumentCreate: "/api/product/knowledge/document/create",
   knowledgeDocumentArchive: "/api/product/knowledge/document/archive",
   knowledgeQuery: "/api/product/knowledge/query",
+  systemStatus: "/api/product/system/status",
   approvals: "/api/product/approvals",
   approval: "/api/product/approvals/approval",
   approvalApprove: "/api/product/approvals/approval/approve",
@@ -355,6 +357,29 @@ const isWorkflowRunResponse: Guard<WorkflowRunResponse> = (v): v is WorkflowRunR
 
 export function getHealth(): Promise<ProductResult<HealthResponse>> {
   return send(PATHS.health, { method: "GET" }, isHealth);
+}
+
+// ----- System Status (Task 039): read-only, Product-authenticated (system.read) ------------
+
+const SYSTEM_STATES = ["ready", "starting", "unavailable", "mismatch"];
+const isSystemState = (v: unknown): boolean => isString(v) && SYSTEM_STATES.includes(v);
+
+const isSystemStatus: Guard<SystemStatusResponse> = (v): v is SystemStatusResponse => {
+  if (!isObject(v) || !isObject(v.application) || !isObject(v.components) || !isObject(v.observability)) {
+    return false;
+  }
+  const a = v.application;
+  const c = v.components;
+  return (
+    isString(v.request_id) && isString(a.version) && isString(a.environment) && isNumber(a.uptime_seconds) &&
+    (v.overall === "ready" || v.overall === "not_ready") && isStringArray(v.reasons) &&
+    isSystemState(c.application) && isSystemState(c.database) && isSystemState(c.product_schema) &&
+    isSystemState(c.agent_runtime) && isString(v.observability.export_mode)
+  );
+};
+
+export function getSystemStatus(apiKey: string): Promise<ProductResult<SystemStatusResponse>> {
+  return send(PATHS.systemStatus, { method: "GET", headers: authorized(apiKey) }, isSystemStatus);
 }
 
 export function runOperations(apiKey: string, storeId: string, message: string): Promise<ProductResult<OperationsRunResponse>> {

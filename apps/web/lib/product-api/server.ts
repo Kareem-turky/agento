@@ -21,6 +21,9 @@ export const UPSTREAM_TIMEOUT_MS = 120_000;
 /** The exact Product API routes (method + path) this BFF can reach. Nothing else. */
 export const UPSTREAM = {
   health: { method: "GET", path: "/health" },
+  // Task 039: public readiness (container health; no credential) and System Status.
+  healthReady: { method: "GET", path: "/health/ready" },
+  systemStatus: { method: "GET", path: "/api/v1/system/status" },
   operationsRuns: { method: "POST", path: "/api/v1/operations/runs" },
   dailyReport: { method: "GET", path: "/api/v1/operations/reports/daily" },
   tickets: { method: "POST", path: "/api/v1/operations/tickets" },

@@ -7,7 +7,8 @@
 // Keys select a behaviour (fixed test values, not credentials):
 //   stub-key-good     every read succeeds
 //   stub-key-401      every authenticated request is 401 (key not accepted)
-//   stub-key-partial  approvals are 403 (not permitted); knowledge is 503; the rest succeed
+//   stub-key-partial  approvals and System Status are 403 (not permitted); knowledge is 503;
+//                     the rest succeed
 //   stub-key-empty    every list is empty and no integration is installed
 //
 // Test control (reached only by the test script, directly; the Web BFF never proxies it):
@@ -74,6 +75,15 @@ const REPORT = {
   },
 };
 
+// Task 039: the authenticated System Status (fixed states and codes only).
+const SYSTEM_STATUS = {
+  request_id: RID,
+  application: { version: "0.1.0", environment: "test", uptime_seconds: 7322 },
+  overall: "not_ready", reasons: ["schema_mismatch"],
+  components: { application: "ready", database: "ready", product_schema: "mismatch", agent_runtime: "ready" },
+  observability: { export_mode: "otlp_http" },
+};
+
 export function startStub(port = 0) {
   const requests = [];
   const holds = new Map(); // path -> how many upcoming requests to hold
@@ -113,6 +123,8 @@ export function startStub(port = 0) {
     const empty = key === "stub-key-empty";
     if (key === "stub-key-partial" && path.startsWith("/api/v1/approvals")) return send(403, { detail: "Forbidden" });
     if (key === "stub-key-partial" && path.startsWith("/api/v1/knowledge")) return send(503, { detail: "Unavailable" });
+    if (key === "stub-key-partial" && path === "/api/v1/system/status") return send(403, { detail: "Forbidden" });
+    if (empty && path === "/api/v1/system/status") return send(503, { detail: "System status unavailable" });
     switch (path) {
       case "/api/v1/agents": return send(200, { request_id: RID, agents: [AGENT] });
       case "/api/v1/approvals": return send(200, { request_id: RID, approvals: empty ? [] : [APPROVAL] });
@@ -126,6 +138,7 @@ export function startStub(port = 0) {
       case "/api/v1/conversations": return send(200, { request_id: RID, conversations: empty ? [] : [CONVERSATION] });
       case "/api/v1/operations/runs": return send(200, { request_id: RID, message: "Stub analysis: 2 shipments need attention." });
       case "/api/v1/operations/reports/daily": return send(200, REPORT);
+      case "/api/v1/system/status": return send(200, SYSTEM_STATUS);
       default: return send(404, { detail: "Not found" });
     }
     }

@@ -22,6 +22,7 @@ export const NAVIGATION = [
       { href: "/settings/agents", label: "Agents" },
       { href: "/settings/integrations", label: "Integrations" },
       { href: "/settings/knowledge", label: "Knowledge" },
+      { href: "/system", label: "System" },
     ],
   },
 ] as const;

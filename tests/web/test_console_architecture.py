@@ -74,7 +74,12 @@ EXPECTED_ROUTES = {
     "conversations/route.ts": {"GET": "conversations"},
     "conversations/conversation/route.ts": {"GET": "conversation"},
     "conversations/messages/route.ts": {"GET": "conversationMessages"},
+    # Task 039: public minimal readiness (Web container health) and System Status.
+    "health/ready/route.ts": {"GET": "healthReady"},
+    "system/status/route.ts": {"GET": "systemStatus"},
 }  # fmt: skip
+# Server-only BFF routes the browser client never calls (Web container health check).
+SERVER_ONLY_ROUTES = {"health/ready/route.ts"}
 INTEGRATION_CONNECTION = "/api/v1/integrations/connection"
 UPSTREAM_PATHS = {
     "health": ("GET", "/health"),
@@ -125,6 +130,8 @@ UPSTREAM_PATHS = {
     "conversations": ("GET", "/api/v1/conversations"),
     "conversation": ("GET", "/api/v1/conversations/conversation"),
     "conversationMessages": ("GET", "/api/v1/conversations/messages"),
+    "healthReady": ("GET", "/health/ready"),
+    "systemStatus": ("GET", "/api/v1/system/status"),
 }
 
 
@@ -289,10 +296,12 @@ def test_client_exposes_explicit_functions_only() -> None:
                         "listConversations", "getConversation",
                         "listConversationMessages",
                         # Task 038: the one session's in-memory auth observer.
-                        "observeAuthOutcomes"}  # fmt: skip
+                        "observeAuthOutcomes",
+                        # Task 039: read-only System Status (system.read).
+                        "getSystemStatus"}  # fmt: skip
     paths = set(re.findall(r'"(/api/product/[^"]*)"', source))
-    assert paths == {"/api/product/" + relative.removesuffix("/route.ts")
-                     for relative in EXPECTED_ROUTES}  # fmt: skip
+    browser_routes = [r for r in EXPECTED_ROUTES if r not in SERVER_ONLY_ROUTES]
+    assert paths == {"/api/product/" + r.removesuffix("/route.ts") for r in browser_routes}
     assert 'credentials: "omit"' in source and 'cache: "no-store"' in source
     assert "crypto.randomUUID()" in source
     assert source.count('method: "DELETE"') == 2 and source.count('method: "PUT"') == 2
@@ -574,7 +583,7 @@ def test_product_navigation_links_every_area_once() -> None:
     hrefs = re.findall(r'href: "([^"]+)"', navigation)
     assert hrefs == ["/", "/operations", "/approvals", "/conversations", "/workflows",
                      "/settings/agents", "/settings/integrations",
-                     "/settings/knowledge"]  # fmt: skip
+                     "/settings/knowledge", "/system"]  # fmt: skip
     for page in (component("Console.tsx"), code(INTEGRATIONS_UI / "IntegrationsSettings.tsx")):
         assert 'className="topbar__nav"' not in page and "<nav" not in page
 

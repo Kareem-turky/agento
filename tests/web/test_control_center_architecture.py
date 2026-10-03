@@ -20,8 +20,10 @@ RUNTIME_DIRS = (WEB / "app", WEB / "lib", WEB / "components")
 
 # Dependency manifests are unchanged by the Control Center (no UI, chart, icon or test
 # framework was added).
-PYPROJECT_SHA256 = "b5da90a5d5157ee54af92d388d6f76705da27a6241808e980ee1d89b636184eb"
-UV_LOCK_SHA256 = "db55fc9c21e8f903ca329875eb9d14c5a11486ffb4aac7f2624544b267e7c638"
+# Task 039 (reviewed): opentelemetry-sdk moves to runtime and the OTLP/HTTP exporter is
+# added (optional, disabled-by-default export); nothing else changes.
+PYPROJECT_SHA256 = "449b133228a3c7172e3e0c4b4868401bbf6df521e03bdd1e1ae1e14917a54744"
+UV_LOCK_SHA256 = "bd2ecfa15909b304cb4892c704b0110ed0c008c7c1670b9f2024d40b3348d359"
 PACKAGE_JSON_SHA256 = "2d1c907aeffb7b41f29d3865fe8e0c7d580de3b7e0e312e23856630de6c198f2"
 PACKAGE_LOCK_SHA256 = "e5ba136b463838ff3b82cdf88fb73c08aa4d2ee34b410fee945793617156c989"
 
@@ -111,7 +113,9 @@ def test_no_new_bff_route_or_generic_proxy() -> None:
         str(p.relative_to(WEB / "app" / "api" / "product"))
         for p in (WEB / "app" / "api" / "product").rglob("route.ts")
     )
-    assert len(routes) == 44
+    # Task 038 added none; Task 039 adds exactly health/ready and system/status.
+    assert len(routes) == 46
+    assert {"health/ready/route.ts", "system/status/route.ts"} <= set(routes)
     assert not [r for r in routes if "[" in r or "overview" in r or "aggregate" in r]
     assert not list((WEB / "app").rglob("[[]*"))  # no dynamic / catch-all segment anywhere
     assert not (WEB / "middleware.ts").exists() and not (WEB / "proxy.ts").exists()
@@ -164,6 +168,7 @@ def test_shell_components_exist_and_own_branding_navigation_and_session() -> Non
         "Agents",
         "Integrations",
         "Knowledge",
+        "System",  # Task 039, under Configure
     ]
 
 

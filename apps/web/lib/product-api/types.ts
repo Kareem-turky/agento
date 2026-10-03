@@ -510,3 +510,21 @@ export type ConversationMessagesResponse = {
   messages: ConversationMessageView[];
   next_before_sequence: number | null;
 };
+
+// ----- System Status (Task 039): stable states and codes only ------------------------------
+
+export type SystemComponentState = "ready" | "starting" | "unavailable" | "mismatch";
+
+export type SystemStatusResponse = {
+  request_id: string;
+  application: { version: string; environment: string; uptime_seconds: number };
+  overall: "ready" | "not_ready";
+  reasons: string[]; // stable codes, e.g. schema_mismatch
+  components: {
+    application: SystemComponentState;
+    database: SystemComponentState;
+    product_schema: SystemComponentState;
+    agent_runtime: SystemComponentState;
+  };
+  observability: { export_mode: string }; // never the endpoint
+};

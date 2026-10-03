@@ -144,8 +144,18 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     conversations = {(m, p) for m, p in routes if p.startswith("/api/v1/conversations")}
     assert conversations == CONVERSATION_ROUTES
     assert not [p for _, p in approvals if "create" in p or "request" in p]
+    # Task 039: read-only System Status and the two public health probes, nothing else
+    # (no write, restart, backup, restore, metrics or log route).
+    system = {(m, p) for m, p in routes if p.startswith(("/api/v1/system", "/health"))}
+    assert system == {
+        ("GET", "/health"),
+        ("GET", "/health/live"),
+        ("GET", "/health/ready"),
+        ("GET", "/api/v1/system/status"),
+    }
     assert product == {
         ("GET", "/health"),
+        ("GET", "/api/v1/system/status"),
         ("POST", "/api/v1/operations/runs"),
         ("GET", "/api/v1/operations/reports/daily"),
         ("POST", "/api/v1/operations/tickets"),

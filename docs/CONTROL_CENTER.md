@@ -17,6 +17,7 @@ migration (head stays `0008`) and no dependency.
 | `/settings/agents` | Agents. |
 | `/settings/integrations` | Integrations. |
 | `/settings/knowledge` | Knowledge. |
+| `/system` | System (Task 039): the read-only operational status of this installation (`system.read`). See [`PRODUCTION_OPERATIONS.md`](PRODUCTION_OPERATIONS.md). |
 | `/settings/approvals` | Redirects to `/approvals`. |
 | `/settings/workflows` | Redirects to `/workflows`. |
 
@@ -31,7 +32,7 @@ canonical pages never redirect back.
   top bar with an accessible **Menu** toggle (`aria-expanded`, `aria-controls`, closes on
   navigation and Escape) on narrow screens, a skip link and the `<main>` landmark.
 - `ProductNavigation`: **Work** (Overview, Operations, Approvals, Conversations,
-  Workflows) and **Configure** (Agents, Integrations, Knowledge), with `aria-current="page"`
+  Workflows) and **Configure** (Agents, Integrations, Knowledge, System), with `aria-current="page"`
   on the active route. Internal framework or runtime names never appear in navigation.
 - `SessionControl`: API reachability, key status, connect / replace key and Disconnect.
 - `PageHeader`: each page's single `<h1>`. The shell renders no `<h1>`.
@@ -169,3 +170,13 @@ other state. It shows no audit log.
   NODE_PATH="$(npm root -g)" node scripts/control-center.browser.mjs
   # optional: SCREENSHOT_DIR=/some/dir to keep review screenshots
   ```
+
+## System (Task 039)
+
+`/system` sits under Configure. It reads the Product-authenticated System Status once, and
+again only when Refresh is pressed; there is no polling. It uses the same in-memory
+session: 401 rejects the key and 403 does not. It shows fixed component states and
+stable reasons only, never a URL, host, endpoint, identifier or secret. The Overview's
+read set is unchanged: it only links to System. The Web container health check uses the
+separate public, minimal BFF route `/api/product/health/ready`, which needs no Product
+API key.

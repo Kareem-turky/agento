@@ -18,12 +18,16 @@ PRODUCTION_FILES = sorted(APP_DIR.rglob("*.py")) + sorted(
 )
 
 ALLOWED_ROOTS = {"__future__", "collections", "datetime", "hmac", "typing", "uuid", "pydantic",
-                 "sqlalchemy"}  # fmt: skip
+                 "sqlalchemy",
+                 # Task 039: asyncio.timeout bounds the readiness probe.
+                 "asyncio"}  # fmt: skip
 # The command store contracts, the audit event contract PostgresAuditSink persists, and
 # the contract vocabularies its CHECK constraints are derived from (pure models/enums).
 # Task 031: the integration connection METADATA contract only (never the secret store,
 # drivers, service, definitions with credentials, or any business integration).
 ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
+               # Task 039: the readiness probe result vocabulary (pure dataclasses/enums).
+               "app.system_operations.models",
                "app.execution.models", "app.governance.policy", "app.context.models",
                "app.integration_management.connections",
                "app.agent_management.configuration",

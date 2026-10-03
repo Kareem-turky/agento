@@ -15,6 +15,7 @@ Agno's model classes read themselves. No credentials have defaults.
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -35,6 +36,10 @@ ModelProvider = Literal["disabled", "openai", "anthropic", "demo"]
 # deployment, so it is refused outside the development environments (fail closed).
 DEMO_MODEL_PROVIDER = "demo"
 ProductAuthMode = Literal["disabled", "api_key"]
+# Product OpenTelemetry export (Task 039). Disabled by default: no exporter, no thread,
+# no network. ``otlp_http`` sends the existing bounded Product traces and metrics to ONE
+# operator-chosen OTLP/HTTP collector base URL (``/v1/traces`` and ``/v1/metrics``).
+OtelExportMode = Literal["disabled", "otlp_http"]
 # Which business backend the deployment composition root (``app.bootstrap``) selects:
 # a stable, Product-owned backend plugin IDENTIFIER, never a module, class, import path,
 # URL or code. Settings validate only its syntax (no normalization); whether an id is
@@ -81,6 +86,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Validation errors never echo raw input (an endpoint or DSN may embed a credential).
+        hide_input_in_errors=True,
     )
 
     name: str = "commerce-ai-platform"
@@ -128,6 +135,12 @@ class Settings(BaseSettings):
     # PostgreSQL; protection relies on this directory's deployment/volume security.
     integration_secrets_dir: Path | None = None
 
+    # Product OpenTelemetry export (Task 039): a startup-only setting, never exposed by
+    # the Product API, UI or logs. The endpoint is a collector BASE URL: http(s), a host,
+    # no credentials, query or fragment; the OTLP paths are appended by the Product.
+    otel_export_mode: OtelExportMode = "disabled"
+    otel_export_endpoint: str | None = None
+
     @field_validator("backend_config_dir", "backend_secrets_dir", "integration_secrets_dir",
                      mode="before")  # fmt: skip
     @classmethod
@@ -135,6 +148,25 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("otel_export_endpoint", mode="before")
+    @classmethod
+    def _blank_endpoint_is_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _otel_export_is_consistent(self) -> Self:
+        if self.otel_export_mode == "otlp_http":
+            if self.otel_export_endpoint is None:
+                raise ValueError("APP_OTEL_EXPORT_ENDPOINT is required for otlp_http export")
+            if not is_safe_otlp_endpoint(self.otel_export_endpoint):
+                raise ValueError(
+                    "APP_OTEL_EXPORT_ENDPOINT must be an http(s) collector base URL without "
+                    "credentials, query or fragment"
+                )
+        return self
 
     @field_validator("company_id", mode="before")
     @classmethod
@@ -179,6 +211,27 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.environment in DEVELOPMENT_ENVIRONMENTS
+
+
+def is_safe_otlp_endpoint(raw: str) -> bool:
+    """An http(s) base URL with a host: no userinfo, query, fragment or whitespace."""
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port  # raises on a malformed port
+    except ValueError:
+        return False
+    del port
+    return (
+        raw == raw.strip()
+        and not any(c.isspace() for c in raw)
+        and parsed.scheme in ("http", "https")
+        and bool(parsed.hostname)
+        and "@" not in parsed.netloc
+        and not parsed.query
+        and not parsed.fragment
+        and "?" not in raw
+        and "#" not in raw
+    )
 
 
 @lru_cache
