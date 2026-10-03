@@ -112,6 +112,7 @@ message_delivery_events = sa.Table(
     sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("external_event_ref", sa.String(256), nullable=True),
+    sa.Column("applied", sa.Boolean(), nullable=False),
     sa.PrimaryKeyConstraint("message_id", "sequence", name="pk_message_delivery_events"),
     sa.UniqueConstraint("company_id", "message_id", "external_event_ref",
                         name="uq_message_delivery_events_external"),
@@ -298,8 +299,11 @@ class PostgresConversationRepository:
                         if recorded != (update.state.value, update.occurred_at):
                             raise DeliveryEventFingerprintConflictError()
                         return DeliveryResult(outcome=DeliveryOutcome.DUPLICATE, state=current)
-                if not is_transition(current, update.state):
+                applied = is_transition(current, update.state)
+                if not applied and update.external_event_ref is None:
                     return DeliveryResult(outcome=DeliveryOutcome.STALE, state=current)
+                # One observation row: an applied transition, or a stale report whose
+                # provider event identity must be remembered (applied=False).
                 next_sequence = (
                     sa.select(sa.func.coalesce(sa.func.max(_d.sequence), 0) + 1)
                     .where(_d.message_id == message_id)
@@ -308,8 +312,10 @@ class PostgresConversationRepository:
                 await session.execute(sa.insert(message_delivery_events).values(
                     message_id=message_id, company_id=company_id, sequence=next_sequence,
                     state=update.state.value, occurred_at=update.occurred_at, recorded_at=now,
-                    external_event_ref=update.external_event_ref,
+                    external_event_ref=update.external_event_ref, applied=applied,
                 ))  # fmt: skip
+                if not applied:  # the current state never regresses
+                    return DeliveryResult(outcome=DeliveryOutcome.STALE, state=current)
                 await session.execute(
                     sa.update(conversation_messages)
                     .where(_m.company_id == company_id, _m.message_id == message_id)

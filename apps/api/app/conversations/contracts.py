@@ -63,10 +63,12 @@ class ConversationRepository(Protocol):
     async def record_delivery(
         self, company_id: str, message_id: UUID, update: DeliveryUpdate, now: datetime
     ) -> DeliveryResult:
-        """Apply a delivery update atomically (row lock on the message): a forward
-        transition appends one event; a repeat of a recorded external event ref is a
-        DUPLICATE (``DeliveryEventFingerprintConflictError`` if its data differs);
-        anything else is STALE (ignored, nothing recorded). Raises
+        """Apply a delivery update atomically (row lock on the message): a repeat of a
+        recorded external event ref is a DUPLICATE (``DeliveryEventFingerprintConflictError``
+        if its state or occurred_at differs); a forward transition appends one applied
+        event and updates the message; anything else is STALE: the message state is
+        unchanged, and the observation is appended (``applied=False``) only when it
+        carries an external event ref. Raises
         ``DeliveryUpdateRefusedError`` for an unknown/foreign or inbound message."""
         ...
 

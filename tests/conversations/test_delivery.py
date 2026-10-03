@@ -83,9 +83,11 @@ def test_stale_updates_never_regress_and_terminal_states_hold() -> None:
     for state in ("accepted", "delivered"):
         run(world.delivery.record(COMPANY, message.message_id, update(state)))
     for late in ("sent", "accepted", "unknown", "failed", "delivered"):
-        result = run(world.delivery.record(COMPANY, message.message_id, update(late, f"l-{late}")))
+        result = run(world.delivery.record(COMPANY, message.message_id, update(late)))
         assert (result.outcome, result.state) == (OUT.STALE, D.DELIVERED)
+    # Without an external event ref a stale update has no identity to remember.
     assert [e.state for e in world.repository.events] == [D.ACCEPTED, D.DELIVERED]
+    assert world.repository.messages[message.message_id].delivery_state is D.DELIVERED
     # failed is terminal in v1 too; unknown can still be resolved.
     world2 = ConversationWorld()
     _, other = outbound(world2)
@@ -116,3 +118,65 @@ def test_refusals() -> None:
         assert info.value.reason is reason
     assert world.repository.events == []
     assert world.repository.messages[first.message.message_id].delivery_state is D.RECEIVED
+
+
+def delivered(world: ConversationWorld):
+    _, message = outbound(world)
+    for i, (state, ref) in enumerate((("accepted", "e1"), ("delivered", "e2"))):
+        run(world.delivery.record(COMPANY, message.message_id, update(state, ref, i)))
+    return message
+
+
+def test_a_referenced_stale_event_is_remembered_without_regressing() -> None:
+    world = ConversationWorld()
+    message = delivered(world)
+    result = run(world.delivery.record(COMPANY, message.message_id, update("sent", "e-stale", 1)))
+    assert (result.outcome, result.state) == (OUT.STALE, D.DELIVERED)
+    assert world.repository.messages[message.message_id].delivery_state is D.DELIVERED
+    stale = [e for e in world.repository.events if e.external_event_ref == "e-stale"]
+    assert [(e.state, e.applied, e.sequence) for e in stale] == [(D.SENT, False, 3)]
+    assert [(e.state, e.applied) for e in world.repository.events] == [
+        (D.ACCEPTED, True),
+        (D.DELIVERED, True),
+        (D.SENT, False),
+    ]
+    # Identical replay of the stale observation: DUPLICATE, nothing new, no regression.
+    again = run(world.delivery.record(COMPANY, message.message_id, update("sent", "e-stale", 1)))
+    assert (again.outcome, again.state) == (OUT.DUPLICATE, D.DELIVERED)
+    assert len(world.repository.events) == 3
+
+
+def test_a_conflicting_replay_of_a_stale_event_fails_closed() -> None:
+    world = ConversationWorld()
+    message = delivered(world)
+    run(world.delivery.record(COMPANY, message.message_id, update("sent", "e-stale", 1)))
+    for conflicting in (update("failed", "e-stale", 1), update("sent", "e-stale", 9)):
+        with pytest.raises(DeliveryEventConflictError):
+            run(world.delivery.record(COMPANY, message.message_id, conflicting))
+    assert len(world.repository.events) == 3
+    assert world.repository.messages[message.message_id].delivery_state is D.DELIVERED
+
+
+def test_applied_event_duplicates_and_conflicts_are_unchanged() -> None:
+    world = ConversationWorld()
+    _, message = outbound(world)
+    first = run(world.delivery.record(COMPANY, message.message_id, update("accepted", "e1")))
+    again = run(world.delivery.record(COMPANY, message.message_id, update("accepted", "e1")))
+    assert (first.outcome, again.outcome) == (OUT.APPLIED, OUT.DUPLICATE)
+    for conflicting in (update("sent", "e1"), update("accepted", "e1", 3)):
+        with pytest.raises(DeliveryEventConflictError):
+            run(world.delivery.record(COMPANY, message.message_id, conflicting))
+    assert [(e.state, e.applied) for e in world.repository.events] == [(D.ACCEPTED, True)]
+
+
+def test_an_unapplied_observation_always_carries_an_event_ref() -> None:
+    from pydantic import ValidationError
+
+    from app.conversations.delivery import MessageDeliveryEvent
+
+    base = dict(message_id=uuid4(), company_id=COMPANY, sequence=1, state="sent",
+                occurred_at=T0, recorded_at=T0)  # fmt: skip
+    assert MessageDeliveryEvent(**base, applied=True).external_event_ref is None
+    assert MessageDeliveryEvent(**base, applied=False, external_event_ref="e").applied is False
+    with pytest.raises(ValidationError):
+        MessageDeliveryEvent(**base, applied=False)

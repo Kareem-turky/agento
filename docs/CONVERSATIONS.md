@@ -216,15 +216,31 @@ no queue and no worker.
   delivered, failed: terminal (v1)
   ```
 
-- **Events.** Each accepted transition appends one `MessageDeliveryEvent`. Events are
-  append-only (enforced by a trigger) and hold canonical data only: state, `occurred_at`,
-  `recorded_at` and an optional `external_event_ref`.
-- **Duplicate.** A repeated `external_event_ref` with the same data is a `duplicate`: no
-  new event. With different data it fails closed as a conflict.
-- **Stale.** An update that is not a forward transition from the **current** state is
-  `stale`: it is ignored, and nothing is recorded. This covers a late `sent` after
-  `delivered`, a repeat of the current state, or anything after a terminal state. The
-  current state never regresses.
+- **Events are observations.** `message_delivery_events` is the durable, append-only
+  (trigger-enforced) history of delivery OBSERVATIONS. Each row holds canonical data only:
+  - the reported `state`;
+  - `occurred_at` and `recorded_at`;
+  - an optional `external_event_ref`;
+  - `applied`: whether this observation changed the message's current state.
+- **Applied.** A forward transition from the **current** state appends one event with
+  `applied = true` and updates the message.
+- **Stale.** An update that is not a forward transition (a late `sent` after `delivered`,
+  a repeat of the current state, anything after a terminal state) is `stale`. It NEVER
+  changes the message's current state, which therefore never regresses.
+  - If it carries a provider `external_event_ref`, the observation is still appended with
+    `applied = false`, so that the event identity is remembered.
+  - Without a ref there is no identity to remember, and nothing is recorded.
+- **Duplicate and conflict.** Before any transition is evaluated, a supplied
+  `external_event_ref` is looked up for that message.
+  - The same reported state and `occurred_at` is a `duplicate`: no new row and no state
+    change, whether the first observation was applied or stale.
+  - A different state or time fails closed as a conflict.
+  - All of this happens under the message row lock, so concurrent copies store exactly
+    one observation.
+- **Reported state vs message state.** An event's `state` is the state REPORTED by that
+  observation, not necessarily the message's state. For example `accepted` (applied),
+  `delivered` (applied), `sent` (applied = false) leaves the message `delivered`. The
+  event `sequence` is Product append order.
 - **Inbound** messages never take an outbound transition.
 
 `ConversationDelivery` is the future provider delivery seam. Nothing in this build calls
@@ -287,7 +303,7 @@ are never labels and never logged.
 | --- | --- |
 | `product.conversations` | The conversation. It is unique per company, connection and external conversation ref, carries `next_message_sequence`, and has no foreign key to `integration_connections`. |
 | `product.conversation_messages` | Canonical messages. Sequence is unique per conversation; inbound refs are unique per company and connection. CHECK constraints cover direction/state/author consistency, the text bound, opaque refs and the fingerprint. |
-| `product.message_delivery_events` | Append-only (trigger). External event refs are unique per message. |
+| `product.message_delivery_events` | Append-only delivery observations (trigger), with an `applied` flag. A CHECK requires an event ref whenever `applied` is false. External event refs are unique per message. |
 
 There is no JSON or payload column. The downgrade removes only these three tables and
 their trigger function, and every Task 001–036 row survives.

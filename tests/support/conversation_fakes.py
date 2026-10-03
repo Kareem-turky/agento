@@ -273,13 +273,16 @@ class InMemoryConversationRepository:
                     if (seen.state, seen.occurred_at) != (update.state, update.occurred_at):
                         raise DeliveryEventFingerprintConflictError()
                     return DeliveryResult(outcome=DeliveryOutcome.DUPLICATE, state=current)
-            if not is_transition(current, update.state):
+            applied = is_transition(current, update.state)
+            if not applied and update.external_event_ref is None:
                 return DeliveryResult(outcome=DeliveryOutcome.STALE, state=current)
             sequence = 1 + sum(1 for e in self.events if e.message_id == message_id)
             self.events.append(MessageDeliveryEvent(
                 message_id=message_id, company_id=company_id, sequence=sequence,
                 state=update.state, occurred_at=update.occurred_at, recorded_at=now,
-                external_event_ref=update.external_event_ref))  # fmt: skip
+                external_event_ref=update.external_event_ref, applied=applied))  # fmt: skip
+            if not applied:
+                return DeliveryResult(outcome=DeliveryOutcome.STALE, state=current)
             self.messages[message_id] = message.model_copy(update={"delivery_state":
                                                                    update.state})  # fmt: skip
             return DeliveryResult(outcome=DeliveryOutcome.APPLIED, state=update.state)

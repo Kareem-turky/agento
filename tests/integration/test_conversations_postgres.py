@@ -266,13 +266,22 @@ def test_delivery_events_are_idempotent_never_regress_and_append_only(migrated, 
         DeliveryOutcome.STALE,
     ]
     assert {o.state for o in racing} == {DeliveryState.DELIVERED}  # terminal: all stale
-    events = rows(engine, "SELECT sequence, state, external_event_ref FROM "
+    assert {o.outcome for o in racing} == {DeliveryOutcome.STALE}
+    events = rows(engine, "SELECT sequence, state, external_event_ref, applied FROM "
                   "product.message_delivery_events WHERE message_id = :m ORDER BY sequence",
                   m=message.message_id)  # fmt: skip
-    assert events == [
-        {"sequence": 1, "state": "accepted", "external_event_ref": "e1"},
-        {"sequence": 2, "state": "delivered", "external_event_ref": "e2"},
+    # Applied transitions and every REFERENCED stale observation (applied = false), in
+    # Product append order; the message state stays delivered.
+    assert events[:3] == [
+        {"sequence": 1, "state": "accepted", "external_event_ref": "e1", "applied": True},
+        {"sequence": 2, "state": "delivered", "external_event_ref": "e2", "applied": True},
+        {"sequence": 3, "state": "sent", "external_event_ref": "e3", "applied": False},
     ]
+    assert [e["sequence"] for e in events] == list(range(1, 9))
+    assert {(e["state"], e["applied"]) for e in events[3:]} == {("failed", False)}
+    assert rows(engine, "SELECT delivery_state FROM product.conversation_messages "
+                "WHERE message_id = :m", m=message.message_id) == [
+        {"delivery_state": "delivered"}]  # fmt: skip
     for statement in (
         "UPDATE product.message_delivery_events SET state = 'failed' WHERE message_id = :m",
         "DELETE FROM product.message_delivery_events WHERE message_id = :m",
@@ -370,3 +379,110 @@ def test_deployment_app_serves_an_empty_conversation_list(settings, runtime_sett
                              params={"conversation_id": str(uuid4())})  # fmt: skip
         assert missing.status_code == 404
         assert client.get("/api/v1/conversations").status_code == 401
+
+
+async def _delivered(pg: PG):
+    conn = await pg.channel()
+    first = await pg.ingress.ingest(pg.context(conn), envelope())
+    message = await pg.repository.append_outbound(
+        pg.company,
+        first.conversation.conversation_id,
+        message_id=uuid4(),
+        text="Reply",
+        author_kind=AuthorKind.HUMAN,
+        actor_id="operator-1",
+        actor_type="user",
+        now=T0,
+    )
+    for i, (state, ref) in enumerate((("accepted", "e1"), ("delivered", "e2"))):
+        await pg.delivery.record(
+            pg.company,
+            message.message_id,
+            DeliveryUpdate(
+                state=state, occurred_at=T0 + timedelta(seconds=i), external_event_ref=ref
+            ),
+        )
+    return message.message_id
+
+
+def _stale(state: str = "sent", seconds: int = 1) -> DeliveryUpdate:
+    return DeliveryUpdate(state=state, occurred_at=T0 + timedelta(seconds=seconds),
+                          external_event_ref="e-stale")  # fmt: skip
+
+
+def _observations(engine: sa.Engine, message_id) -> list[dict]:
+    return rows(
+        engine,
+        "SELECT state, applied FROM product.message_delivery_events WHERE "
+        "message_id = :m AND external_event_ref = 'e-stale'",
+        m=message_id,
+    )
+
+
+def _state(engine: sa.Engine, message_id) -> str:
+    (row,) = rows(
+        engine,
+        "SELECT delivery_state FROM product.conversation_messages WHERE message_id = :m",
+        m=message_id,
+    )
+    return row["delivery_state"]
+
+
+def test_a_referenced_stale_event_is_durably_idempotent(migrated, engine) -> None:
+    async def body(pg: PG):
+        mid = await _delivered(pg)
+        first = await pg.delivery.record(pg.company, mid, _stale())
+        replay = await pg.delivery.record(pg.company, mid, _stale())
+        conflicts = 0
+        for conflicting in (_stale("failed", 1), _stale("sent", 9)):
+            try:
+                await pg.delivery.record(pg.company, mid, conflicting)
+            except DeliveryEventConflictError:
+                conflicts += 1
+        return mid, first, replay, conflicts
+
+    mid, first, replay, conflicts = scenario(migrated, body)
+    assert (first.outcome, first.state) == (DeliveryOutcome.STALE, DeliveryState.DELIVERED)
+    assert (replay.outcome, replay.state) == (DeliveryOutcome.DUPLICATE,
+                                              DeliveryState.DELIVERED)  # fmt: skip
+    assert conflicts == 2
+    assert _observations(engine, mid) == [{"state": "sent", "applied": False}]
+    assert _state(engine, mid) == "delivered"  # never regresses
+    # SQL: an unapplied observation always carries a provider event ref.
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as connection_:
+        connection_.execute(sa.text(
+            "INSERT INTO product.message_delivery_events (message_id, company_id, sequence, "
+            "state, occurred_at, recorded_at, external_event_ref, applied) SELECT message_id, "
+            "company_id, 99, 'sent', now(), now(), NULL, false FROM "
+            "product.conversation_messages WHERE message_id = :m"), {"m": mid})  # fmt: skip
+
+
+def test_concurrent_copies_of_a_stale_event_store_one_observation(migrated, engine) -> None:
+    async def body(pg: PG):
+        mid = await _delivered(pg)
+        results = await asyncio.gather(*(pg.delivery.record(pg.company, mid, _stale())
+                                         for _ in range(8)))  # fmt: skip
+        return mid, results
+
+    mid, results = scenario(migrated, body)
+    outcomes = sorted(r.outcome.value for r in results)
+    assert outcomes == ["duplicate"] * 7 + ["stale"]
+    assert {r.state for r in results} == {DeliveryState.DELIVERED}
+    assert _observations(engine, mid) == [{"state": "sent", "applied": False}]
+    assert _state(engine, mid) == "delivered"
+
+
+def test_concurrent_conflicting_copies_store_one_and_fail_the_other(migrated, engine) -> None:
+    async def body(pg: PG):
+        mid = await _delivered(pg)
+        racers = [_stale("sent", 1), _stale("failed", 1), _stale("sent", 5), _stale("unknown", 2)]
+        results = await asyncio.gather(*(pg.delivery.record(pg.company, mid, u)
+                                         for u in racers), return_exceptions=True)  # fmt: skip
+        return mid, results
+
+    mid, results = scenario(migrated, body)
+    stored = [r for r in results if not isinstance(r, Exception)]
+    assert len(stored) == 1 and stored[0].outcome is DeliveryOutcome.STALE
+    assert all(isinstance(r, DeliveryEventConflictError) for r in results if r not in stored)
+    assert len(_observations(engine, mid)) == 1
+    assert _state(engine, mid) == "delivered"

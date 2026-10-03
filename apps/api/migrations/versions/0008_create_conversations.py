@@ -5,7 +5,10 @@
     conversation_messages     the canonical plain-text transcript (Product sequence per
                               conversation; inbound messages deduplicated per company,
                               connection and external message reference)
-    message_delivery_events   append-only canonical delivery transitions (trigger)
+    message_delivery_events   append-only canonical delivery observations (trigger):
+                              every applied transition, plus every stale report that
+                              carries a provider event ref (``applied`` = false), so
+                              that event identity stays idempotent
 
 NO provider payload, webhook body, header, credential, provider error object or arbitrary
 metadata JSON column exists. ``connection_id`` is historical correlation WITHOUT a
@@ -158,6 +161,7 @@ def upgrade() -> None:
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("external_event_ref", sa.String(256), nullable=True),
+        sa.Column("applied", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("message_id", "sequence", name="pk_message_delivery_events"),
         sa.UniqueConstraint("company_id", "message_id", "external_event_ref",
                             name="uq_message_delivery_events_external"),
@@ -171,6 +175,8 @@ def upgrade() -> None:
                            name="ck_message_delivery_events_state"),
         sa.CheckConstraint(_ref("external_event_ref", nullable=True),
                            name="ck_message_delivery_events_external_ref"),
+        sa.CheckConstraint("applied OR external_event_ref IS NOT NULL",
+                           name="ck_message_delivery_events_identified"),
         schema=SCHEMA,
     )  # fmt: skip
     op.execute(
