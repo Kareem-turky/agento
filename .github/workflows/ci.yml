@@ -48,6 +48,13 @@ jobs:
         run: uv run pytest
       - name: MVP business acceptance (mock/test only, no external calls)
         run: uv run pytest tests/acceptance/test_mvp_operations_e2e.py -q
+      - name: Product Core acceptance
+        # Task 040 release gate (docs/PRODUCT_CORE_ACCEPTANCE.md): the whole acceptance
+        # suite, run explicitly, on the migrated PostgreSQL with TEST-ONLY fakes and no
+        # external calls. It FAILS (never skips) when PostgreSQL is unavailable.
+        env:
+          REQUIRE_INTEGRATION_TESTS: "1"
+        run: uv run pytest tests/acceptance -q
       - name: Boot API and check health and AgentOS auth
         run: |
           uv run uvicorn app.bootstrap:create_deployment_app --factory --app-dir apps/api \
