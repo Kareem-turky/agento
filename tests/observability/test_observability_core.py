@@ -67,6 +67,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
         "operations.ticket_command", "operations.ticket_command_query",
         # Task 034: Workflow runs and Step attempts (labels: catalog ids, statuses).
         "workflow.run", "workflow.step_attempt",
+        # Task 035: Knowledge retrieval and governed Knowledge writes (labels: enums only).
+        "knowledge.query", "knowledge.mutation",
     ]  # fmt: skip
     assert [o.value for o in ObservationOutcome] == [
         "completed", "denied", "invalid", "conflict", "not_found", "unavailable", "error",

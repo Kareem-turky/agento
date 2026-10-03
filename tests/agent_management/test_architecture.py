@@ -112,6 +112,8 @@ def test_agent_management_is_wired_only_through_composition_main_and_routes() ->
              and any(m.startswith("app.agent_management") for m in imports(p))}  # fmt: skip
     assert users == {"main.py", "routes/agents.py", "routes/capabilities.py",
                      "composition/agents.py",
+                     # Task 035: only the installed Agent ids (capability intent check).
+                     "composition/knowledge.py",
                      "persistence/agent_configurations.py"}  # fmt: skip
 
 

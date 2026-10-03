@@ -40,6 +40,8 @@ class ProductOperation(StrEnum):
     TICKET_COMMAND_QUERY = "operations.ticket_command_query"
     WORKFLOW_RUN = "workflow.run"
     WORKFLOW_STEP_ATTEMPT = "workflow.step_attempt"
+    KNOWLEDGE_QUERY = "knowledge.query"
+    KNOWLEDGE_MUTATION = "knowledge.mutation"
 
 
 class ObservationOutcome(StrEnum):

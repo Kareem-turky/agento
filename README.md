@@ -138,6 +138,32 @@ worker. The catalog and run history are read-only at `/api/v1/workflows/*`
 (`workflows.read`) and on **Settings → Workflows** (`/settings/workflows`). See
 [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md).
 
+### Product Knowledge & company operating context
+
+The existing **`CompanyOperatingModel`** now has versioned persistence (migration `0006`):
+
+- immutable versions plus a current-version pointer per company;
+- published through the API with the company taken from the authenticated actor;
+- validated by the existing model and re-validated on every read.
+
+**Knowledge documents** are operator-authored text (`text/plain` or `text/markdown`; SOPs,
+policies, pricing, returns, shipping and supplier notes):
+
+- versioned and immutable per version, with archive and no delete;
+- chunked deterministically;
+- retrievable through bounded, company-scoped, language-neutral PostgreSQL full-text
+  search (the `simple` configuration: exact terms, no stemming, so Arabic, English and
+  mixed text work alike);
+- returned as **untrusted references**, under an explicit precedence in which the
+  structured model always outranks a document.
+
+Knowledge is data. It grants no permission, and no Agent consumes it yet: there is no
+Knowledge tool, no Agent memory, no embeddings and no external ingestion. Reads need
+`knowledge.read`, and governed, audited writes need `knowledge.manage`, which an Agent
+actor is never granted. The routes are `/api/v1/knowledge/*` and the page is
+**Settings → Knowledge** (`/settings/knowledge`). See
+[`docs/KNOWLEDGE.md`](docs/KNOWLEDGE.md).
+
 ## 2. High-level architecture
 
 ```
@@ -499,8 +525,9 @@ Canonical Commerce Domain  +  Company Operating Model
 
 - **Model:** `CompanyOperatingModel(company_id, version, order_sla, shipment_sla,
   escalations, kpis, reporting, capabilities)`. `company_id` is the canonical `Company.id`
-  and `version` is an integer ≥ 1. The version lifecycle, persistence and a loader are
-  later work.
+  and `version` is an integer ≥ 1. Versioned persistence (immutable versions, a current
+  pointer, trusted publication) was added by Task 035; see
+  [`docs/KNOWLEDGE.md`](docs/KNOWLEDGE.md). Nothing evaluates the model yet.
 - **Durations** hold a `timedelta` in memory and appear in YAML/JSON as whole positive
   **integer seconds**. Floats, booleans, strings and human phrases such as `"2 days"` are
   rejected.

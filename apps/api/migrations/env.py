@@ -17,6 +17,13 @@ from app.persistence.database import PRODUCT_SCHEMA, product_metadata
 from app.persistence.integration_connections import (  # noqa: F401 - registers the table
     integration_connections,
 )
+from app.persistence.knowledge import (  # noqa: F401 - registers the tables
+    company_operating_model_current,
+    company_operating_model_versions,
+    knowledge_chunks,
+    knowledge_document_versions,
+    knowledge_documents,
+)
 from app.persistence.workflow_runs import (  # noqa: F401 - registers the tables
     workflow_events,
     workflow_runs,
