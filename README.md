@@ -63,6 +63,15 @@ store scoping and command privacy. **Production business use is still blocked**:
 business-system API contract and no reviewed real backend adapter exist yet, so
 staging and production refuse to start.
 
+### Product Core acceptance (provider-free)
+
+Task 040 adds the **Product Core acceptance** gate. It proves that the Product works as
+one installable Product, with real PostgreSQL and test-only generic adapters on the
+Product contracts, before any real provider exists. See
+[`docs/PRODUCT_CORE_ACCEPTANCE.md`](docs/PRODUCT_CORE_ACCEPTANCE.md) and the release
+decision [`docs/PRODUCT_CORE_READY.md`](docs/PRODUCT_CORE_READY.md) (status:
+candidate). The next phase is Real Integrations.
+
 ### Integrations: provider-agnostic foundation (no provider connected)
 
 The Product is **integration-ready at the framework level**, and **no real provider is
