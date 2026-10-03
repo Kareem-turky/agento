@@ -286,5 +286,14 @@ def test_the_acceptance_record_states_the_core_ready_boundaries() -> None:
     assert "## Resolved before final acceptance" in raw and "## Findings" not in raw
     assert "82be2ec1896ac7a55ab57ace7d30570bc6a03557" in raw
     assert "82be2ec1896ac7a55ab57ace7d30570bc6a03557" in decision
-    assert "Status: candidate" in decision
+    # Self-finalizing decision: an objective merge gate, never a static mutable status.
+    flat = " ".join(decision.replace("**", "").split())
+    assert "Status: candidate" not in decision and "Status: final" not in decision
+    for concept in ("Status rule:", "candidate until this Task 040 commit is on `main`",
+                    "push-to-main CI on that exact commit is green", "final thereafter",
+                    "Before merge", "Task 040 acceptance candidate",
+                    "push-to-main CI on that exact merge commit is green",
+                    "Agento Product Core Ready (provider-free)",
+                    "No follow-up documentation commit"):  # fmt: skip
+        assert concept in flat, concept
     assert "Product Core acceptance" in decision and "provider-free" in decision
