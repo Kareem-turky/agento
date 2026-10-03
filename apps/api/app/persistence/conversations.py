@@ -22,6 +22,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.context.models import ActorType
 from app.conversations.contracts import IngestResult, ResolvedChannel
 from app.conversations.delivery import (
     DeliveryOutcome,
@@ -242,7 +243,7 @@ class PostgresConversationRepository:
 
     async def append_outbound(
         self, company_id: str, conversation_id: UUID, *, message_id: UUID, text: str,
-        author_kind: AuthorKind, actor_id: str | None, actor_type: str | None,
+        author_kind: AuthorKind, actor_id: str | None, actor_type: ActorType | None,
         now: datetime,
     ) -> ConversationMessage | None:  # fmt: skip
         try:

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from app.context.models import ActorType
 from app.conversations.delivery import DeliveryResult, DeliveryUpdate, MessageDeliveryEvent
 from app.conversations.models import (
     AuthorKind,
@@ -51,7 +52,7 @@ class ConversationRepository(Protocol):
 
     async def append_outbound(
         self, company_id: str, conversation_id: UUID, *, message_id: UUID, text: str,
-        author_kind: AuthorKind, actor_id: str | None, actor_type: str | None,
+        author_kind: AuthorKind, actor_id: str | None, actor_type: ActorType | None,
         now: datetime,
     ) -> ConversationMessage | None:  # fmt: skip
         """The FUTURE outbound seam: a ``pending`` outbound message with the next

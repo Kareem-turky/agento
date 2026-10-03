@@ -65,6 +65,9 @@ export const UPSTREAM = {
   approvalReject: { method: "POST", path: "/api/v1/approvals/approval/reject" },
   approvalCancel: { method: "POST", path: "/api/v1/approvals/approval/cancel" },
   approvalResumeWorkflow: { method: "POST", path: "/api/v1/approvals/approval/resume-workflow" },
+  conversations: { method: "GET", path: "/api/v1/conversations" },
+  conversation: { method: "GET", path: "/api/v1/conversations/conversation" },
+  conversationMessages: { method: "GET", path: "/api/v1/conversations/messages" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;

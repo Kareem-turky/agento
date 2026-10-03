@@ -135,6 +135,7 @@ export function KnowledgeSettings() {
           <Link href="/settings/workflows">Workflows</Link>
           <Link href="/settings/integrations">Integrations</Link>
           <Link href="/settings/approvals">Approvals</Link>
+          <Link href="/conversations">Conversations</Link>
         </nav>
       </header>
 
