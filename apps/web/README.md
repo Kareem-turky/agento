@@ -1,6 +1,12 @@
-# apps/web — Operations Console
+# apps/web — Agento
 
-A minimal Operations Console over the existing Product API (Next.js App Router,
+**Agento — AI Operating Layer**: one application shell over the existing Product API, with
+one in-memory Product session shared across pages and a read-only **Overview** Control
+Center at `/`. The Operations Console lives at `/operations`. See
+[`docs/CONTROL_CENTER.md`](../../docs/CONTROL_CENTER.md) for the shell, the session rules
+and the Overview.
+
+The Operations Console is a minimal console over the existing Product API (Next.js App Router,
 TypeScript, plain CSS; no UI framework, no analytics, no remote fonts). It is not an
 AgentOS UI, a chatbot, an admin panel or a provider dashboard, and the backend stays
 authoritative for authentication, store access, permissions, report rules and ticket
@@ -17,13 +23,13 @@ npm run typecheck && npm run build && npm run smoke:proxy
 
 | Section | Product API route | Notes |
 |---|---|---|
-| Session | `GET /health` | Product API key (password field, memory only), Store UUID, API reachability. Reachable does **not** mean the key is accepted; the key shows as accepted only after a Product request succeeds. |
+| Session (shell) | `GET /health` | Product API key (password field in the shell's Session control, memory only, shared across client navigation, forgotten on reload), API reachability; the Store UUID is set on Operations. Reachable does **not** mean the key is accepted; the key shows as accepted only after a Product request succeeds. |
 | Analyze operations | `POST /api/v1/operations/runs` | **Read-only** Operations Agent analysis (message up to 8000 characters). Shows the answer and its `request_id`. Never writes. |
 | Daily report | `GET /api/v1/operations/reports/daily` | The deterministic backend report as returned: business date, timezone, generated time, metrics, every status count (zeros included), findings in API order, `findings_total`/truncation and coverage (inventory is shown as **not analyzed**). A blank date is omitted so the Product decides the store’s business day. |
 | Operational ticket | `POST /api/v1/operations/tickets` | Explicit write (title ≤ 160, description ≤ 4000), never through the Agent. |
 | Command status | `GET /api/v1/operations/tickets/commands` | Manual lookup (auto-filled from the latest ticket), no polling. A 404 is only “Ticket command not found”. |
 | Settings → Agents (`/settings/agents`) | `/api/v1/agents/*` | Product Agent lifecycle management: installed Product Agents (only the Operations Agent), effective availability, read-only manifest summary, Enable / Disable / Reset to default, plus each Agent's read-only Skills (tool bindings, read/write) and Tasks (required Skills, declared envelope, acceptance criteria) from `/api/v1/skills/*` and `/api/v1/tasks/*`. No prompt, model, tool, Skill, Task or code editor and no Agent creation. Product API only, never AgentOS. See [`docs/AGENTS.md`](../../docs/AGENTS.md). |
-| Settings → Workflows (`/settings/workflows`) | `/api/v1/workflows/*` | **Read-only** Product Workflow inspection: installed Workflow definitions (ordered Steps, read-only/governed-write class, timeouts, bounded attempts, checkpoint policy) and this company's recent runs with Step attempts, safe failure codes and append-only lifecycle events. No Run, Retry or Resume button, no input form and no Workflow, JSON or code editor. See [`docs/WORKFLOWS.md`](../../docs/WORKFLOWS.md). |
+| Workflows (`/workflows`; `/settings/workflows` redirects) | `/api/v1/workflows/*` | **Read-only** Product Workflow inspection: installed Workflow definitions (ordered Steps, read-only/governed-write class, timeouts, bounded attempts, checkpoint policy) and this company's recent runs with Step attempts, safe failure codes and append-only lifecycle events. No Run, Retry or Resume button, no input form and no Workflow, JSON or code editor. See [`docs/WORKFLOWS.md`](../../docs/WORKFLOWS.md). |
 | Settings → Integrations (`/settings/integrations`) | `/api/v1/integrations/*` | Generic Connections UI: installed integration types grouped by category (this build installs none, and says so), connections with enabled state and last-known test result, a generic form (text/URL/boolean/write-only secret fields), Test, Enable/Disable, Edit settings, Replace credentials, Delete. Secret inputs are never pre-filled. See [`docs/INTEGRATIONS.md`](../../docs/INTEGRATIONS.md). |
 
 ## Security model

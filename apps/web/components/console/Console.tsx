@@ -1,69 +1,34 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent } from "react";
-import { getHealth } from "../../lib/product-api/client";
+// Operations: the existing Operations Console (read-only analysis, daily report, explicit
+// operational tickets and command status), inside the Agento shell. The Product API key
+// and the Store UUID come from the ONE ProductSessionProvider; nothing here runs on its
+// own: every request is an explicit submit.
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { looksLikeUuid } from "../../lib/product-api/client";
 import type { ProductResult } from "../../lib/product-api/types";
+import { PageHeader } from "../shell/PageHeader";
+import { useProductSession } from "../shell/ProductSessionProvider";
+import { Badge, Card } from "../ui/primitives";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { CommandPanel } from "./CommandPanel";
 import { ReportPanel } from "./ReportPanel";
-import { SessionPanel, type HealthState } from "./SessionPanel";
-import { initialSession, sessionReducer } from "./session";
+import { TABS, type TabId } from "./tabs";
 import { TicketPanel } from "./TicketPanel";
 
-const TABS = [
-  { id: "analysis", label: "Analyze operations" },
-  { id: "report", label: "Daily report" },
-  { id: "ticket", label: "Operational ticket" },
-  { id: "command", label: "Command status" },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
-
-export function Console() {
-  // The Product API key lives ONLY in this component's memory for the page lifetime.
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  // Session context (integer epoch, key status, store, recent command); never the key.
-  const [session, dispatch] = useReducer(sessionReducer, initialSession);
-  const { epoch, keyStatus, storeId, recentCommandId } = session;
-  const [health, setHealth] = useState<HealthState>("checking");
-  const [tab, setTab] = useState<TabId>("analysis");
+export function Console({ initialTab }: { initialTab: TabId }) {
+  const session = useProductSession();
+  const { apiKey, sessionEpoch, operationsEpoch, storeId, recentCommandId } = session;
+  const [tab, setTab] = useState<TabId>(initialTab);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const checkHealth = useCallback(async () => {
-    setHealth("checking");
-    const result = await getHealth();
-    // Reachability only: it says nothing about whether a key is accepted.
-    setHealth(result.ok && result.data.status === "ok" ? "reachable" : "unavailable");
-  }, []);
-
+  // A deep link (for example from an Overview quick action) selects its tab.
   useEffect(() => {
-    void checkHealth();
-  }, [checkHealth]);
+    setTab(initialTab);
+  }, [initialTab]);
 
-  // Panel completions carry the epoch they were started in; the reducer ignores any
-  // that belong to an older session context.
-  const onAuthResult = useCallback((sourceEpoch: number, result: ProductResult<unknown>) => {
-    const outcome = result.ok ? "accepted" : result.error === "unauthenticated" ? "rejected" : "other";
-    dispatch({ type: "authResult", epoch: sourceEpoch, outcome });
-  }, []);
-
-  const onCommand = useCallback((sourceEpoch: number, commandId: string) => {
-    dispatch({ type: "commandCreated", epoch: sourceEpoch, commandId });
-  }, []);
-
-  function applyKey(key: string) {
-    setApiKey(key);
-    dispatch({ type: "keySet" });
-  }
-
-  function changeStore(value: string) {
-    dispatch({ type: "storeChanged", storeId: value });
-  }
-
-  function disconnect() {
-    setApiKey(null);
-    dispatch({ type: "disconnected" });
+  function select(next: TabId) {
+    setTab(next);
   }
 
   function onTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -71,87 +36,139 @@ export function Console() {
     if (!step) return;
     event.preventDefault();
     const next = (index + step + TABS.length) % TABS.length;
-    setTab(TABS[next].id);
+    select(TABS[next].id);
     tabRefs.current[next]?.focus();
   }
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="topbar__brand">
-          <span className="topbar__mark" aria-hidden="true">◆</span>
-          <div>
-            <p className="topbar__title">Operations Console</p>
-            <p className="topbar__subtitle">Store operations over the Product API</p>
-          </div>
-        </div>
-        <nav className="topbar__nav" aria-label="Pages">
-          <Link href="/settings/agents">Agents</Link>
-          <Link href="/settings/integrations">Integrations</Link>
-          <Link href="/settings/workflows">Workflows</Link>
-          <Link href="/settings/knowledge">Knowledge</Link>
-          <Link href="/settings/approvals">Approvals</Link>
-          <Link href="/conversations">Conversations</Link>
-        </nav>
-        <span className={`pill pill--${health}`} role="status">
-          {health === "checking" ? "Checking API…" : health === "reachable" ? "API reachable" : "API unavailable"}
-        </span>
-      </header>
-
-      <div className="layout">
-        <aside className="layout__side">
-          <SessionPanel
-            keyStatus={keyStatus}
-            storeId={storeId}
-            health={health}
-            onUseKey={applyKey}
-            onStoreChange={changeStore}
-            onCheckHealth={() => void checkHealth()}
-            onDisconnect={disconnect}
-          />
-        </aside>
-
-        {/* Keyed by the session epoch: a new key, a new store or a disconnect remounts
+    <>
+      <PageHeader
+        title="Operations"
+        description="Read-only analysis, the daily operations report and explicit operational tickets for one store."
+      />
+      <div className="page-layout page-layout--context-first">
+        {/* Keyed by the operations epoch: a new key, a new store or a disconnect remounts
             every panel, so no result, form or pending ticket key of an older context
             stays visible. */}
-        <main className="layout__main" key={epoch}>
-          <div className="tabs" role="tablist" aria-label="Console sections">
-            {TABS.map((item, index) => (
-              <button
-                key={item.id}
-                ref={(element) => { tabRefs.current[index] = element; }}
-                type="button"
-                role="tab"
-                id={`tab-${item.id}`}
-                aria-selected={tab === item.id}
-                aria-controls={`panel-${item.id}`}
-                tabIndex={tab === item.id ? 0 : -1}
-                className="tabs__tab"
-                onClick={() => setTab(item.id)}
-                onKeyDown={(event) => onTabKey(event, index)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Panels stay mounted (hidden) so switching tabs keeps their state. */}
-          <div role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
-            <AnalysisPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult} />
-          </div>
-          <div role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
-            <ReportPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult} />
-          </div>
-          <div role="tabpanel" id="panel-ticket" aria-labelledby="tab-ticket" hidden={tab !== "ticket"}>
-            <TicketPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult}
-                         onCommand={onCommand} />
-          </div>
-          <div role="tabpanel" id="panel-command" aria-labelledby="tab-command" hidden={tab !== "command"}>
-            <CommandPanel epoch={epoch} apiKey={apiKey} recentCommandId={recentCommandId}
-                          onAuthResult={onAuthResult} />
-          </div>
-        </main>
+        <div className="page-layout__main" key={operationsEpoch}>
+          <OperationsPanels
+            sessionEpoch={sessionEpoch}
+            operationsEpoch={operationsEpoch}
+            apiKey={apiKey}
+            storeId={storeId}
+            recentCommandId={recentCommandId}
+            tab={tab}
+            select={select}
+            onTabKey={onTabKey}
+            tabRefs={tabRefs}
+          />
+        </div>
+        <aside className="page-layout__side">
+          <StoreCard />
+        </aside>
       </div>
-    </div>
+    </>
+  );
+}
+
+function OperationsPanels({ sessionEpoch, operationsEpoch, apiKey, storeId, recentCommandId, tab, select, onTabKey, tabRefs }: {
+  sessionEpoch: number;
+  operationsEpoch: number;
+  apiKey: string | null;
+  storeId: string;
+  recentCommandId: string | null;
+  tab: TabId;
+  select: (tab: TabId) => void;
+  onTabKey: (event: KeyboardEvent<HTMLButtonElement>, index: number) => void;
+  tabRefs: RefObject<(HTMLButtonElement | null)[]>;
+}) {
+  const { reportResult, commandCreated } = useProductSession();
+
+  // Panel completions carry the epoch they were started in; the session ignores any that
+  // belong to an older context. This instance lives within one session epoch.
+  const onAuthResult = useCallback(
+    (_epoch: number, result: ProductResult<unknown>) => reportResult(sessionEpoch, result),
+    [reportResult, sessionEpoch],
+  );
+  const onCommand = useCallback(
+    (sourceEpoch: number, commandId: string) => commandCreated(sourceEpoch, commandId),
+    [commandCreated],
+  );
+  const epoch = operationsEpoch;
+
+  return (
+    <>
+      <div className="tabs" role="tablist" aria-label="Operations sections">
+        {TABS.map((item, index) => (
+          <button
+            key={item.id}
+            ref={(element) => { tabRefs.current[index] = element; }}
+            type="button"
+            role="tab"
+            id={`tab-${item.id}`}
+            aria-selected={tab === item.id}
+            aria-controls={`panel-${item.id}`}
+            tabIndex={tab === item.id ? 0 : -1}
+            className="tabs__tab"
+            onClick={() => select(item.id)}
+            onKeyDown={(event) => onTabKey(event, index)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Panels stay mounted (hidden) so switching tabs keeps their state. */}
+      <div role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
+        <AnalysisPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult} />
+      </div>
+      <div role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
+        <ReportPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult} />
+      </div>
+      <div role="tabpanel" id="panel-ticket" aria-labelledby="tab-ticket" hidden={tab !== "ticket"}>
+        <TicketPanel epoch={epoch} apiKey={apiKey} storeId={storeId} onAuthResult={onAuthResult}
+                     onCommand={onCommand} />
+      </div>
+      <div role="tabpanel" id="panel-command" aria-labelledby="tab-command" hidden={tab !== "command"}>
+        <CommandPanel epoch={epoch} apiKey={apiKey} recentCommandId={recentCommandId}
+                      onAuthResult={onAuthResult} />
+      </div>
+    </>
+  );
+}
+
+/** The store is request context for Operations, never authorization. */
+function StoreCard() {
+  const { storeId, changeStore } = useProductSession();
+  const storeValid = storeId === "" || looksLikeUuid(storeId);
+  return (
+    <Card title="Store" subtitle="Kept for this session while you move between pages.">
+      <div className="status-list">
+        <div className="status-list__row">
+          <span>Store UUID</span>
+          {storeId && storeValid ? <Badge tone="success">Set</Badge>
+            : <Badge tone="neutral">{storeId ? "Not a UUID" : "Not set"}</Badge>}
+        </div>
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="store-id">Store UUID</label>
+        <input
+          id="store-id"
+          name="store-id"
+          inputMode="text"
+          spellCheck={false}
+          autoComplete="off"
+          value={storeId}
+          onChange={(event) => changeStore(event.target.value.trim())}
+          placeholder="00000000-0000-4000-8000-000000000000"
+          aria-invalid={!storeValid}
+          aria-describedby="store-id-hint"
+        />
+        <span className="field__hint" id="store-id-hint">
+          {storeValid ? "The Product API decides whether this key may access the store. Changing it clears Operations results."
+            : "Enter a UUID (format check only)."}
+        </span>
+      </div>
+    </Card>
   );
 }

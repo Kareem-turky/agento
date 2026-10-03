@@ -129,7 +129,7 @@ stronger store (for example an external secret manager) can implement the
 
 ## Connections UI
 
-The Operations Console links to **Settings → Integrations** (`/settings/integrations`).
+The Agento navigation links to **Integrations** (`/settings/integrations`, under Configure).
 The page:
 
 - reads the catalog through the Product API and groups it by category. With the empty
@@ -142,8 +142,8 @@ The page:
   text; no provider-supplied HTML is ever interpreted.
 - offers Test, Enable/Disable, Edit settings, Replace credentials and Delete (with
   confirmation). It never retries automatically.
-- keeps the Product API key in page memory only, like the Operations Console. Leaving or
-  reloading the page forgets it.
+- uses the one in-memory Product session of the Agento shell (see
+  [`CONTROL_CENTER.md`](CONTROL_CENTER.md)). Reloading the page forgets the key.
 
 The web BFF forwards each of these routes to exactly one fixed Product method and path,
 like the other Console routes.

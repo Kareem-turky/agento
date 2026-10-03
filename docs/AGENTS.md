@@ -131,7 +131,7 @@ proxied or used by the Product UI.
 
 ## Settings → Agents UI
 
-`/settings/agents` (linked from the Operations Console and the Integrations page):
+`/settings/agents` (under Configure in the Agento navigation):
 
 - lists the installed Product Agents with category, lifecycle, enabled state, effective
   availability (with a fixed explanation of the reason), capabilities and a read-only

@@ -135,7 +135,7 @@ never persisted.
 
 The platform makes no model call and has no public run endpoint and no background
 worker. The catalog and run history are read-only at `/api/v1/workflows/*`
-(`workflows.read`) and on **Settings → Workflows** (`/settings/workflows`). See
+(`workflows.read`) and on **Workflows** (`/workflows`). See
 [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md).
 
 ### Product Knowledge & company operating context
@@ -181,7 +181,7 @@ Current permission is re-checked and the approval is consumed **exactly once**. 
 WriteCommands and Workflow Steps can continue the same way (the Workflow through an
 explicit resume). There is no create endpoint, and no real business action requires
 approval yet: the ticket action stays `LOW_RISK_WRITE`. The routes are
-`/api/v1/approvals/*` and the page is **Settings → Approvals** (`/settings/approvals`).
+`/api/v1/approvals/*` and the page is **Approvals** (`/approvals`).
 See [`docs/APPROVALS.md`](docs/APPROVALS.md).
 
 ### Channels & conversations (provider-agnostic foundation)
@@ -1551,11 +1551,13 @@ design; backup/restore automation and registry publication are not implemented. 
 `docker-compose.yml` remains local development only. See
 [`deployments/template/README.md`](deployments/template/README.md).
 
-### Operations Console (`apps/web`)
+### Agento web app (`apps/web`)
 
-The web app is a minimal Operations Console over the existing Product API (no new
-backend endpoint): session settings (a Product API key held only in page memory and an
-explicit Store UUID), read-only Operations analysis (`POST /api/v1/operations/runs`), the
+The web app is **Agento — AI Operating Layer**: one application shell with one in-memory
+Product session (the key survives client navigation, never storage; a reload forgets it)
+and an **Overview** Control Center at `/` that only reads the existing Product APIs (see
+[`docs/CONTROL_CENTER.md`](docs/CONTROL_CENTER.md)). The Operations Console moved to
+`/operations` (no new backend endpoint): an explicit Store UUID, read-only Operations analysis (`POST /api/v1/operations/runs`), the
 deterministic daily report, explicit idempotent operational ticket creation (never through
 the Agent, never retried automatically) and manual ticket command status lookup.
 **Settings → Integrations** (`/settings/integrations`) is the generic Connections UI

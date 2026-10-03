@@ -111,7 +111,30 @@ function classify(status: number): ProductErrorKind {
   }
 }
 
+// One in-memory observer (the ProductSessionProvider) learns how the Product API answered
+// an authenticated request, so a 401 on any page marks the session key as not accepted.
+// It is told only which key was used and the HTTP outcome: never a body, never stored.
+type AuthObserver = (apiKey: string, result: { ok: boolean; status: number | null }) => void;
+let authObserver: AuthObserver | null = null;
+
+/** Registers the session's auth observer; returns the function that removes it. */
+export function observeAuthOutcomes(observer: AuthObserver): () => void {
+  authObserver = observer;
+  return () => {
+    if (authObserver === observer) authObserver = null;
+  };
+}
+
 async function send<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
+  const result = await exchange(path, init, guard);
+  const authorization = new Headers(init.headers).get("Authorization");
+  if (authorization?.startsWith("Bearer ") && authObserver !== null) {
+    authObserver(authorization.slice("Bearer ".length), { ok: result.ok, status: result.status });
+  }
+  return result;
+}
+
+async function exchange<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, { ...init, cache: "no-store", credentials: "omit", redirect: "error" });

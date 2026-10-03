@@ -1,11 +1,6 @@
-import type { Metadata } from "next";
-import { ApprovalsSettings } from "../../../components/approvals/ApprovalsSettings";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Approvals",
-  robots: { index: false, follow: false },
-};
-
-export default function ApprovalsPage() {
-  return <ApprovalsSettings />;
+// Legacy address: Approvals moved to /approvals (one implementation, no loop).
+export default function LegacyApprovalsPage() {
+  redirect("/approvals");
 }

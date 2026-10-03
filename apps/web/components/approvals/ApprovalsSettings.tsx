@@ -8,10 +8,9 @@
 // reason. Approving grants ONE execution of exactly the requested action: nothing runs
 // from this page except the explicit "Continue workflow" for an approved Workflow Step.
 //
-// The Product API key lives only in this component's memory. Summaries, notes and
+// The Product API key comes from the shell's session (memory only). Summaries, notes and
 // identifiers are untrusted data and are rendered as plain text, never as HTML.
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   approveApproval,
   cancelApproval,
@@ -27,6 +26,9 @@ import type {
   ProductErrorKind,
 } from "../../lib/product-api/types";
 import { Badge, Card, ErrorNotice, Mono, Timestamp, type Tone } from "../console/ui";
+import { ConnectNotice } from "../shell/ConnectNotice";
+import { PageHeader } from "../shell/PageHeader";
+import { useProductSession } from "../shell/ProductSessionProvider";
 
 const MAX_NOTE = 1000;
 
@@ -90,69 +92,23 @@ function Risk({ value }: { value: string }) {
 }
 
 export function ApprovalsSettings() {
-  // Memory only: reloading or leaving the page forgets the key.
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [epoch, setEpoch] = useState(0);
-  const [draft, setDraft] = useState("");
-
-  function applyKey(event: FormEvent) {
-    event.preventDefault();
-    const key = draft.trim();
-    if (!key) return;
-    setApiKey(key);
-    setEpoch((value) => value + 1);
-    setDraft("");
-  }
-
-  function disconnect() {
-    setApiKey(null);
-    setEpoch((value) => value + 1);
-  }
+  // The key comes from the one ProductSessionProvider (memory only). The workspace is keyed
+  // by the session epoch: a new key or a disconnect remounts it with nothing left over.
+  const { apiKey, sessionEpoch } = useProductSession();
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="topbar__brand">
-          <span className="topbar__mark" aria-hidden="true">◆</span>
-          <div>
-            <p className="topbar__title">Approvals</p>
-            <p className="topbar__subtitle">Settings · Human approvals for governed actions over the Product API</p>
-          </div>
+    <>
+      <PageHeader
+        title="Approvals"
+        description="Human decisions on governed actions that require approval."
+      />
+      <div className="page-layout">
+        <div className="page-layout__main" key={sessionEpoch}>
+          {apiKey === null ? <ConnectNotice area="approvals" /> : <ApprovalsWorkspace apiKey={apiKey} />}
         </div>
-        <nav className="topbar__nav" aria-label="Pages">
-          <Link href="/">Operations Console</Link>
-          <Link href="/settings/agents">Agents</Link>
-          <Link href="/settings/workflows">Workflows</Link>
-          <Link href="/settings/integrations">Integrations</Link>
-          <Link href="/settings/knowledge">Knowledge</Link>
-          <Link href="/conversations">Conversations</Link>
-        </nav>
-      </header>
-
-      <div className="layout">
-        <aside className="layout__side">
-          <Card title="Session" subtitle="Held in this page's memory only. Reloading or leaving the page forgets the key.">
-            <form className="form" onSubmit={applyKey} autoComplete="off">
-              <label className="field">
-                <span className="field__label">Product API key</span>
-                <input
-                  type="password"
-                  name="product-api-key"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder={apiKey === null ? "Paste your Product API key" : "Replace the key in memory"}
-                />
-                <span className="field__hint">
-                  Viewing needs approvals.read; approving or rejecting needs approvals.decide; cancelling needs approvals.cancel.
-                </span>
-              </label>
-              <button type="submit" className="button" disabled={!draft.trim()}>Use key</button>
-            </form>
-            <button type="button" className="button button--danger" onClick={disconnect} disabled={apiKey === null}>
-              Disconnect and clear session
-            </button>
+        <aside className="page-layout__side">
+          <Card title="Access">
+            <p className="form__context">Viewing needs approvals.read; approving or rejecting needs approvals.decide; cancelling needs approvals.cancel.</p>
           </Card>
           <Card title="How approvals work">
             <p className="form__context">
@@ -165,16 +121,8 @@ export function ApprovalsSettings() {
             </p>
           </Card>
         </aside>
-
-        <main className="layout__main" key={epoch}>
-          {apiKey === null ? (
-            <div className="notice notice--neutral">Set a Product API key in <strong>Session</strong> first.</div>
-          ) : (
-            <ApprovalsWorkspace apiKey={apiKey} />
-          )}
-        </main>
       </div>
-    </div>
+    </>
   );
 }
 

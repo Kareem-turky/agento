@@ -89,6 +89,10 @@ the canonical acceptance business date (`2026-03-03`) and follows up on a proble
   proven by the deployment smoke.
 - The Operations Console builds, and its BFF forwards only fixed Product routes: the five
   above plus the integration- and Agent-management routes below.
+- The Agento Control Center (Task 038): one shell and one in-memory Product session across
+  pages, a read-only Overview at `/` and Operations at `/operations`. It adds no backend
+  change, no migration (head `0008`) and no dependency. See
+  [`CONTROL_CENTER.md`](CONTROL_CENTER.md).
 
 ## Integration foundation (framework only)
 
