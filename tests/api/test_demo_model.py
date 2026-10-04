@@ -20,7 +20,9 @@ from app.config import Settings
 from app.runtime import ModelConfigurationError
 from app.runtime.demo_model import (
     DEMO_MODEL_ID,
+    PROPOSE_TOOL,
     REPORT_TOOL,
+    TICKET_PREPARED,
     USAGE_HINT,
     DemoOperationsModel,
     demo_response,
@@ -278,3 +280,36 @@ def test_no_provider_private_value_is_echoed_from_unexpected_fields() -> None:
 def test_made_no_network_call(no_network: list[object]) -> None:
     DemoOperationsModel().invoke(messages=conversation(PROMPT), tools=TOOLS)
     assert no_network == []
+
+
+# ----- Task 042: Employee Chat proposals (the chat-only proposal tool) ------------------------
+
+CHAT_TOOLS = [
+    {"type": "function", "function": {"name": name}}
+    for name in ("get_order", "get_order_shipments", REPORT_TOOL, PROPOSE_TOOL)
+]
+TICKET_PROMPT = (
+    'Create an operational ticket titled "Investigate failed shipment" with '
+    'description "Review the failed shipment found in the demo operations report."'
+)
+
+
+def test_chat_ticket_request_is_one_proposal_call_never_a_write() -> None:
+    (call,) = demo_response(conversation(TICKET_PROMPT), CHAT_TOOLS).tool_calls
+    assert call["function"]["name"] == PROPOSE_TOOL
+    assert json.loads(call["function"]["arguments"]) == {
+        "title": "Investigate failed shipment",
+        "description": "Review the failed shipment found in the demo operations report.",
+    }
+    proposed = json.dumps({"status": "proposed", "reason": "awaiting_confirmation"})
+    final = demo_response(conversation(TICKET_PROMPT, (PROPOSE_TOOL, proposed)), CHAT_TOOLS)
+    assert final.tool_calls == [] and final.content == TICKET_PREPARED
+    denied = json.dumps({"status": "denied", "reason": "permission_denied"})
+    refused = demo_response(conversation(TICKET_PROMPT, (PROPOSE_TOOL, denied)), CHAT_TOOLS)
+    assert refused.content == "No ticket was prepared (reason: permission_denied)."
+
+
+def test_without_the_proposal_tool_a_ticket_request_proposes_nothing() -> None:
+    # The Operations analysis surface (no proposal tool offered) is unchanged.
+    response = demo_response(conversation(TICKET_PROMPT), TOOLS)
+    assert response.tool_calls == [] and response.content == USAGE_HINT

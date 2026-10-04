@@ -19,6 +19,10 @@ Then open **http://127.0.0.1:3000** and paste the printed **Product API key** an
 - **Daily report:** business date `2026-03-03`
 - **Ticket:** title `Investigate failed shipment`, description `Review the failed
   shipment found in the demo operations report.`, then look up its command status.
+- **Ask Agento:** click **Ask Agento** and send `Analyze operations for 2026-03-03.`
+  Then send `Create an operational ticket titled "Investigate failed shipment" with
+  description "Review the failed shipment found in the demo operations report."` and
+  confirm the proposal card (see [`docs/EMPLOYEE_CHAT.md`](docs/EMPLOYEE_CHAT.md)).
 
 Stop with `./scripts/demo.sh down` (keeps the demo data). Reset with
 `./scripts/demo.sh reset` (deletes the demo data and credentials). `./scripts/demo.sh
@@ -216,6 +220,24 @@ external data and is only ever stored and shown as text.
 Reading needs `conversations.read`. The routes are `GET /api/v1/conversations*` and the
 read-only page is **Conversations** (`/conversations`). See
 [`docs/CONVERSATIONS.md`](docs/CONVERSATIONS.md).
+
+### Employee Chat: Ask Agento (governed ticket confirmation)
+
+**Ask Agento** (a button in the shell, on every page) opens a chat with the existing
+**Operations Agent**. The chat stores threads in migration `0009`, and each thread is
+private to company + actor + store.
+
+- **Context:** turns are idempotent and use bounded multi-turn context (the last 12
+  turns, at most 24,000 characters). There is no Agno memory.
+- **Proposals only:** the Agent uses its read tools and can only **propose** an
+  operational ticket. The chat-only tool has no side effect.
+- **Explicit confirmation:** a ticket is created only by an explicit confirmation, which
+  sends the proposal id and one `Idempotency-Key`. It runs the stored proposal through
+  the existing governed ticket WriteCommand path.
+- **Agent gate:** a disabled Agent refuses a turn before anything runs.
+
+The routes are `/api/v1/chat/*`, with Product auth only. See
+[`docs/EMPLOYEE_CHAT.md`](docs/EMPLOYEE_CHAT.md). This is not Customer Chat.
 
 ## 2. High-level architecture
 

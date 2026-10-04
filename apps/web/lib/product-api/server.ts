@@ -7,7 +7,7 @@
 // UPSTREAM below: there is no catch-all, no client-supplied path or origin, and no way
 // to reach AgentOS routes. The upstream origin comes only from the server environment
 // (never NEXT_PUBLIC_*, never the request). Only Authorization (and, for ticket
-// creation, Idempotency-Key) are forwarded; bodies and responses are size-capped,
+// creation and the chat ticket confirmation, Idempotency-Key) are forwarded; bodies and responses are size-capped,
 // redirects are never followed, nothing is cached, stored or logged, and every
 // transport problem becomes one fixed 502 answer.
 import "server-only";
@@ -15,6 +15,8 @@ import "server-only";
 export const MAX_REQUEST_BYTES = 16 * 1024;
 /** Knowledge document text (Task 035): at most 50,000 characters, sent as JSON. */
 export const MAX_KNOWLEDGE_REQUEST_BYTES = 256 * 1024;
+/** Employee Chat messages (Task 042): at most 8,000 characters, sent as JSON. */
+export const MAX_CHAT_REQUEST_BYTES = 64 * 1024;
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
 export const UPSTREAM_TIMEOUT_MS = 120_000;
 
@@ -71,6 +73,14 @@ export const UPSTREAM = {
   conversations: { method: "GET", path: "/api/v1/conversations" },
   conversation: { method: "GET", path: "/api/v1/conversations/conversation" },
   conversationMessages: { method: "GET", path: "/api/v1/conversations/messages" },
+  // Task 042: Employee Chat with the Operations Agent (proposal confirmation included).
+  chatThreads: { method: "GET", path: "/api/v1/chat/threads" },
+  chatThreadCreate: { method: "POST", path: "/api/v1/chat/threads" },
+  chatThread: { method: "GET", path: "/api/v1/chat/thread" },
+  chatTurns: { method: "GET", path: "/api/v1/chat/turns" },
+  chatTurnSubmit: { method: "POST", path: "/api/v1/chat/turns" },
+  chatProposalConfirm: { method: "POST", path: "/api/v1/chat/ticket-proposals/confirm" },
+  chatProposalCancel: { method: "POST", path: "/api/v1/chat/ticket-proposals/cancel" },
 } as const;
 
 export type UpstreamRoute = keyof typeof UPSTREAM;
@@ -78,14 +88,17 @@ export type UpstreamRoute = keyof typeof UPSTREAM;
 type ProxyOptions = {
   /** Forward the caller's Product API key (every route except health). */
   authorization: boolean;
-  /** Forward exactly one Idempotency-Key (ticket creation only). */
+  /** Forward exactly one Idempotency-Key (ticket creation and chat confirmation only). */
   idempotencyKey?: boolean;
   /** Query parameters allowed through, each at most once. */
   query?: readonly string[];
   /** Forward the JSON request body (POST/PUT routes). */
   body?: boolean;
   /** A larger request cap for Knowledge document text only (default MAX_REQUEST_BYTES). */
-  maxRequestBytes?: typeof MAX_REQUEST_BYTES | typeof MAX_KNOWLEDGE_REQUEST_BYTES;
+  maxRequestBytes?:
+    | typeof MAX_REQUEST_BYTES
+    | typeof MAX_KNOWLEDGE_REQUEST_BYTES
+    | typeof MAX_CHAT_REQUEST_BYTES;
 };
 
 const NO_STORE = "no-store";

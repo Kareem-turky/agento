@@ -23,6 +23,7 @@ from app.services.operations_tickets import (
 
 if TYPE_CHECKING:
     from app.approval_management.service import ApprovalWorkflowResumer
+    from app.employee_chat.contracts import OperationsChatRunService
 
 # Fixed, provider-neutral messages: never a backend id, setting, URL or credential.
 NO_DEPLOYMENT_BACKEND = "no business backend is available for staging/production deployments"
@@ -63,6 +64,9 @@ class DeploymentComposition:
     # Task 036: the explicit Workflow continuation after a human approval (the business
     # backend's Workflow engine), handed to the approval management composition.
     approval_workflow_resumer: "ApprovalWorkflowResumer | None" = None
+    # Task 042: the Operations Agent's Employee Chat runner (read tools + a no-side-effect
+    # ticket proposal; never a write).
+    operations_chat_service: "OperationsChatRunService | None" = None
     close: Callable[[], Awaitable[None]] = _nothing_to_close
     discard: Callable[[], None] = _nothing_to_discard
 

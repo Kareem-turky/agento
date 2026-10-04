@@ -11,7 +11,9 @@ documents, Task 035) and ``app.approval_management.contracts.ApprovalRepository`
 (``PostgresApprovalRepository``: human-approval requests and their append-only events,
 Task 036) and ``app.conversations.contracts.ConversationRepository``
 (``PostgresConversationRepository``: the canonical conversation transcript, Task 037)
-and ``app.system_operations.DatabaseReadinessProbe`` (``PostgresReadinessProbe``: the
+and ``app.employee_chat.contracts.EmployeeChatRepository``
+(``PostgresEmployeeChatRepository``: Employee Chat threads, turns and ticket proposals,
+Task 042) and ``app.system_operations.DatabaseReadinessProbe`` (``PostgresReadinessProbe``: the
 bounded, read-only database and Product schema revision check, Task 039).
 Depends on SQLAlchemy and those contracts
 only: no agents, Agno, routes, business integrations or business handlers, and no
@@ -40,6 +42,12 @@ from app.persistence.database import (
     create_session_factory,
     product_metadata,
 )
+from app.persistence.employee_chat import (
+    PostgresEmployeeChatRepository,
+    chat_action_proposals,
+    chat_threads,
+    chat_turns,
+)
 from app.persistence.integration_connections import (
     PostgresIntegrationConnectionRepository,
     integration_connections,
@@ -67,6 +75,10 @@ from app.persistence.write_commands import PostgresWriteCommandStore, write_comm
 __all__ = [
     "PostgresApprovalRepository",
     "PostgresConversationRepository",
+    "PostgresEmployeeChatRepository",
+    "chat_action_proposals",
+    "chat_threads",
+    "chat_turns",
     "PostgresReadinessProbe",
     "create_readiness_engine",
     "conversation_messages",

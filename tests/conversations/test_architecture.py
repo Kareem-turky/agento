@@ -252,9 +252,11 @@ def test_persistence_has_no_payload_json_or_provider_columns() -> None:
     assert tables == {"DELIVERY", "MESSAGES", "CONVERSATIONS"}
 
 
-def test_0008_is_the_single_head_and_0001_to_0007_are_unchanged() -> None:
+def test_0008_is_on_0007_and_0001_to_0007_are_unchanged() -> None:
     names = sorted(p.name for p in VERSIONS.glob("*.py"))
-    assert names == [*sorted(MIGRATIONS_0001_TO_0007), "0008_create_conversations.py"]
+    # Task 042 adds 0009 (employee chat) on top of 0008.
+    assert names == [*sorted(MIGRATIONS_0001_TO_0007), "0008_create_conversations.py",
+                     "0009_create_employee_chat.py"]  # fmt: skip
     text = MIGRATION.read_text()
     assert 'revision: str = "0008"' in text and 'down_revision: str | None = "0007"' in text
     for name, expected in MIGRATIONS_0001_TO_0007.items():

@@ -443,6 +443,176 @@ try {
     });
   }
 
+  // ----- Task 042: Ask Agento (Employee Chat drawer) --------------------------------------
+  const CHAT_STORE = "0a0a0a0a-0000-4000-8000-000000000001";
+  const chatCalls = (mark) => since(mark).filter((c) => c.path.startsWith("/api/v1/chat/"));
+  const openChat = async (page) => {
+    await page.getByRole("button", { name: "Ask Agento" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Ask Agento" });
+    await dialog.waitFor();
+    return dialog;
+  };
+  const chatReady = async (page) => {
+    await page.goto(`${base}/operations`);
+    await connect(page);
+    await page.locator("#store-id").fill(CHAT_STORE);
+    return openChat(page);
+  };
+
+  await check("Ask Agento is on every page; opening it without a key calls nothing", async () => {
+    const { page, context } = await newPage();
+    for (const path of PAGES) {
+      await page.goto(`${base}${path}`);
+      await page.locator("h1").first().waitFor();
+      assert.equal(await page.getByRole("button", { name: "Ask Agento" }).count() >= 1, true, `${path}: Ask Agento`);
+    }
+    const mark = stub.requests.length;
+    const dialog = await openChat(page);
+    await dialog.getByText("Connect to the Product API first").waitFor();
+    await page.waitForTimeout(250);
+    assert.equal(since(mark).length, 0, "no Product request");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.getByRole("dialog", { name: "Ask Agento" }).count(), 0, "Escape closes the drawer");
+    await context.close();
+  });
+
+  await check("opening the drawer, navigating and selecting a thread never calls the model", async () => {
+    const { page, context } = await newPage();
+    const mark = stub.requests.length;
+    const dialog = await chatReady(page);
+    await dialog.getByText(/No chats in this store yet|Chat from/).first().waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("navigation", { name: "Product" }).getByRole("link", { name: "Approvals" }).click();
+    await page.getByRole("heading", { level: 1, name: "Approvals" }).waitFor();
+    await openChat(page);
+    await page.waitForTimeout(250);
+    const calls = chatCalls(mark);
+    assert.ok(calls.length >= 1, "threads listed");
+    assert.ok(calls.every((c) => c.method === "GET" && c.path === "/api/v1/chat/threads"), "reads only");
+    assert.ok(!since(mark).some((c) => c.path === "/api/v1/operations/runs"), "no Operations run");
+    await context.close();
+  });
+
+  await check("a chat turn: Enter sends, Shift+Enter adds a line, answers are plain text", async () => {
+    const { page, context, dialogs } = await newPage();
+    const dialog = await chatReady(page);
+    const composer = dialog.locator("#chat-message");
+    await composer.fill("Analyze operations for 2026-03-03.");
+    await composer.press("Shift+Enter");
+    await composer.type("Second line");
+    assert.equal(await composer.inputValue(), "Analyze operations for 2026-03-03.\nSecond line");
+    const mark = stub.requests.length;
+    await composer.press("Enter");
+    await dialog.getByText("Second line <b>not bold</b> **not markdown**").waitFor();
+    const turns = chatCalls(mark).filter((c) => c.path === "/api/v1/chat/turns");
+    assert.equal(turns.length, 1, "one turn");
+    assert.deepEqual(Object.keys(turns[0].body).sort(), ["message", "thread_id", "turn_id"]);
+    assert.equal(turns[0].idempotencyKey, false, "no Idempotency-Key on a turn");
+    assert.equal(chatCalls(mark).filter((c) => c.path === "/api/v1/chat/threads" && c.method === "POST").length, 1);
+    assert.equal(await dialog.locator(".chat-msg b").count(), 0, "no HTML rendered");
+    const text = await dialog.locator(".chat-msg--agent .chat-msg__text").last().innerText();
+    assert.ok(text.includes("\n"), "newlines preserved");
+    assert.equal(await composer.inputValue(), "", "composer cleared");
+    assert.deepEqual(dialogs, []);
+    await noKeyAnywhere(page);
+    await context.close();
+  });
+
+  await check("send is disabled while a turn is in flight; nothing auto-sends", async () => {
+    const { page, context } = await newPage();
+    const dialog = await chatReady(page);
+    await dialog.getByText(/No chats in this store yet|Chat from/).first().waitFor();
+    await fetch(`http://127.0.0.1:${stub.port}/__stub/hold?path=/api/v1/chat/turns&count=1`, { method: "POST" });
+    const composer = dialog.locator("#chat-message");
+    await composer.fill("Hold this one");
+    await dialog.getByRole("button", { name: "Send" }).click();
+    await dialog.getByRole("button", { name: "Sending…" }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "Sending…" }).isDisabled(), true);
+    assert.equal(await composer.isDisabled(), true);
+    await fetch(`http://127.0.0.1:${stub.port}/__stub/release?status=200`, { method: "POST" });
+    await dialog.getByText("Stub answer for: Hold this one").waitFor();
+    const mark = stub.requests.length;
+    await page.waitForTimeout(400);
+    assert.equal(chatCalls(mark).length, 0, "no polling or automatic request");
+    await context.close();
+  });
+
+  await check("a proposal is confirmed explicitly with only its id and one Idempotency-Key", async () => {
+    const { page, context } = await newPage();
+    const dialog = await chatReady(page);
+    const composer = dialog.locator("#chat-message");
+    await composer.fill('Create an operational ticket titled "Investigate failed shipment" with description "Review the failed shipment."');
+    await composer.press("Enter");
+    const card = dialog.getByLabel("Ticket proposal");
+    await card.getByText("Waiting for your confirmation").waitFor();
+    assert.equal(await dialog.getByText("Ticket created").count(), 0, "not created by the proposal");
+    const mark = stub.requests.length;
+    await card.getByRole("button", { name: "Confirm and create ticket" }).click();
+    await card.getByText("Ticket created").waitFor();
+    const confirms = chatCalls(mark).filter((c) => c.path === "/api/v1/chat/ticket-proposals/confirm");
+    assert.equal(confirms.length, 1);
+    assert.deepEqual(Object.keys(confirms[0].body), ["proposal_id"], "only the proposal id");
+    assert.equal(confirms[0].idempotencyKey, true, "exactly one Idempotency-Key");
+    assert.equal(await card.getByRole("button", { name: /Confirm|Cancel/ }).count(), 0, "no second confirmation");
+    await noKeyAnywhere(page);
+    await context.close();
+  });
+
+  await check("a cancelled proposal stays cancelled; a disabled Agent is explained", async () => {
+    const { page, context } = await newPage();
+    const dialog = await chatReady(page);
+    const composer = dialog.locator("#chat-message");
+    await composer.fill('Create an operational ticket titled "Cancel me" with description "Nothing to do."');
+    await composer.press("Enter");
+    const card = dialog.getByLabel("Ticket proposal").last();
+    await card.getByRole("button", { name: "Cancel" }).click();
+    await card.getByText("Cancelled").waitFor();
+    assert.equal(await card.getByRole("button", { name: /Confirm/ }).count(), 0);
+    await composer.fill("disabled-agent please answer");
+    await composer.press("Enter");
+    await dialog.getByText("Operations Agent is disabled.").waitFor();
+    await context.close();
+  });
+
+  await check("a store change and a disconnect clear the chat", async () => {
+    const { page, context } = await newPage();
+    const dialog = await chatReady(page);
+    const composer = dialog.locator("#chat-message");
+    await composer.fill("Remember this store");
+    await composer.press("Enter");
+    await dialog.getByText("Stub answer for: Remember this store").waitFor();
+    await dialog.locator("#chat-store-id").fill("0b0b0b0b-0000-4000-8000-000000000002");
+    await dialog.getByText("No chats in this store yet.").waitFor();
+    assert.equal(await dialog.getByText("Stub answer for: Remember this store").count(), 0, "transcript cleared");
+    await dialog.locator("#chat-store-id").fill(CHAT_STORE);
+    await dialog.getByText(/Chat from/).first().waitFor();
+    assert.equal(await dialog.getByText("Stub answer for: Remember this store").count(), 0, "no thread auto-opened");
+    const selectMark = stub.requests.length;
+    await dialog.getByRole("button", { name: /Chat from/ }).first().click();
+    await dialog.getByText("Stub answer for: Remember this store").waitFor();
+    const selected = chatCalls(selectMark);
+    assert.deepEqual(selected.map((c) => `${c.method} ${c.path}`), ["GET /api/v1/chat/thread"], "selecting reads only");
+    await page.keyboard.press("Escape");
+    await page.locator(".session-control").getByRole("button", { name: "Disconnect" }).click();
+    const reopened = await openChat(page);
+    await reopened.getByText("Connect to the Product API first").waitFor();
+    assert.equal(await reopened.locator(".chat-msg").count(), 0);
+    await noKeyAnywhere(page);
+    await context.close();
+  });
+
+  await check("mobile: Ask Agento is a full-screen dialog without horizontal overflow", async () => {
+    const { page, context } = await newPage({ width: 390, height: 844 });
+    await page.goto(`${base}/`);
+    await page.locator("h1").first().waitFor();
+    const dialog = await openChat(page);
+    const box = await dialog.boundingBox();
+    assert.ok(box && box.width >= 389 && box.x <= 1, "full width");
+    await noOverflow(page, "390px chat");
+    await page.keyboard.press("Escape");
+    await context.close();
+  });
+
   await check("mobile and tablet: no horizontal overflow; the menu is an accessible toggle", async () => {
     for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }]) {
       const { page, context } = await newPage(viewport);

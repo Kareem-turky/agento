@@ -55,10 +55,11 @@ def sha256(path: Path) -> str:
 # ----- scope: frontend only ----------------------------------------------------------------------
 
 
-def test_no_migration_0009_and_head_stays_0008() -> None:
+def test_head_is_the_task_042_employee_chat_migration() -> None:
     versions = sorted(p.name for p in (API / "migrations" / "versions").glob("0*.py"))
-    assert versions[-1] == "0008_create_conversations.py"
-    assert not [name for name in versions if name.startswith("0009")]
+    # Task 042 (Employee Chat) adds 0009; the Control Center itself owns no schema.
+    assert versions[-1] == "0009_create_employee_chat.py"
+    assert not [name for name in versions if name.startswith("0010")]
     heads = [
         p
         for p in (API / "migrations" / "versions").glob("*.py")
@@ -113,8 +114,9 @@ def test_no_new_bff_route_or_generic_proxy() -> None:
         str(p.relative_to(WEB / "app" / "api" / "product"))
         for p in (WEB / "app" / "api" / "product").rglob("route.ts")
     )
-    # Task 038 added none; Task 039 adds exactly health/ready and system/status.
-    assert len(routes) == 46
+    # Task 038 added none; Task 039 adds exactly health/ready and system/status; Task 042
+    # adds the five fixed Employee Chat routes.
+    assert len(routes) == 51
     assert {"health/ready/route.ts", "system/status/route.ts"} <= set(routes)
     assert not [r for r in routes if "[" in r or "overview" in r or "aggregate" in r]
     assert not list((WEB / "app").rglob("[[]*"))  # no dynamic / catch-all segment anywhere
@@ -221,7 +223,7 @@ def test_auth_outcomes_are_bound_to_the_epoch_their_request_began_in() -> None:
     send = client.split("async function send<T>(", 1)[1].split("\n}\n", 1)[0]
     # Phase one runs BEFORE the exchange (network I/O); phase two after, with the token.
     begin = send.index("const observation = beginAuthObservation(init.headers);")
-    exchange = send.index("const result = await exchange(path, init, guard);")
+    exchange = send.index("const result = await exchange(path, init, guard, details);")
     complete = send.index(
         "observation.observer.complete(observation.token, "
         "{ ok: result.ok, status: result.status });"
@@ -439,6 +441,14 @@ def test_browser_tests_use_a_test_only_local_stub() -> None:
         "redirect",
         "no horizontal overflow",
         "Operations regression",
+        # Task 042: Ask Agento.
+        "Ask Agento is on every page",
+        "never calls the model",
+        "Shift+Enter adds a line, answers are plain text",
+        "send is disabled while a turn is in flight",
+        "only its id and one Idempotency-Key",
+        "a store change and a disconnect clear the chat",
+        "full-screen dialog",
     ):
         assert case in script, case
     # The scripts are test tooling: nothing in the app imports them.

@@ -111,6 +111,9 @@ def test_no_module_level_mutable_state() -> None:
 # Task 011: the Operations Agent modules are the one intended consumer of operations.
 OPERATIONS_AGENT_MODULES = {
     "agents/operations.py", "agents/operations_context.py", "agents/operations_tools.py",
+    # Task 042: the Employee Chat runner (reads CREATE_TICKET_ACTION only to check that a
+    # PROPOSAL is permitted; it never executes the action).
+    "agents/operations_chat.py",
 }  # fmt: skip
 
 

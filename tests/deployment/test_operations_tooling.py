@@ -158,7 +158,7 @@ def test_ci_runs_the_drill_on_a_disposable_project_and_always_tears_it_down() ->
         "does not match its checksum",
         "EMPTY database",
         "known state survived",
-        "== 0008",
+        "== 0009",  # Task 042: the restored schema is at the 0009 head
     ):
         assert proof in source, proof
 

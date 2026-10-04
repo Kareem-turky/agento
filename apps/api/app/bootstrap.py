@@ -46,6 +46,7 @@ from app.composition import build_deployment_composition
 from app.composition.agents import build_agent_management
 from app.composition.approvals import build_approvals
 from app.composition.conversations import build_conversations
+from app.composition.employee_chat import build_employee_chat
 from app.composition.integrations import build_integration_management
 from app.composition.knowledge import build_knowledge
 from app.composition.system import build_system_readiness
@@ -117,6 +118,8 @@ def create_deployment_app(
         discards.append(approvals.discard)
         conversations = build_conversations(settings, observability=observer)
         discards.append(conversations.discard)
+        chat = build_employee_chat(settings)
+        discards.append(chat.discard)
         system = build_system_readiness(settings)
         discards.append(system.discard)
     except BaseException:
@@ -146,10 +149,13 @@ def create_deployment_app(
                                     await conversations.close()
                                 finally:
                                     try:
-                                        await system.close()
+                                        await chat.close()
                                     finally:
-                                        # Telemetry last: it observed everything above.
-                                        stop_telemetry()
+                                        try:
+                                            await system.close()
+                                        finally:
+                                            # Telemetry last: it observed everything above.
+                                            stop_telemetry()
 
     try:
         return create_app(
@@ -166,6 +172,8 @@ def create_deployment_app(
             knowledge_service=knowledge.service,
             approval_service=approvals.service,
             conversation_service=conversations.service,
+            chat_repository=chat.repository,
+            operations_chat_service=composition.operations_chat_service,
             system_probe=system.probe,
             shutdown_callback=close,
             observability=observer,

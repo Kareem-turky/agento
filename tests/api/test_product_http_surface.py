@@ -109,9 +109,21 @@ CONVERSATION_ROUTES = {
     ("GET", "/api/v1/conversations/conversation"),
     ("GET", "/api/v1/conversations/messages"),
 }
+# Task 042: Employee Chat. The model only PROPOSES a ticket; the confirm route runs the
+# STORED proposal through the existing ticket WriteCommand path (no generic execute).
+CHAT_ROUTES = {
+    ("GET", "/api/v1/chat/threads"),
+    ("POST", "/api/v1/chat/threads"),
+    ("GET", "/api/v1/chat/thread"),
+    ("GET", "/api/v1/chat/turns"),
+    ("POST", "/api/v1/chat/turns"),
+    ("POST", "/api/v1/chat/ticket-proposals/confirm"),
+    ("POST", "/api/v1/chat/ticket-proposals/cancel"),
+}
 MANAGEMENT_PREFIXES = ("/api/v1/integrations/", "/api/v1/agents", "/api/v1/skills/",
                        "/api/v1/tasks/", "/api/v1/workflows/", "/api/v1/knowledge/",
-                       "/api/v1/approvals", "/api/v1/conversations")  # fmt: skip
+                       "/api/v1/approvals", "/api/v1/conversations",
+                       "/api/v1/chat/")  # fmt: skip
 
 
 def test_product_routes_are_exactly_the_intended_surface(client) -> None:
@@ -143,6 +155,8 @@ def test_product_routes_are_exactly_the_intended_surface(client) -> None:
     # Task 037: conversations are exactly these fixed READ-ONLY routes.
     conversations = {(m, p) for m, p in routes if p.startswith("/api/v1/conversations")}
     assert conversations == CONVERSATION_ROUTES
+    # Task 042: Employee Chat is exactly these fixed routes.
+    assert {(m, p) for m, p in routes if p.startswith("/api/v1/chat")} == CHAT_ROUTES
     assert not [p for _, p in approvals if "create" in p or "request" in p]
     # Task 039: read-only System Status and the two public health probes, nothing else
     # (no write, restart, backup, restore, metrics or log route).
@@ -220,7 +234,9 @@ def test_only_the_ticket_route_handles_the_idempotency_key_header() -> None:
         for p in HTTP_FILES
         if any("idempotency-key" in s for s in identifiers_and_strings(p)[1])
     ]
-    assert [str(h) for h in holders] == ["routes/operations_tickets.py"]
+    # Task 042: the chat confirmation also requires exactly one key (it reuses the ticket
+    # route's header constant and hands the key to the same ticket command service).
+    assert [str(h) for h in holders] == ["routes/chat.py", "routes/operations_tickets.py"]
     names, _ = identifiers_and_strings(TICKETS_ROUTE)
     assert not {"write_mode", "requested_write_actions", "action_name"} & names
 

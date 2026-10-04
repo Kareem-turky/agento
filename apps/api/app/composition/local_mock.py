@@ -22,6 +22,8 @@
          is a durable ``operations.daily_report`` Workflow run (Task 034)
     build_operations_agent(model, commerce, gate, coordinator, daily_operations)
       -> OperationsAgentRunner
+    build_operations_chat_agent(<same inputs>) -> OperationsChatRunner (Employee Chat:
+      read tools + a no-side-effect ticket proposal, Task 042)
 
 The read and write adapters share one mock system, so they resolve the same canonical
 company and stores. Everything except the mock provider is the Product core a real
@@ -37,6 +39,7 @@ from agno.models.base import Model
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.agents.operations import OperationsAgentRunner, build_operations_agent
+from app.agents.operations_chat import OperationsChatRunner, build_operations_chat_agent
 from app.application.operations_ticket_queries import WriteCommandTicketQueryService
 from app.application.operations_tickets import WriteCommandTicketService
 from app.approval_management.broker import ProductApprovalBroker
@@ -159,9 +162,14 @@ def build_local_mock_composition(
             operations_model, commerce=commerce, gate=gate, coordinator=coordinator,
             daily_operations=daily_operations,
         )  # fmt: skip
+        chat_agent = build_operations_chat_agent(
+            operations_model, commerce=commerce, gate=gate, coordinator=coordinator,
+            daily_operations=daily_operations,
+        )  # fmt: skip
         return DeploymentComposition(
             default_model=operations_model,
             operations_service=OperationsAgentRunner(agent),
+            operations_chat_service=OperationsChatRunner(chat_agent),
             operations_ticket_service=WriteCommandTicketService(commands),
             operations_ticket_query_service=WriteCommandTicketQueryService(store),
             daily_operations_service=daily_operations,

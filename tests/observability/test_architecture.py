@@ -194,11 +194,13 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
     # Task 031 appended ``integration_service`` after ``observability``; Task 032
     # appended ``agent_service``, Task 034 ``workflow_service`` and Task 035
     # ``knowledge_service``, Task 036 ``approval_service`` and Task 037
-    # ``conversation_service``, and Task 039 ``system_probe``.
-    assert list(parameters)[-8:] == ["observability", "integration_service", "agent_service",
-                                     "workflow_service", "knowledge_service",
-                                     "approval_service", "conversation_service",
-                                     "system_probe"]  # fmt: skip
+    # ``conversation_service``, Task 039 ``system_probe`` and Task 042
+    # ``chat_repository`` and ``operations_chat_service``.
+    assert list(parameters)[-10:] == ["observability", "integration_service", "agent_service",
+                                      "workflow_service", "knowledge_service",
+                                      "approval_service", "conversation_service",
+                                      "system_probe", "chat_repository",
+                                      "operations_chat_service"]  # fmt: skip
     assert parameters["observability"].default is None
     assert parameters["integration_service"].default is None
     assert parameters["agent_service"].default is None
@@ -206,6 +208,8 @@ def test_operator_factory_signature_is_unchanged_and_create_app_gains_one_option
     assert parameters["knowledge_service"].default is None
     assert parameters["approval_service"].default is None
     assert parameters["conversation_service"].default is None
+    assert parameters["chat_repository"].default is None
+    assert parameters["operations_chat_service"].default is None
     assert parameters["system_probe"].default is None
 
 
@@ -221,6 +225,8 @@ def test_product_http_surface_is_unchanged(settings, runtime_settings) -> None:
                                      "/api/v1/skills/", "/api/v1/tasks/",
                                      "/api/v1/workflows/", "/api/v1/knowledge/",
                                      "/api/v1/approvals", "/api/v1/conversations",
+                                     # Task 042: pinned in tests/api (service-observed).
+                                     "/api/v1/chat/",
                                      # Task 039: pinned in tests/api and tests/system.
                                      "/api/v1/system/")))
         or path == "/health"

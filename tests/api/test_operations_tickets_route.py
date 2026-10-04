@@ -164,6 +164,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     from app.routes.agents import AGENTS_PATHS
     from app.routes.approvals import APPROVALS_PATHS
     from app.routes.capabilities import CAPABILITIES_PATHS
+    from app.routes.chat import CHAT_PATHS
     from app.routes.conversations import CONVERSATIONS_PATHS
     from app.routes.integrations import INTEGRATIONS_PATHS
     from app.routes.knowledge import KNOWLEDGE_PATHS
@@ -183,6 +184,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
             *KNOWLEDGE_PATHS,  # Task 035: Knowledge (exact paths)
             *APPROVALS_PATHS,  # Task 036: human approvals (exact paths)
             *CONVERSATIONS_PATHS,  # Task 037: read-only conversations (exact paths)
+            *CHAT_PATHS,  # Task 042: Employee Chat (exact paths)
             *SYSTEM_PATHS,  # Task 039: Product-authenticated System Status (exact path)
             *PUBLIC_HEALTH_PATHS,  # Task 039: public /health/live and /health/ready
         ]
@@ -192,6 +194,7 @@ def test_the_agentos_exemption_is_exact(settings, runtime_settings) -> None:
     assert len(KNOWLEDGE_PATHS) == len(set(KNOWLEDGE_PATHS)) == 10
     assert len(APPROVALS_PATHS) == len(set(APPROVALS_PATHS)) == 6
     assert len(CONVERSATIONS_PATHS) == len(set(CONVERSATIONS_PATHS)) == 3
+    assert len(CHAT_PATHS) == len(set(CHAT_PATHS)) == 5
     assert OPERATIONS_TICKETS_PATH == PATH
 
 

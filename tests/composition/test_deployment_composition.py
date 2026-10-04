@@ -40,6 +40,8 @@ BUILT_NAMES = (
     # Task 034: the daily report runs as the operations.daily_report Product Workflow.
     "build_default_workflow_catalog", "daily_report_registration", "WorkflowRuntimeRegistry",
     "PostgresWorkflowRunRepository", "WorkflowEngine", "WorkflowBackedDailyOperationsReportService",
+    # Task 042: the Employee Chat runner of the SAME Operations Agent inputs.
+    "build_operations_chat_agent", "OperationsChatRunner",
 )  # fmt: skip
 MOCK_PROVIDER_NAMES = ("MockCommerceSystem", "MockCommerceAdapter", "MockTicketDesk",
                        "MockTicketingAdapter")  # fmt: skip
@@ -249,6 +251,14 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
                       "daily_operations": daily}  # fmt: skip
     runner, args, _ = built.one("OperationsAgentRunner")
     assert args == (agent,)
+    # Task 042: the chat agent is bound to the SAME model, gate, coordinator and report.
+    chat_agent, args, kwargs = built.one("build_operations_chat_agent")
+    assert args == (model,)
+    assert kwargs == {"commerce": commerce, "gate": gate, "coordinator": coordinator,
+                      "daily_operations": daily}  # fmt: skip
+    chat_runner, args, _ = built.one("OperationsChatRunner")
+    assert args == (chat_agent,)
+    assert composition.operations_chat_service is chat_runner
     ticket_service, args, _ = built.one("WriteCommandTicketService")
     assert args == (commands,)
     query_service, args, _ = built.one("WriteCommandTicketQueryService")
@@ -266,6 +276,8 @@ def test_mock_composes_the_real_core_on_one_shared_mock_system(settings, built, 
         "operations_ticket_query_service", "daily_operations_service", "close", "discard",
         # Task 036: the Workflow engine, typed only as the narrow approval-continuation port.
         "approval_workflow_resumer",
+        # Task 042: the Employee Chat runner (read tools + a no-side-effect proposal).
+        "operations_chat_service",
     }  # fmt: skip
 
     # The engine is released exactly once, however often close is called.

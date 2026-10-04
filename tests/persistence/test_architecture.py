@@ -47,7 +47,11 @@ ALLOWED_APP = ("app.persistence", "app.commands", "app.execution.audit",
                # Task 037: the conversation repository contract and pure domain modules
                # (never the ingress, read service, routes or composition).
                "app.conversations.contracts", "app.conversations.delivery",
-               "app.conversations.errors", "app.conversations.models")  # fmt: skip
+               "app.conversations.errors", "app.conversations.models",
+               # Task 042: the employee chat repository contract and pure domain modules
+               # (never the service, runner, routes or composition).
+               "app.employee_chat.contracts", "app.employee_chat.errors",
+               "app.employee_chat.models")  # fmt: skip
 
 
 def imports(path: Path) -> list[str]:
@@ -175,7 +179,11 @@ def test_no_business_data_mirror_tables() -> None:
                      # Task 037: the Product-owned canonical conversation transcript
                      # (no provider payload, CRM, attachment or Agent-memory table).
                      "product.conversations", "product.conversation_messages",
-                     "product.message_delivery_events"}  # fmt: skip
+                     "product.message_delivery_events",
+                     # Task 042: the employee's Product-owned chat transcript and typed
+                     # ticket proposals (no Agent memory, provider or customer data).
+                     "product.chat_threads", "product.chat_turns",
+                     "product.chat_action_proposals"}  # fmt: skip
     for path in PERSISTENCE_FILES:
         text = path.read_text()
         for forbidden in ("commerce_", "PostgresCommerceStore", "CommerceStoreReader",

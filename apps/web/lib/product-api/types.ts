@@ -96,7 +96,7 @@ export type ProductErrorKind =
 
 export type ProductResult<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number | null; error: ProductErrorKind };
+  | { ok: false; status: number | null; error: ProductErrorKind; detail?: string };
 
 // ----- Integration management (Task 031): metadata only, never a secret value -------------
 
@@ -510,6 +510,70 @@ export type ConversationMessagesResponse = {
   messages: ConversationMessageView[];
   next_before_sequence: number | null;
 };
+
+// ----- Employee Chat (Task 042) -------------------------------------------------------------
+// Message and answer text is DISPLAY TEXT only: rendered as plain text (newlines kept),
+// never as Markdown or HTML. A proposal never means a ticket exists: only a confirmation
+// whose ticket status is "verified" does.
+
+export type ChatThreadView = {
+  thread_id: string;
+  store_id: string;
+  agent_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatTurnView = {
+  turn_id: string;
+  sequence: number;
+  user_text: string;
+  assistant_text: string | null;
+  status: "pending" | "completed" | "failed";
+  failure: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type ChatProposalState = "proposed" | "confirming" | "submitted" | "cancelled";
+
+export type ChatProposalView = {
+  proposal_id: string;
+  turn_id: string;
+  action: string;
+  title: string;
+  description: string;
+  state: ChatProposalState;
+  command_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChatTicketView = {
+  command_id: string;
+  status: string;
+  reason: string | null;
+  ticket_id: string | null;
+  replayed: boolean;
+  persistence_complete: boolean;
+};
+
+export type ChatThreadListResponse = { request_id: string; threads: ChatThreadView[] };
+export type ChatThreadResponse = { request_id: string; thread: ChatThreadView };
+export type ChatThreadDetailResponse = {
+  request_id: string;
+  thread: ChatThreadView;
+  turns: ChatTurnView[];
+  proposals: ChatProposalView[];
+};
+export type ChatTurnResponse = {
+  request_id: string;
+  replayed: boolean;
+  turn: ChatTurnView;
+  proposal: ChatProposalView | null;
+};
+export type ChatConfirmResponse = { request_id: string; proposal: ChatProposalView; ticket: ChatTicketView };
+export type ChatCancelResponse = { request_id: string; proposal: ChatProposalView };
 
 // ----- System Status (Task 039): stable states and codes only ------------------------------
 

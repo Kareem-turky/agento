@@ -23,6 +23,7 @@ ALLOWED_APP_MODULES = (
     "app.operations", "app.commerce.domain",
     "app.services.operations",  # Task 012: the product run-service contract it implements
     # (also matches app.services.operations_reports: Task 020's daily report contract)
+    "app.employee_chat.models",  # Task 042: the typed chat run result / ticket proposal
 )  # fmt: skip
 ALLOWED_INTEGRATION_MODULES = ("app.integrations.commerce",)
 FORBIDDEN_MODULES = (
@@ -54,6 +55,7 @@ def names(path: Path) -> set[str]:
 def test_operations_agent_files_exist() -> None:
     assert {p.name for p in OPERATIONS_AGENT_FILES} == {
         "operations.py", "operations_context.py", "operations_tools.py",
+        "operations_chat.py",  # Task 042: the Employee Chat runner (no write tool)
     }  # fmt: skip
 
 
@@ -76,10 +78,12 @@ def test_agno_usage_is_the_model_abstraction_and_native_runtime() -> None:
     agno_imports = {m for p in OPERATIONS_AGENT_FILES for m in imports(p) if m.startswith("agno")}
     assert agno_imports <= {
         "agno.agent", "agno.models.base", "agno.run", "agno.run.agent", "agno.run.base",
+        "agno.models.message",  # Task 042: plain user/assistant history messages
     }  # fmt: skip
     for path in OPERATIONS_AGENT_FILES:
         assert not any(
-            m.startswith("agno.models.") and m != "agno.models.base" for m in imports(path)
+            m.startswith("agno.models.") and m not in ("agno.models.base", "agno.models.message")
+            for m in imports(path)
         )
 
 

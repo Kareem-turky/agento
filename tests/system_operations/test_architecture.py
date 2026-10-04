@@ -19,7 +19,8 @@ APP = ROOT / "apps" / "api" / "app"
 SYSTEM = APP / "system_operations"
 MIGRATIONS = ROOT / "apps" / "api" / "migrations"
 
-# Task 039 owns no schema: every Product migration stays byte-identical.
+# Task 039 owns no schema: every Product migration stays byte-identical (Task 042 adds
+# 0009, pinned here too).
 MIGRATION_SHA256 = {
     "0001": "66a1f14e4fcae5f6c17802cda7499591c9cb00693dbd5244cc3f464ea89297f2",
     "0002": "b0512d7f743451349f22f77d5b7e079e37ce49c00cba77f05cbd1c861e449ca9",
@@ -29,6 +30,7 @@ MIGRATION_SHA256 = {
     "0006": "ca308ddd3f2f63f8f3b171a5643da2d6832da7c4c712c2f3338174cc53a59b2a",
     "0007": "0bab564c73a9bcc9a1e24568c1627e707b813f37fcd172d41a48df26b280fde4",
     "0008": "baf48dc6ba3b47d75fb65b9da0ccc3c3b15a7a66d1d71d9490155c8a2aa04ab2",
+    "0009": "2c56128f144c3d470d563a055b7fcf215eec47e09d7407e6275076f20bc541f6",
 }
 
 
@@ -53,10 +55,10 @@ def test_expected_revision_is_the_single_alembic_head() -> None:
     config = Config()
     config.set_main_option("script_location", str(MIGRATIONS))
     heads = ScriptDirectory.from_config(config).get_heads()
-    assert heads == [EXPECTED_PRODUCT_SCHEMA_REVISION] == ["0008"]
+    assert heads == [EXPECTED_PRODUCT_SCHEMA_REVISION] == ["0009"]
 
 
-def test_no_migration_0009_and_migrations_are_unchanged() -> None:
+def test_migrations_are_unchanged() -> None:
     files = sorted((MIGRATIONS / "versions").glob("*.py"))
     assert [p.name[:4] for p in files] == sorted(MIGRATION_SHA256)
     for path in files:
@@ -67,7 +69,7 @@ def test_the_revision_constant_is_stated_once() -> None:
     holders = [
         str(p.relative_to(APP))
         for p in modules(APP)
-        if '"0008"' in p.read_text() or "'0008'" in p.read_text()
+        if '"0009"' in p.read_text() or "'0009'" in p.read_text()
     ]
     assert holders == ["system_operations/revision.py"]
     # No runtime code imports an Alembic migration module.
