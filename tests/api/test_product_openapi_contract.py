@@ -291,24 +291,221 @@ def test_public_health_contract_matches_the_runtime(combined: Any) -> None:
     assert "/health/live" not in runtime_paths and "/health/ready" not in runtime_paths
 
 
-def test_validation_errors_are_documented_as_the_safe_shape(combined: Any) -> None:
-    document = spec()
-    schemas = document["components"]["schemas"]
-    assert "HTTPValidationError" not in schemas and "ValidationError" not in schemas
-    safe = schemas["SafeValidationError"]["properties"]["detail"]["items"]["properties"]
-    assert set(safe) == {"type", "loc", "msg"}
-    with TestClient(combined) as client:
-        answer = client.post(
-            "/api/v1/operations/runs",
-            headers={"Authorization": f"Bearer {TEST_PRODUCT_KEY}"},
-            json={},
+# ----- 422: three documented shapes, never one assumed for all --------------------------------
+
+SAFE, DETAIL, CODED = "SafeValidationError", "ErrorDetail", "CodedErrorDetail"
+MARKER = "contract-planted-value-7c1e"
+OPERATOR_KEY = "test-contract-operator-key-" + "o" * 24
+STORE = "0a0a0a0a-0000-4000-8000-000000000001"
+
+
+def resolve(document: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    if "$ref" in schema:
+        return document["components"]["schemas"][schema["$ref"].rsplit("/", 1)[-1]]
+    return schema
+
+
+def conforms(document: dict[str, Any], value: Any, schema: dict[str, Any]) -> bool:
+    """A minimal JSON-Schema check for the error shapes (no extra dependency)."""
+    schema = resolve(document, schema)
+    if "oneOf" in schema:
+        return sum(conforms(document, value, s) for s in schema["oneOf"]) == 1
+    kind = schema.get("type")
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "array":
+        return isinstance(value, list) and all(
+            conforms(document, v, schema.get("items", {})) for v in value
         )
-        assert answer.status_code in (401, 422)
-    for item in document["paths"].values():
-        for operation in item.values():
-            if "422" in operation["responses"]:
-                ref = operation["responses"]["422"]["content"]["application/json"]["schema"]
-                assert ref == {"$ref": "#/components/schemas/SafeValidationError"}
+    if kind == "object":
+        props = schema.get("properties", {})
+        if not isinstance(value, dict) or not set(schema.get("required", [])) <= set(value):
+            return False
+        if schema.get("additionalProperties") is False and not set(value) <= set(props):
+            return False
+        return all(conforms(document, v, props[k]) for k, v in value.items() if k in props)
+    return True
+
+
+def documented_422(document: dict[str, Any], method: str, path: str) -> dict[str, Any]:
+    response = document["paths"][path][method.lower()]["responses"]["422"]
+    return response["content"]["application/json"]["schema"]
+
+
+def variants(schema: dict[str, Any]) -> set[str]:
+    refs = schema.get("oneOf", [schema])
+    return {r["$ref"].rsplit("/", 1)[-1] for r in refs}
+
+
+def test_the_three_422_shapes_are_closed_and_exact() -> None:
+    schemas = spec()["components"]["schemas"]
+    assert "HTTPValidationError" not in schemas and "ValidationError" not in schemas
+    safe = schemas[SAFE]["properties"]["detail"]["items"]
+    assert set(safe["properties"]) == {"type", "loc", "msg"}
+    assert safe["additionalProperties"] is False and schemas[SAFE]["additionalProperties"] is False
+    assert schemas[DETAIL]["properties"]["detail"]["type"] == "string"
+    coded = schemas[CODED]["properties"]["detail"]
+    assert set(coded["properties"]) == {"message", "code", "field"}
+    assert set(coded["required"]) == {"message", "code"}  # field is optional
+    assert coded["additionalProperties"] is False
+
+
+def test_each_operation_documents_exactly_its_422_shapes() -> None:
+    document = spec()
+    expected = {
+        ("GET", "/api/v1/operations/reports/daily"): {SAFE, DETAIL},
+        ("POST", "/api/v1/integrations/connections"): {SAFE, DETAIL, CODED},
+        ("PUT", "/api/v1/integrations/connection"): {SAFE, DETAIL, CODED},
+        ("PUT", "/api/v1/integrations/connection/credentials"): {SAFE, DETAIL, CODED},
+        ("POST", "/api/v1/integrations/connection/test"): {SAFE, DETAIL},
+        ("GET", "/api/v1/approvals"): {SAFE, CODED},
+        ("POST", "/api/v1/approvals/approval/approve"): {SAFE, CODED},
+        ("POST", "/api/v1/approvals/approval/reject"): {SAFE, CODED},
+        ("POST", "/api/v1/approvals/approval/cancel"): {SAFE, CODED},
+        ("GET", "/api/v1/conversations"): {SAFE, CODED},
+        ("GET", "/api/v1/conversations/messages"): {SAFE, CODED},
+        ("POST", "/api/v1/knowledge/operating-model/publish"): {SAFE, CODED},
+        ("POST", "/api/v1/knowledge/document/create"): {SAFE, CODED},
+        ("POST", "/api/v1/knowledge/document/version"): {SAFE, CODED},
+        ("POST", "/api/v1/knowledge/document/archive"): {SAFE, CODED},
+        ("POST", "/api/v1/knowledge/query"): {SAFE, CODED},
+    }
+    seen = {}
+    for method, path in operations(document):
+        responses = document["paths"][path][method.lower()]["responses"]
+        if "422" in responses:
+            seen[(method, path)] = variants(documented_422(document, method, path))
+    multi = {op: v for op, v in seen.items() if v != {SAFE}}
+    assert multi == expected  # never every shape everywhere: only where the source raises it
+    assert all(v == {SAFE} for op, v in seen.items() if op not in expected)
+    for op, shapes in expected.items():
+        schema = documented_422(document, *op)
+        assert len(schema["oneOf"]) == len(shapes), op
+
+
+def test_runtime_transport_and_fixed_string_422_match_the_contract(settings) -> None:
+    from agno.os.settings import AgnoAPISettings
+
+    from tests.support.product_auth import deployment_settings, principal
+
+    keys = (
+        principal(
+            OPERATOR_KEY,
+            key_id="operator",
+            actor_id="operator",
+            permissions=frozenset({"orders.read", "shipments.read", "stores.read"}),
+            store_ids=frozenset({STORE}),
+        ),
+    )
+    configured = deployment_settings(settings, "test", product_api_keys=keys)
+    app = create_app(configured, AgnoAPISettings(os_security_key=TEST_OS_SECURITY_KEY))
+    document = spec()
+    headers = {"Authorization": f"Bearer {OPERATOR_KEY}"}
+    report = "/api/v1/operations/reports/daily"
+    with TestClient(app) as client:
+        # Transport validation (SafeValidationRoute): a malformed query value and a body.
+        bad = client.get(report, headers=headers, params={"store_id": MARKER})
+        assert bad.status_code == 422 and MARKER not in bad.text
+        assert conforms(document, bad.json(), {"$ref": f"#/components/schemas/{SAFE}"})
+        assert conforms(document, bad.json(), documented_422(document, "GET", report))
+        run = client.post(
+            "/api/v1/operations/runs",
+            headers=headers,
+            json={"store_id": STORE, "message": MARKER, "extra": MARKER},
+        )
+        assert run.status_code == 422 and MARKER not in run.text
+        assert conforms(
+            document, run.json(), documented_422(document, "POST", "/api/v1/operations/runs")
+        )
+        # The daily report's own 422: a fixed string detail, not SafeValidationError.
+        extra = client.get(report, headers=headers, params={"store_id": STORE, "timezone": MARKER})
+        assert extra.status_code == 422
+        assert extra.json() == {"detail": "Unsupported query parameters"}
+        assert not conforms(document, extra.json(), {"$ref": f"#/components/schemas/{SAFE}"})
+        assert conforms(document, extra.json(), documented_422(document, "GET", report))
+
+
+def test_runtime_coded_422_matches_the_contract(settings, tmp_path: Path) -> None:
+    from tests.integration_management.test_http_security import World, create
+
+    document = spec()
+    world = World(settings, tmp_path)
+    create_schema = documented_422(document, "POST", "/api/v1/integrations/connections")
+    # Coded, with the optional field: a driver/config refusal.
+    coded = create(world, config={"store_url": "https://h.test", "region": "invalid"})
+    assert coded.status_code == 422
+    detail = coded.json()["detail"]
+    assert isinstance(detail, dict) and {"message", "code"} <= set(detail)
+    assert set(detail) <= {"message", "code", "field"}
+    assert conforms(document, coded.json(), {"$ref": f"#/components/schemas/{CODED}"})
+    assert conforms(document, coded.json(), create_schema)
+    # Fixed string on the same operation: an integration that is not installed.
+    missing = create(world, integration_id="not-installed")
+    assert missing.json() == {"detail": "Integration is not installed"}
+    assert conforms(document, missing.json(), create_schema)
+    # Coded WITHOUT the optional field, from the real runtime (an unknown config key).
+    unknown = create(world, config={"store_url": "https://h.test", "unknown": MARKER})
+    assert unknown.status_code == 422 and MARKER not in unknown.text
+    assert set(unknown.json()["detail"]) == {"message", "code"}
+    assert conforms(document, unknown.json(), create_schema)
+    # Coded without `field` (Approvals/Conversations/Knowledge shape) is also the schema.
+    assert conforms(
+        document,
+        {"detail": {"message": "m", "code": "c"}},
+        {"$ref": f"#/components/schemas/{CODED}"},
+    )
+
+
+# ----- hand-written metadata cannot drift ------------------------------------------------------
+
+
+def tampered(edit: str) -> subprocess.CompletedProcess:
+    code = NO_NETWORK + (
+        "import runpy\n"
+        f"g = runpy.run_path({str(SCRIPT)!r}, run_name='lib')\n"
+        f"{edit}\n"
+        "g['build_openapi']()\n"
+    )
+    return subprocess.run(  # noqa: S603 - fixed interpreter and script
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, check=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        ("g['ENDPOINT_NOTES'][('GET', '/api/v1/gone')] = (None, 'x')", "ENDPOINT_NOTES"),
+        (
+            "g['UNDECLARED_RESPONSES'][('GET', '/api/v1/gone')] = {'404': 'x'}",
+            "UNDECLARED_RESPONSES has stale",
+        ),
+        ("g['UNDECLARED_RESPONSES'][('GET', '/api/v1/agents')] = {'299': 'x'}", "invalid status"),
+        ("g['UNDECLARED_RESPONSES'][('GET', '/api/v1/agents')] = {'422': 'x'}", "PRODUCT_422"),
+        (
+            "g['UNDECLARED_RESPONSES'][('GET', '/api/v1/agents')] = {'403': 'x'}",
+            "would override the route-declared 403",
+        ),
+        ("g['PRODUCT_422'][('GET', '/api/v1/gone')] = ('ErrorDetail',)", "PRODUCT_422 has stale"),
+        ("g['PRODUCT_422'][('GET', '/api/v1/agents')] = ('Anything',)", "variants must be"),
+        (
+            "del g['PRODUCT_422'][('GET', '/api/v1/operations/reports/daily')]",
+            "unlisted ['app.routes.operations_reports']",
+        ),
+        (
+            "g['PRODUCT_422'][('GET', '/api/v1/agents')] = ('ErrorDetail',)",
+            "listed without a 422 ['app.routes.agents']",
+        ),
+    ],
+)
+def test_stale_or_invalid_hand_written_metadata_fails_generation(edit: str, message: str) -> None:
+    result = tampered(edit)
+    assert result.returncode != 0
+    assert message in result.stderr + result.stdout, result.stderr[-500:]
+
+
+def test_untampered_metadata_generates() -> None:
+    result = tampered("pass")
+    assert result.returncode == 0, result.stderr[-500:]
 
 
 def test_request_schemas_are_as_strict_as_the_pydantic_models(combined: Any) -> None:

@@ -755,6 +755,39 @@
         "title": "CheckpointPolicy",
         "type": "string"
       },
+      "CodedErrorDetail": {
+        "additionalProperties": false,
+        "description": "A Product input 422 with a stable code. `field` names the offending configuration field where the Product knows it (integration configuration only).",
+        "properties": {
+          "detail": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "description": "A stable machine-readable reason code.",
+                "type": "string"
+              },
+              "field": {
+                "description": "Optional: the configuration field name.",
+                "type": "string"
+              },
+              "message": {
+                "description": "A fixed message; never a submitted value.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "code"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "CodedErrorDetail",
+        "type": "object"
+      },
       "ComponentState": {
         "enum": [
           "ready",
@@ -1721,6 +1754,8 @@
         "type": "object"
       },
       "ErrorDetail": {
+        "additionalProperties": false,
+        "description": "A Product error with a fixed message. Also a Product input 422 (for example `Unsupported query parameters`) on the operations that document it.",
         "properties": {
           "detail": {
             "description": "A fixed message; never a submitted value.",
@@ -2764,10 +2799,12 @@
         "type": "object"
       },
       "SafeValidationError": {
-        "description": "Request validation failure. Only the structural type, location and message of each error: submitted values (`input`) and `ctx` are never returned.",
+        "additionalProperties": false,
+        "description": "Request (schema/transport) validation failure from `SafeValidationRoute`. Only the structural type, location and message of each error: submitted values (`input`) and `ctx` are never returned.",
         "properties": {
           "detail": {
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "loc": {
                   "items": {
@@ -4584,7 +4621,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -4722,7 +4759,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -4860,7 +4897,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -4998,7 +5035,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5230,11 +5267,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5355,7 +5399,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5504,11 +5548,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5650,11 +5701,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5796,11 +5854,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -5936,7 +6001,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6040,7 +6105,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6144,7 +6209,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6244,7 +6309,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6361,7 +6426,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6537,7 +6602,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6641,7 +6706,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6771,7 +6836,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -6892,11 +6957,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7017,7 +7089,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7163,11 +7235,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7380,7 +7459,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7499,7 +7578,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7639,11 +7718,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorDetail"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7785,11 +7874,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorDetail"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -7925,7 +8024,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8061,7 +8160,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8193,11 +8292,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8400,11 +8506,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorDetail"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8525,7 +8641,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8657,11 +8773,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8789,11 +8912,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -8927,7 +9057,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9067,11 +9197,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9353,11 +9490,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9479,7 +9623,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9669,11 +9813,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CodedErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9790,11 +9941,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SafeValidationError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SafeValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorDetail"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` (fixed messages and codes only).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -9911,7 +10069,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10087,7 +10245,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10191,7 +10349,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10390,7 +10548,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10666,7 +10824,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10864,7 +11022,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -10972,7 +11130,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
@@ -11094,7 +11252,7 @@
                 }
               }
             },
-            "description": "Request validation failed (values are never echoed).",
+            "description": "Request validation failed (`SafeValidationError`; values are never echoed).",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"

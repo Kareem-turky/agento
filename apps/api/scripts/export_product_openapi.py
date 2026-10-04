@@ -22,11 +22,23 @@ How it works (documentation tooling only; no runtime behavior changes):
 * Transport semantics FastAPI cannot infer are DERIVED from the code, not listed by hand:
   Product authentication from the ``require_actor_context`` dependency (``CurrentActor``),
   ``Idempotency-Key`` from a handler that reads ``IDEMPOTENCY_KEY_HEADER``, and the
-  ``SafeValidationRoute`` 422 body. ``X-Request-ID`` is set on every response by the
-  outermost ``RequestContextMiddleware``.
-* The only hand-written input is ``ENDPOINT_NOTES`` (Product permission + one safety
-  note per operation). Its keys must equal the generated operations exactly, so it cannot
-  drift silently.
+  ``SafeValidationRoute`` body of a REQUEST-VALIDATION 422. ``X-Request-ID`` is set on
+  every response by the outermost ``RequestContextMiddleware``.
+* ``SafeValidationRoute`` only guarantees that a request-validation 422 never echoes a
+  submitted value. It does NOT make every 422 that shape: some routes also raise their own
+  Product input 422 with a fixed string ``detail`` or a coded ``detail {message, code
+  [, field]}``. Those operations document a ``oneOf`` of the shapes they can return.
+* Hand-written contract metadata, each guarded against drift (generation fails on an
+  unknown or stale operation, an invalid status or an unknown variant):
+
+  - ``ENDPOINT_NOTES``: Product permission + one note per operation. Its keys must equal
+    the generated operations exactly.
+  - ``UNDECLARED_RESPONSES``: statuses some routes return without declaring them. It may
+    add a status, or replace only FastAPI's default ``Successful Response`` description
+    of a 2xx; it never overrides a route-declared response.
+  - ``PRODUCT_422``: which operations can also return a Product input 422, and in which
+    of the closed set of shapes. Every route module that raises its own 422 must be
+    covered, and every listed operation must belong to such a module.
 
 Output is deterministic: sorted keys, two-space indent, UTF-8, one trailing newline.
 """
@@ -373,6 +385,90 @@ UNDECLARED_RESPONSES: dict[tuple[str, str], dict[str, str]] = {
 }
 
 
+# Product (domain) input 422s raised by the route modules themselves, besides FastAPI's
+# request validation. Read from each module's error mapper and traced to the service
+# methods that raise the input error:
+#   operations_reports: "Unsupported query parameters"            -> ErrorDetail
+#   integrations: not installed / not connectable                  -> ErrorDetail
+#                 InvalidIntegrationConfigError {message, code[, field]} -> CodedErrorDetail
+#   approvals / conversations / knowledge: {message, code}         -> CodedErrorDetail
+DETAIL, CODED = "ErrorDetail", "CodedErrorDetail"
+PRODUCT_422_VARIANTS = frozenset({DETAIL, CODED})
+PRODUCT_422: dict[tuple[str, str], tuple[str, ...]] = {
+    ("GET", "/api/v1/operations/reports/daily"): (DETAIL,),
+    ("POST", "/api/v1/integrations/connections"): (DETAIL, CODED),
+    ("PUT", "/api/v1/integrations/connection"): (DETAIL, CODED),
+    ("PUT", "/api/v1/integrations/connection/credentials"): (DETAIL, CODED),
+    ("POST", "/api/v1/integrations/connection/test"): (DETAIL,),
+    ("GET", "/api/v1/approvals"): (CODED,),
+    ("POST", "/api/v1/approvals/approval/approve"): (CODED,),
+    ("POST", "/api/v1/approvals/approval/reject"): (CODED,),
+    ("POST", "/api/v1/approvals/approval/cancel"): (CODED,),
+    ("GET", "/api/v1/conversations"): (CODED,),
+    ("GET", "/api/v1/conversations/messages"): (CODED,),
+    ("POST", "/api/v1/knowledge/operating-model/publish"): (CODED,),
+    ("POST", "/api/v1/knowledge/document/create"): (CODED,),
+    ("POST", "/api/v1/knowledge/document/version"): (CODED,),
+    ("POST", "/api/v1/knowledge/document/archive"): (CODED,),
+    ("POST", "/api/v1/knowledge/query"): (CODED,),
+}
+_MANUAL_422_MARKER = "HTTP_422_UNPROCESSABLE_CONTENT"
+
+
+def _check_metadata(routes: list[Any], ops: list[tuple[str, str]]) -> None:
+    """Every piece of hand-written contract metadata must match the current routes."""
+    from http import HTTPStatus
+
+    known = set(ops)
+    if set(ops) != set(ENDPOINT_NOTES):
+        raise SystemExit(
+            "ENDPOINT_NOTES does not match the Product operations: missing "
+            f"{sorted(known - set(ENDPOINT_NOTES))}, stale {sorted(set(ENDPOINT_NOTES) - known)}"
+        )
+    for name, table in (
+        ("UNDECLARED_RESPONSES", UNDECLARED_RESPONSES),
+        ("PRODUCT_422", PRODUCT_422),
+    ):
+        stale = sorted(set(table) - known)
+        if stale:
+            raise SystemExit(f"{name} has stale or unknown operations: {stale}")
+    for op, statuses in UNDECLARED_RESPONSES.items():
+        for code in statuses:
+            if not (
+                code.isdigit()
+                and int(code) in {s.value for s in HTTPStatus}
+                and 200 <= int(code) < 600
+            ):
+                raise SystemExit(f"UNDECLARED_RESPONSES {op}: invalid status {code!r}")
+            if code == "422":
+                raise SystemExit(f"UNDECLARED_RESPONSES {op}: 422 shapes belong in PRODUCT_422")
+    for op, variants in PRODUCT_422.items():
+        if (
+            not variants
+            or len(set(variants)) != len(variants)
+            or not set(variants) <= PRODUCT_422_VARIANTS
+        ):
+            raise SystemExit(
+                f"PRODUCT_422 {op}: variants must be a non-empty subset of {sorted(PRODUCT_422_VARIANTS)}"
+            )
+    # Source-level guard: the modules that raise their own 422 are exactly the modules of
+    # the operations listed in PRODUCT_422 (never the shared SafeValidationRoute module).
+    module_of = {
+        (m, r.path): r.endpoint.__module__ for r in routes for m in (r.methods or ()) if m != "HEAD"
+    }
+    raising = set()
+    for module in set(module_of.values()):
+        source = inspect.getsource(sys.modules[module])
+        if _MANUAL_422_MARKER in source:
+            raising.add(module)
+    listed = {module_of[op] for op in PRODUCT_422}
+    if raising != listed:
+        raise SystemExit(
+            "route modules raising their own 422 differ from PRODUCT_422: unlisted "
+            f"{sorted(raising - listed)}, listed without a 422 {sorted(listed - raising)}"
+        )
+
+
 def _clean_environment() -> None:
     """No environment value can reach the contract (configuration, keys, URLs)."""
     for name in list(os.environ):
@@ -451,11 +547,7 @@ def build_openapi() -> dict[str, Any]:
     application = build_product_app()
     routes = product_routes(application)
     ops = operations_of(routes)
-    if set(ops) != set(ENDPOINT_NOTES):
-        raise SystemExit(
-            "ENDPOINT_NOTES does not match the Product operations: missing "
-            f"{sorted(set(ops) - set(ENDPOINT_NOTES))}, stale {sorted(set(ENDPOINT_NOTES) - set(ops))}"
-        )
+    _check_metadata(routes, ops)
     documented = []
     for route in routes:
         if not route.include_in_schema:  # /health/live, /health/ready: documented copies
@@ -479,16 +571,30 @@ def build_openapi() -> dict[str, Any]:
             "schema": {"type": "string", "format": "uuid"},
         }
     }
-    schemas["ErrorDetail"] = {
-        "title": "ErrorDetail", "type": "object", "required": ["detail"],
+    schemas[DETAIL] = {
+        "title": DETAIL, "type": "object", "required": ["detail"], "additionalProperties": False,
+        "description": "A Product error with a fixed message. Also a Product input 422 "
+        "(for example `Unsupported query parameters`) on the operations that document it.",
         "properties": {"detail": {"type": "string", "description": "A fixed message; never a submitted value."}},
+    }  # fmt: skip
+    schemas[CODED] = {
+        "title": CODED, "type": "object", "required": ["detail"], "additionalProperties": False,
+        "description": "A Product input 422 with a stable code. `field` names the offending "
+        "configuration field where the Product knows it (integration configuration only).",
+        "properties": {"detail": {
+            "type": "object", "required": ["message", "code"], "additionalProperties": False,
+            "properties": {"message": {"type": "string", "description": "A fixed message; never a submitted value."},
+                           "code": {"type": "string", "description": "A stable machine-readable reason code."},
+                           "field": {"type": "string", "description": "Optional: the configuration field name."}}}},
     }  # fmt: skip
     schemas["SafeValidationError"] = {
         "title": "SafeValidationError", "type": "object", "required": ["detail"],
-        "description": "Request validation failure. Only the structural type, location and "
-        "message of each error: submitted values (`input`) and `ctx` are never returned.",
+        "additionalProperties": False,
+        "description": "Request (schema/transport) validation failure from `SafeValidationRoute`. "
+        "Only the structural type, location and message of each error: submitted values "
+        "(`input`) and `ctx` are never returned.",
         "properties": {"detail": {"type": "array", "items": {
-            "type": "object", "required": ["type", "loc", "msg"],
+            "type": "object", "required": ["type", "loc", "msg"], "additionalProperties": False,
             "properties": {"type": {"type": "string"},
                            "loc": {"type": "array", "items": {"type": "string"}},
                            "msg": {"type": "string"}}}}},
@@ -509,8 +615,11 @@ def build_openapi() -> dict[str, Any]:
             operation["description"] = "\n\n".join(t for t in text if t)
             responses = operation["responses"]
             for code, text in UNDECLARED_RESPONSES.get((method.upper(), path), {}).items():
-                if code in responses and not code.startswith("2"):
-                    raise SystemExit(f"{method.upper()} {path} already declares {code}")
+                existing = responses.get(code)
+                if existing is not None and existing.get("description") != "Successful Response":
+                    raise SystemExit(
+                        f"{method.upper()} {path}: UNDECLARED_RESPONSES would override the route-declared {code}"
+                    )
                 responses.setdefault(code, {})["description"] = text
             if requires_product_auth(route):
                 operation["security"] = [{SECURITY_SCHEME: []}]
@@ -524,14 +633,22 @@ def build_openapi() -> dict[str, Any]:
                 })  # fmt: skip
                 responses.setdefault("400", {"description": "Idempotency-Key missing, "
                                              "sent more than once, or invalid."})  # fmt: skip
-            if "422" in responses:
+            product_422 = PRODUCT_422.get((method.upper(), path), ())
+            if "422" in responses or product_422:
                 if not isinstance(route, SafeValidationRoute):
                     raise SystemExit(
                         f"{method.upper()} {path} validates without SafeValidationRoute"
                     )
+                shapes = ["SafeValidationError", *product_422]
+                refs = [{"$ref": f"#/components/schemas/{name}"} for name in shapes]
+                text = "Request validation failed (`SafeValidationError`; values are never echoed)."
+                if product_422:
+                    text += (" Or the Product refused the input: "
+                             + " or ".join(f"`{name}`" for name in product_422)
+                             + " (fixed messages and codes only).")  # fmt: skip
                 responses["422"] = {
-                    "description": "Request validation failed (values are never echoed).",
-                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SafeValidationError"}}},
+                    "description": text,
+                    "content": {"application/json": {"schema": {"oneOf": refs} if len(refs) > 1 else refs[0]}},
                 }  # fmt: skip
             if path in ("/health/live", "/health/ready"):
                 name = "LivenessStatus" if path == "/health/live" else "ReadinessStatus"
@@ -600,6 +717,8 @@ def _type(schema: dict[str, Any]) -> str:
         return f"[`{name}`](#schema-{name.lower()})"
     if "anyOf" in schema:
         return " \\| ".join(_type(s) for s in schema["anyOf"])
+    if "oneOf" in schema:
+        return "one of " + ", ".join(_type(s) for s in schema["oneOf"])
     if "allOf" in schema and len(schema["allOf"]) == 1:
         return _type(schema["allOf"][0])
     kind = schema.get("type", "any")
@@ -678,6 +797,12 @@ def render_markdown(spec: dict[str, Any]) -> str:
                         f"`{c}` {responses[c].get('description', '').rstrip('.')}" for c in errors
                     )
                 )
+                bodies = {c: _ref_name(responses[c].get("content")) for c in errors}
+                if "422" in bodies:
+                    lines.append(f"- **422 body:** {bodies['422']}")
+                others = sorted({b for c, b in bodies.items() if c != "422" and b})
+                if others:
+                    lines.append("- **Other error bodies:** " + ", ".join(others))
             lines.append("")
     lines += ["## Appendix A. Schemas (generated)", "",
               "Every request and response model of the Product API, from the Pydantic source. "

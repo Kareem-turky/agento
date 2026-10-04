@@ -124,9 +124,20 @@ operation references it; the health operations do not.
   schema says otherwise (for example `agent_id`, `workflow_id`).
 - **Fixed paths.** Resource ids are passed as **query parameters** or body fields, never
   as path segments. For example: `GET /api/v1/chat/thread?thread_id=...`.
-- **Safe validation errors.** A **422** lists only `type`, `loc` and `msg` for each error
-  (`SafeValidationError`). Submitted values are never echoed: no message, title,
-  credential or malformed value.
+- **Validation errors (422) come in three documented shapes**, and no 422 ever echoes a
+  submitted value (no message, title, credential or malformed value):
+  - **Request (schema) validation**, which any operation with parameters or a body can
+    return: `SafeValidationError`, `{"detail": [{"type", "loc", "msg"}]}`. This is what
+    `SafeValidationRoute` guarantees; it does not make every 422 this shape.
+  - **Product input refused with a fixed message**: `ErrorDetail`, `{"detail": "<fixed
+    message>"}`. For example `{"detail": "Unsupported query parameters"}` on the daily
+    report, or an integration that is not installed or not connectable.
+  - **Product input refused with a stable code**: `CodedErrorDetail`, `{"detail":
+    {"message", "code"}}`, with an optional `field` (integration configuration only).
+    Approvals, Conversations, Knowledge and Integrations use it.
+
+  Section 11 and the OpenAPI document list, per operation, exactly which shapes its 422
+  can take (a `oneOf` where there are several).
 - **Request id.** Every response carries a server-generated `X-Request-ID` (UUID), and
   many bodies repeat it as `request_id`. Quote it to correlate logs and support. Any
   client-sent `X-Request-ID` is ignored. It is never identity, scope or authority.
@@ -162,8 +173,9 @@ client-generated `turn_id` field instead.
 
 ## 8. Errors
 
-Error bodies are JSON `{"detail": "<fixed message>"}`, except 422 (section 6). Messages
-are fixed text and never contain submitted values. Not every status applies to every
+Error bodies are JSON `{"detail": "<fixed message>"}` (`ErrorDetail`), except 422, which
+has one of the three shapes in section 6. Messages and codes are fixed values and never
+contain submitted values. Not every status applies to every
 endpoint; section 11 lists each endpoint's statuses.
 
 | Status | Meaning |
@@ -174,7 +186,7 @@ endpoint; section 11 lists each endpoint's statuses.
 | 404 | Unknown resource. Also used for another company's or actor's resource, or one in a store no longer granted, so existence is never revealed. |
 | 409 | State conflict. Examples: Agent disabled, idempotency conflict, approval already decided, proposal already confirmed or cancelled, Employee Chat turn conflict. |
 | 413 | Not returned by the Product API. The Agento Web BFF has its own request-size caps. |
-| 422 | Request validation failed (`SafeValidationError`, no values echoed); for example an unsupported query parameter on the daily report. |
+| 422 | Request validation failed (`SafeValidationError`), or, on the operations that document it, the Product refused the input (`ErrorDetail` or `CodedErrorDetail`). No values are echoed. |
 | 503 | A required Product service is not available in this deployment, or failed. Fixed message, no internals. |
 
 Successful writes can also answer **202** (accepted, outcome not yet confirmed). On the
@@ -298,6 +310,7 @@ Public readiness: `{"status": "ready"}` (200) or `{"status": "not_ready"}` (503)
 - **Request body:** none
 - **Success:** `200` [`ReadinessStatus`](#schema-readinessstatus): Healthy
 - **Errors:** `503` Not ready
+- **Other error bodies:** [`ReadinessStatus`](#schema-readinessstatus)
 
 ### System
 
@@ -310,6 +323,7 @@ Read-only installation status: component states and stable not-ready reasons; ne
 - **Request body:** none
 - **Success:** `200` [`SystemStatusResponse`](#schema-systemstatusresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks system.read; `503` System status unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Operations
 
@@ -324,7 +338,9 @@ Deterministic daily report (no model). The store's own timezone decides the busi
   - `business_date`: string (date) \| null, optional
 - **Request body:** none
 - **Success:** `200` [`DailyOperationsReportResponse`](#schema-dailyoperationsreportresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: store not granted, or a required read permission is missing; `422` Request validation failed (values are never echoed); `503` Daily operations report unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: store not granted, or a required read permission is missing; `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` (fixed messages and codes only); `503` Daily operations report unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`ErrorDetail`](#schema-errordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/operations/runs`
 
@@ -334,7 +350,9 @@ Runs the Operations Agent READ-ONLY on one granted store: it can never write. 40
 - **Product permission:** orders.read, shipments.read, stores.read (per tool, in the selected store)
 - **Request body:** [`OperationsRunRequest`](#schema-operationsrunrequest)
 - **Success:** `200` [`OperationsRunResponse`](#schema-operationsrunresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `409` Operations Agent is disabled; `422` Request validation failed (values are never echoed); `503` Operations service unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `409` Operations Agent is disabled; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Operations service unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/operations/tickets`
 
@@ -348,7 +366,9 @@ The governed, durable ticket write (`operations.ticket.create`). Requires exactl
 - **Success:** `200` [`OperationsTicketResponse`](#schema-operationsticketresponse): Processed: a replay of the same Idempotency-Key, or a denied/failed business outcome (see `status`)
 - **Success:** `201` [`OperationsTicketResponse`](#schema-operationsticketresponse)
 - **Success:** `202` [`OperationsTicketResponse`](#schema-operationsticketresponse): Accepted: in progress, awaiting approval, requires a human, or persistence incomplete. Not a created ticket
-- **Errors:** `400` Idempotency-Key missing, sent more than once, or invalid; `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `409` Idempotency conflict: the key was used for a different request; `422` Request validation failed (values are never echoed); `503` Operations ticket service unavailable
+- **Errors:** `400` Idempotency-Key missing, sent more than once, or invalid; `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `409` Idempotency conflict: the key was used for a different request; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Operations ticket service unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/operations/tickets/commands`
 
@@ -360,7 +380,9 @@ Read-only status of one durable ticket command of THIS principal in a currently 
   - `command_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`OperationsTicketCommandStatusResponse`](#schema-operationsticketcommandstatusresponse)
-- **Errors:** `401` Missing or invalid Product API key; `404` Ticket command not found (unknown, another principal's, or a store not currently granted); `422` Request validation failed (values are never echoed); `503` Operations ticket query service unavailable
+- **Errors:** `401` Missing or invalid Product API key; `404` Ticket command not found (unknown, another principal's, or a store not currently granted); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Operations ticket query service unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Integrations
 
@@ -373,6 +395,7 @@ Installed integration types (this build installs none). Metadata only.
 - **Request body:** none
 - **Success:** `200` [`CatalogResponse`](#schema-catalogresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `503` Integration management (or its secret storage) unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `DELETE /api/v1/integrations/connection`
 
@@ -384,7 +407,9 @@ Remove a connection and its stored credentials.
   - `connection_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConnectionDeletedResponse`](#schema-connectiondeletedresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/integrations/connection`
 
@@ -396,7 +421,9 @@ One connection by `connection_id`. Credential values are never returned.
   - `connection_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `PUT /api/v1/integrations/connection`
 
@@ -408,7 +435,9 @@ Update a connection's display name and non-secret configuration.
   - `connection_id`: string (uuid), required
 - **Request body:** [`UpdateConnectionRequest`](#schema-updateconnectionrequest)
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only); `503` Integration management (or its secret storage) unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`ErrorDetail`](#schema-errordetail), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `PUT /api/v1/integrations/connection/credentials`
 
@@ -420,7 +449,9 @@ Replace a connection's credentials explicitly. Values are never returned, logged
   - `connection_id`: string (uuid), required
 - **Request body:** [`ReplaceCredentialsRequest`](#schema-replacecredentialsrequest)
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only); `503` Integration management (or its secret storage) unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`ErrorDetail`](#schema-errordetail), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/integrations/connection/disable`
 
@@ -432,7 +463,9 @@ Disable a connection.
   - `connection_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/integrations/connection/enable`
 
@@ -444,7 +477,9 @@ Enable a connection.
   - `connection_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/integrations/connection/test`
 
@@ -456,7 +491,9 @@ Test a connection through its installed driver; the result is a stable code.
   - `connection_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` (fixed messages and codes only); `503` Integration management (or its secret storage) unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`ErrorDetail`](#schema-errordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/integrations/connections`
 
@@ -467,6 +504,7 @@ This installation's connections. Credential values are never returned.
 - **Request body:** none
 - **Success:** `200` [`ConnectionListResponse`](#schema-connectionlistresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `503` Integration management (or its secret storage) unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/integrations/connections`
 
@@ -476,7 +514,9 @@ Create a connection. Credentials go straight to the secret store and are never r
 - **Product permission:** integrations.manage
 - **Request body:** [`CreateConnectionRequest`](#schema-createconnectionrequest)
 - **Success:** `201` [`ConnectionResponse`](#schema-connectionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Integration management (or its secret storage) unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission; `404` Unknown connection; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `ErrorDetail` or `CodedErrorDetail` (fixed messages and codes only); `503` Integration management (or its secret storage) unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`ErrorDetail`](#schema-errordetail), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Agents
 
@@ -489,6 +529,7 @@ Installed Agents with this installation's effective enable/disable state.
 - **Request body:** none
 - **Success:** `200` [`AgentListResponse`](#schema-agentlistresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `503` Agent management unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/agents/agent`
 
@@ -500,7 +541,9 @@ One Agent by `agent_id`.
   - `agent_id`: string, required; min length `2`, max length `64`, pattern `^[a-z][a-z0-9-]{0,62}[a-z0-9]$`
 - **Request body:** none
 - **Success:** `200` [`ProductAgentResponse`](#schema-productagentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `DELETE /api/v1/agents/agent/configuration`
 
@@ -512,7 +555,9 @@ Reset an Agent to its Product default (removes this installation's override).
   - `agent_id`: string, required; min length `2`, max length `64`, pattern `^[a-z][a-z0-9-]{0,62}[a-z0-9]$`
 - **Request body:** none
 - **Success:** `200` [`ProductAgentResponse`](#schema-productagentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/agents/agent/disable`
 
@@ -524,7 +569,9 @@ Disable an Agent: its runs (Operations runs, Employee Chat turns) are refused be
   - `agent_id`: string, required; min length `2`, max length `64`, pattern `^[a-z][a-z0-9-]{0,62}[a-z0-9]$`
 - **Request body:** none
 - **Success:** `200` [`ProductAgentResponse`](#schema-productagentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/agents/agent/enable`
 
@@ -536,7 +583,9 @@ Enable an Agent for this installation. Cannot create Agents, edit instructions o
   - `agent_id`: string, required; min length `2`, max length `64`, pattern `^[a-z][a-z0-9-]{0,62}[a-z0-9]$`
 - **Request body:** none
 - **Success:** `200` [`ProductAgentResponse`](#schema-productagentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `404` No such Product Agent is installed; `409` The operation did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/agents/catalog`
 
@@ -547,6 +596,7 @@ The Product Agents installed in this build (manifests). Not AgentOS.
 - **Request body:** none
 - **Success:** `200` [`AgentCatalogResponse`](#schema-agentcatalogresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required permission (Agents never have it); `503` Agent management unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Skills
 
@@ -559,6 +609,7 @@ Read-only Skill catalog (reviewed Product source). No install or run endpoint ex
 - **Request body:** none
 - **Success:** `200` [`SkillCatalogResponse`](#schema-skillcatalogresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `503` Agent management unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/skills/skill`
 
@@ -570,7 +621,9 @@ One Skill by `skill_id`.
   - `skill_id`: string, required; max length `128`, pattern `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`
 - **Request body:** none
 - **Success:** `200` [`SkillResponse`](#schema-skillresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `404` No such Skill/Task in this build; `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `404` No such Skill/Task in this build; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Tasks
 
@@ -583,6 +636,7 @@ Read-only Task catalog. There is no Task executor endpoint.
 - **Request body:** none
 - **Success:** `200` [`TaskCatalogResponse`](#schema-taskcatalogresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `503` Agent management unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/tasks/task`
 
@@ -594,7 +648,9 @@ One Task by `task_id`.
   - `task_id`: string, required; max length `128`, pattern `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`
 - **Request body:** none
 - **Success:** `200` [`TaskResponse`](#schema-taskresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `404` No such Skill/Task in this build; `422` Request validation failed (values are never echoed); `503` Agent management unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `agents.read`; `404` No such Skill/Task in this build; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Agent management unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Workflows
 
@@ -607,6 +663,7 @@ Read-only Workflow catalog. There is no public Workflow run endpoint.
 - **Request body:** none
 - **Success:** `200` [`WorkflowCatalogResponse`](#schema-workflowcatalogresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `503` Workflow inspection unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/workflows/run`
 
@@ -618,7 +675,9 @@ One Workflow run with Step attempts and events (metadata only).
   - `run_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`WorkflowRunResponse`](#schema-workflowrunresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `404` No such Workflow / no such run in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Workflow inspection unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `404` No such Workflow / no such run in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Workflow inspection unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/workflows/runs`
 
@@ -630,7 +689,9 @@ This company's Workflow run history (metadata only; never inputs, checkpoints or
   - `limit`: integer, optional; min `1`, max `100`, default `25`
 - **Request body:** none
 - **Success:** `200` [`WorkflowRunListResponse`](#schema-workflowrunlistresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `422` Request validation failed (values are never echoed); `503` Workflow inspection unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Workflow inspection unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/workflows/workflow`
 
@@ -642,7 +703,9 @@ One Workflow definition by `workflow_id`.
   - `workflow_id`: string, required; max length `128`, pattern `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`
 - **Request body:** none
 - **Success:** `200` [`WorkflowResponse`](#schema-workflowresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `404` No such Workflow / no such run in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Workflow inspection unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks `workflows.read`; `404` No such Workflow / no such run in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Workflow inspection unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Knowledge
 
@@ -656,7 +719,9 @@ One document; another company's document is the same 404.
   - `document_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`DocumentResponse`](#schema-documentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Knowledge unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/knowledge/document/archive`
 
@@ -668,7 +733,9 @@ Archive a document. There is no delete.
   - `document_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`DocumentResponse`](#schema-documentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Knowledge unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/knowledge/document/create`
 
@@ -678,7 +745,9 @@ Create a text document. No upload or URL import.
 - **Product permission:** knowledge.manage
 - **Request body:** [`CreateDocumentRequest`](#schema-createdocumentrequest)
 - **Success:** `200` [`DocumentResponse`](#schema-documentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Knowledge unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/knowledge/document/version`
 
@@ -691,7 +760,9 @@ One document version (text returned as untrusted data).
   - `version`: integer, required; min `1`, max `1000000000`
 - **Request body:** none
 - **Success:** `200` [`DocumentVersionResponse`](#schema-documentversionresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Knowledge unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/knowledge/document/version`
 
@@ -703,7 +774,9 @@ Publish a new version of a document.
   - `document_id`: string (uuid), required
 - **Request body:** [`PublishVersionRequest`](#schema-publishversionrequest)
 - **Success:** `200` [`DocumentResponse`](#schema-documentresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Knowledge unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/knowledge/documents`
 
@@ -714,6 +787,7 @@ Knowledge documents of this company.
 - **Request body:** none
 - **Success:** `200` [`DocumentListResponse`](#schema-documentlistresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `503` Knowledge unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/knowledge/operating-model`
 
@@ -724,6 +798,7 @@ The current company operating model (versioned).
 - **Request body:** none
 - **Success:** `200` [`OperatingModelResponse`](#schema-operatingmodelresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `503` Knowledge unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/knowledge/operating-model/publish`
 
@@ -733,7 +808,9 @@ Publish a new operating-model version. A submitted `company_id` is refused.
 - **Product permission:** knowledge.manage
 - **Request body:** [`PublishOperatingModelRequest`](#schema-publishoperatingmodelrequest)
 - **Success:** `200` [`OperatingModelResponse`](#schema-operatingmodelresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `409` The governed write did not complete (nothing confirmed); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Knowledge unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/knowledge/operating-model/version`
 
@@ -745,7 +822,9 @@ One operating-model version.
   - `version`: integer, required; min `1`, max `1000000000`
 - **Request body:** none
 - **Success:** `200` [`OperatingModelResponse`](#schema-operatingmodelresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Knowledge unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/knowledge/operating-model/versions`
 
@@ -756,6 +835,7 @@ Operating-model version history.
 - **Request body:** none
 - **Success:** `200` [`OperatingModelVersionsResponse`](#schema-operatingmodelversionsresponse)
 - **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `503` Knowledge unavailable
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/knowledge/query`
 
@@ -765,7 +845,9 @@ Bounded, company-scoped Knowledge retrieval. Results are untrusted reference dat
 - **Product permission:** knowledge.read
 - **Request body:** [`QueryRequest`](#schema-queryrequest)
 - **Success:** `200` [`QueryResponse`](#schema-queryresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Knowledge unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required Knowledge permission; `404` No such document / version in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Knowledge unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Approvals
 
@@ -781,7 +863,9 @@ Approval requests. There is NO create endpoint: requests come only from governan
   - `limit`: integer, optional; min `1`, max `100`, default `50`
 - **Request body:** none
 - **Success:** `200` [`ApprovalListResponse`](#schema-approvallistresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Approvals unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/approvals/approval`
 
@@ -793,7 +877,9 @@ One approval request with its append-only events.
   - `approval_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ApprovalResponse`](#schema-approvalresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Approvals unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/approvals/approval/approve`
 
@@ -805,7 +891,9 @@ Approve a request (the requester cannot decide their own request).
   - `approval_id`: string (uuid), required
 - **Request body:** [`DecisionRequest`](#schema-decisionrequest) \| null
 - **Success:** `200` [`ApprovalResponse`](#schema-approvalresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Approvals unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/approvals/approval/cancel`
 
@@ -817,7 +905,9 @@ Cancel a pending request.
   - `approval_id`: string (uuid), required
 - **Request body:** [`DecisionRequest`](#schema-decisionrequest)
 - **Success:** `200` [`ApprovalResponse`](#schema-approvalresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Approvals unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/approvals/approval/reject`
 
@@ -829,7 +919,9 @@ Reject a request.
   - `approval_id`: string (uuid), required
 - **Request body:** [`DecisionRequest`](#schema-decisionrequest)
 - **Success:** `200` [`ApprovalResponse`](#schema-approvalresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Approvals unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/approvals/approval/resume-workflow`
 
@@ -841,7 +933,9 @@ Explicitly continue the Workflow paused by an approved request.
   - `approval_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`WorkflowResumeResponse`](#schema-workflowresumeresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (values are never echoed); `503` Approvals unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks the required approvals permission; `404` No such request in your company (indistinguishable); `409` The request is no longer pending (decided, expired or a race lost); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Approvals unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Conversations
 
@@ -856,7 +950,9 @@ Canonical conversations (READ-ONLY). There is no ingest, webhook, send or reply 
   - `connection_id`: string (uuid) \| null, optional
 - **Request body:** none
 - **Success:** `200` [`ConversationListResponse`](#schema-conversationlistresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `422` Request validation failed (values are never echoed); `503` Conversations unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Conversations unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/conversations/conversation`
 
@@ -868,7 +964,9 @@ One conversation; one of another company or an inaccessible store is the same 40
   - `conversation_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ConversationResponse`](#schema-conversationresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `404` No such conversation visible to you (indistinguishable); `422` Request validation failed (values are never echoed); `503` Conversations unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `404` No such conversation visible to you (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Conversations unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/conversations/messages`
 
@@ -882,7 +980,9 @@ A page of a conversation's messages. Message text is untrusted external data.
   - `limit`: integer, optional; min `1`, max `100`, default `50`
 - **Request body:** none
 - **Success:** `200` [`MessageListResponse`](#schema-messagelistresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `404` No such conversation visible to you (indistinguishable); `422` Request validation failed (values are never echoed); `503` Conversations unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` The actor lacks conversations.read; `404` No such conversation visible to you (indistinguishable); `422` Request validation failed (`SafeValidationError`; values are never echoed). Or the Product refused the input: `CodedErrorDetail` (fixed messages and codes only); `503` Conversations unavailable
+- **422 body:** one of [`SafeValidationError`](#schema-safevalidationerror), [`CodedErrorDetail`](#schema-codederrordetail)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ### Employee Chat
 
@@ -896,7 +996,9 @@ Employee Chat: one own thread with its turns and ticket proposals. Another actor
   - `thread_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ThreadDetailResponse`](#schema-threaddetailresponse)
-- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/chat/threads`
 
@@ -908,7 +1010,9 @@ Employee Chat: the caller's own threads in one granted store (newest first, at m
   - `store_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`ThreadsResponse`](#schema-threadsresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/chat/threads`
 
@@ -918,7 +1022,9 @@ Employee Chat: create an empty thread in a granted store. Never calls the model.
 - **Product permission:** none beyond authentication
 - **Request body:** [`CreateThreadRequest`](#schema-createthreadrequest)
 - **Success:** `201` [`ThreadResponse`](#schema-threadresponse)
-- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `403` Forbidden: the store is not granted to the actor; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/chat/ticket-proposals/cancel`
 
@@ -928,7 +1034,9 @@ Cancel a stored proposal (terminal). A confirmed proposal cannot be cancelled (4
 - **Product permission:** none beyond authentication
 - **Request body:** [`ProposalRequest`](#schema-proposalrequest)
 - **Success:** `200` [`CancelResponse`](#schema-cancelresponse)
-- **Errors:** `401` Missing or invalid Product API key; `404` Ticket proposal not found; `409` Ticket proposal was already confirmed; `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `404` Ticket proposal not found; `409` Ticket proposal was already confirmed; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/chat/ticket-proposals/confirm`
 
@@ -942,7 +1050,9 @@ Explicit human confirmation of a STORED proposal: send only `proposal_id` and ex
 - **Success:** `200` [`ConfirmResponse`](#schema-confirmresponse): Processed: a replay of the same Idempotency-Key, or a denied/failed business outcome (see `status`)
 - **Success:** `201` [`ConfirmResponse`](#schema-confirmresponse): Ticket command processed and verified (see `ticket.status`)
 - **Success:** `202` [`ConfirmResponse`](#schema-confirmresponse): Accepted: in progress, awaiting approval, requires a human, or persistence incomplete. Not a created ticket
-- **Errors:** `400` Idempotency-Key missing, sent more than once, or invalid; `401` Missing or invalid Product API key; `404` Ticket proposal not found (also another actor's or company's, or a store no longer granted); `409` Ticket proposal was cancelled, was already confirmed with another key, or idempotency conflict; `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `400` Idempotency-Key missing, sent more than once, or invalid; `401` Missing or invalid Product API key; `404` Ticket proposal not found (also another actor's or company's, or a store no longer granted); `409` Ticket proposal was cancelled, was already confirmed with another key, or idempotency conflict; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `GET /api/v1/chat/turns`
 
@@ -954,7 +1064,9 @@ Employee Chat: the turns and proposals of one own thread.
   - `thread_id`: string (uuid), required
 - **Request body:** none
 - **Success:** `200` [`TurnsResponse`](#schema-turnsresponse)
-- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 #### `POST /api/v1/chat/turns`
 
@@ -965,7 +1077,9 @@ Employee Chat: one idempotent turn (client `turn_id`) with the Operations Agent.
 - **Request body:** [`TurnRequest`](#schema-turnrequest)
 - **Success:** `200` [`TurnResponse`](#schema-turnresponse): Replay of a completed turn (same turn_id and message): the stored answer, no model call
 - **Success:** `201` [`TurnResponse`](#schema-turnresponse)
-- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `409` Operations Agent is disabled, chat turn conflict (same turn_id, different message or thread), or chat turn in progress; `422` Request validation failed (values are never echoed); `503` Employee chat unavailable
+- **Errors:** `401` Missing or invalid Product API key; `404` Chat thread not found (also another actor's or company's, or a store no longer granted); `409` Operations Agent is disabled, chat turn conflict (same turn_id, different message or thread), or chat turn in progress; `422` Request validation failed (`SafeValidationError`; values are never echoed); `503` Employee chat unavailable
+- **422 body:** [`SafeValidationError`](#schema-safevalidationerror)
+- **Other error bodies:** [`ErrorDetail`](#schema-errordetail)
 
 ## Appendix A. Schemas (generated)
 
@@ -1214,6 +1328,15 @@ Strict: unknown fields are rejected.
 #### `CheckpointPolicy`
 
 Enum: `none`, `state`
+
+<a id="schema-codederrordetail"></a>
+#### `CodedErrorDetail`
+
+Strict: unknown fields are rejected.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `detail` | object | yes |  |
 
 <a id="schema-componentstate"></a>
 #### `ComponentState`
@@ -1565,6 +1688,8 @@ Strict: unknown fields are rejected.
 
 <a id="schema-errordetail"></a>
 #### `ErrorDetail`
+
+Strict: unknown fields are rejected.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -1949,6 +2074,8 @@ Strict: unknown fields are rejected.
 
 <a id="schema-safevalidationerror"></a>
 #### `SafeValidationError`
+
+Strict: unknown fields are rejected.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
