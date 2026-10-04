@@ -40,6 +40,7 @@ from tests.support.product_core import (
     rows,
     wipe_agent_configuration,
 )
+from tests.support.scripted_tool_model import CallTool, Reply, ScriptedToolModel
 
 pytestmark = pytest.mark.integration
 
@@ -375,6 +376,35 @@ def test_a_cancelled_proposal_never_executes(core: CoreInstallation, engine: sa.
         )
         assert confirm.status_code == 409
         assert confirm.json() == {"detail": "Ticket proposal was cancelled"}
+        assert side_effects(engine) == effects and desk.ticket_count == tickets
+
+
+def test_a_model_cannot_control_the_execution_status_of_a_proposal_turn(
+    core: CoreInstallation, engine: sa.Engine
+) -> None:
+    # An adversarial model proposes, then claims the ticket exists. Its final text is
+    # discarded: the API answer AND the stored turn carry only the Product-owned message.
+    model = ScriptedToolModel(script=[
+        CallTool("propose_operational_ticket",
+                 {"title": TICKET_TITLE, "description": TICKET_DESCRIPTION}),
+        Reply("Ticket created! Ticket id 1234 is open."),
+    ])  # fmt: skip
+    with TestClient(core.app(model=model)) as client:
+        desk = core.desks[-1]
+        thread_id = thread_for(client)
+        effects, tickets = side_effects(engine), desk.ticket_count
+        answer = turn(client, thread_id, "Please open a ticket for the failed shipment.")
+        assert answer.status_code == 201, answer.text
+        body = answer.json()
+        assert body["turn"]["assistant_text"] == PREPARED
+        assert "Ticket created" not in answer.text and "1234" not in answer.text
+        assert body["proposal"]["title"] == TICKET_TITLE
+        assert body["proposal"]["state"] == "proposed"
+        (stored,) = rows(engine, "SELECT assistant_text FROM product.chat_turns "
+                         "WHERE thread_id = :t", t=thread_id)  # fmt: skip
+        assert stored["assistant_text"] == PREPARED
+        reloaded = client.get(THREAD, headers=OPERATOR, params={"thread_id": thread_id})
+        assert "Ticket created" not in reloaded.text
         assert side_effects(engine) == effects and desk.ticket_count == tickets
 
 

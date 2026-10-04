@@ -240,11 +240,13 @@ class OperationsChatRunner:
         )
         if output.status is not RunStatus.completed:
             raise OperationsRunFailedError("operations chat run did not complete")
+        if sink.proposal is not None:
+            # Structural, not linguistic: the model's free-form final text is DISCARDED
+            # for a proposal-producing turn. Only the Product-owned message is returned,
+            # so the untrusted model can never claim an execution status.
+            return ChatRunResult(message=TICKET_PREPARED_MESSAGE, proposal=sink.proposal)
         content = output.content if isinstance(output.content, str) else ""
-        if sink.proposal is not None and TICKET_PREPARED_MESSAGE not in content:
-            # A proposal is always announced as PREPARED, whatever the model wrote.
-            content = f"{content}\n\n{TICKET_PREPARED_MESSAGE}".strip()
-        return ChatRunResult(message=content, proposal=sink.proposal)
+        return ChatRunResult(message=content, proposal=None)
 
 
 def _dump(result: BaseModel) -> str:

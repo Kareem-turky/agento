@@ -33,9 +33,13 @@ Task 037 (`product.conversations`, `/conversations`) is unchanged and separate.
   4. Check the fixed action.
   5. Call the existing `OperationsTicketCommandService`, which applies Permission and
      Policy, then the WriteCommand, Execution, Verification and Audit.
-- The model is told to answer `Ticket prepared. Confirm the action to create it.` The
-  runner appends that sentence whenever a proposal exists. The UI shows **Ticket created**
-  only when the confirmation's ticket status is `verified`.
+- When a turn produces a proposal, the Product **discards the model's free-form final
+  response** for that turn. The runner returns, and the Product stores, exactly the
+  deterministic Product-owned message `Ticket prepared. Confirm the action to create it.`
+  This is structural, not a text filter: whatever the model wrote (even "Ticket
+  created!") never reaches the employee. The title and description are shown from the
+  structured proposal on the proposal card. The UI shows **Ticket created** only when the
+  confirmation's ticket status is `verified`.
 
 ## Flow
 
@@ -248,6 +252,7 @@ The demo model is LOCAL/TEST-only and refused in staging and production.
   WriteCommand is ever created.
 - **Stuck turns:** a turn whose run crashed before it was marked failed stays `pending`. A
   replay answers 409 "in progress"; send a new message instead.
-- **Model compliance:** the model is instructed, not trusted, to say "Ticket prepared".
-  The UI and the API decide what is shown as created.
+- **Proposal turns have a fixed answer:** because the model's text is discarded when a
+  proposal is produced, any analysis the model wrote in that same turn is not shown. Ask
+  for the analysis in a separate message.
 - **No Customer/CX Chat:** no external channel and no customer identity.

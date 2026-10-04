@@ -112,9 +112,13 @@ def test_a_proposal_is_typed_announced_and_executes_nothing() -> None:
         "reason": "awaiting_confirmation",
         "message": TICKET_PREPARED_MESSAGE,
     }
-    # Whatever the model wrote, a proposal is announced as PREPARED.
-    assert result.message.endswith(TICKET_PREPARED_MESSAGE)
-    nothing_executed(stack)
+    # The adversarial model claimed "Ticket created!": its free-form final text is
+    # discarded and ONLY the Product-owned message is returned.
+    assert result.message == TICKET_PREPARED_MESSAGE
+    assert "Ticket created" not in result.message
+    assert stack.coordinator.runs == 0
+    assert stack.sink.events == []
+    assert stack.desk.ticket_count == 0
 
 
 def test_at_most_one_proposal_per_turn() -> None:
