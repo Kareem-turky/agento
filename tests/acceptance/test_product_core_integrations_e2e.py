@@ -4,8 +4,8 @@
 ONE real Product installation on the migrated PostgreSQL. The Product's Integration
 Management composes with a TEST-ONLY generic catalog injected through the existing
 ``catalog=`` seam (``example-commerce`` with credentials, ``example-chat`` messaging);
-no real provider is named, modelled or contacted, and the production default catalog
-stays EMPTY (pinned in test_product_core_architecture.py).
+no real provider is named, modelled or contacted, and the production default catalog never
+receives a TEST-ONLY definition (test_product_core_architecture.py).
 
 Inbound messages enter through ``ConversationIngress``, the internal provider seam the
 installation composed: a TRUSTED ``ChannelContext`` (company, connection, store chosen by
@@ -255,14 +255,15 @@ def test_external_data_cannot_choose_its_trusted_context(core: CoreInstallation)
     assert set(ChannelContext.model_fields) == {"company_id", "connection_id", "store_id"}
 
 
-def test_messaging_registry_validates_a_test_adapter_and_the_default_stays_empty(
+def test_messaging_registry_validates_a_test_adapter_and_the_default_has_no_test_adapter(
     core: CoreInstallation,
 ) -> None:
     with TestClient(core.app()):
         default = core.messaging
-    # The registry the installation composed is the production default: EMPTY, even
-    # though the injected TEST-ONLY catalog contains a messaging definition.
-    assert len(default) == 0 and default.integration_ids == frozenset()
+    # The registry the installation composed is the production default: it never picks
+    # up a TEST-ONLY adapter, even though the injected catalog holds a test messaging
+    # definition (at the release it was empty: docs/PRODUCT_CORE_RELEASE_BASELINE.md).
+    assert not [i for i in default.integration_ids if i.startswith("example-")]
     adapter = FakeMessagingAdapter()
     registry = MessagingIntegrationRegistry([adapter], catalog=core.catalog)
     assert registry.get("example-chat") is adapter

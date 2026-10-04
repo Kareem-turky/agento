@@ -63,14 +63,18 @@ store scoping and command privacy. **Production business use is still blocked**:
 business-system API contract and no reviewed real backend adapter exist yet, so
 staging and production refuse to start.
 
-### Product Core acceptance (provider-free)
+### Product Core release and the regression gate
 
-Task 040 adds the **Product Core acceptance** gate. It proves that the Product works as
-one installable Product, with real PostgreSQL and test-only generic adapters on the
-Product contracts, before any real provider exists. See
-[`docs/PRODUCT_CORE_ACCEPTANCE.md`](docs/PRODUCT_CORE_ACCEPTANCE.md) and the release
-decision [`docs/PRODUCT_CORE_READY.md`](docs/PRODUCT_CORE_READY.md) (status:
-candidate). The next phase is Real Integrations.
+**Agento Product Core Ready (provider-free)** was released at
+`a69fb36ffe5b50957425e7a40df89aeaa63c8166` (Task 040). The release is historical evidence:
+see [`docs/PRODUCT_CORE_RELEASE_BASELINE.md`](docs/PRODUCT_CORE_RELEASE_BASELINE.md), the
+decision [`docs/PRODUCT_CORE_READY.md`](docs/PRODUCT_CORE_READY.md) and the acceptance
+record [`docs/PRODUCT_CORE_ACCEPTANCE.md`](docs/PRODUCT_CORE_ACCEPTANCE.md).
+
+Every change to `main` now has to pass the **Product regression acceptance** CI gate
+(Task 041; [`docs/PRODUCT_REGRESSION_ACCEPTANCE.md`](docs/PRODUCT_REGRESSION_ACCEPTANCE.md)).
+It keeps the enduring security and architecture invariants active, and lets reviewed tasks
+extend the Product with new migrations, Agents, Workflows, integrations and backends.
 
 ### Integrations: provider-agnostic foundation (no provider connected)
 

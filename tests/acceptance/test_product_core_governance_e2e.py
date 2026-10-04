@@ -255,7 +255,8 @@ def test_workflow_waits_for_approval_survives_a_restart_and_completes_once(
         "awaiting_approval", "budget")  # fmt: skip
     assert [(a["step_id"], a["attempt"], a["status"]) for a in waiting["attempts"]] == [
         ("fetch", 1, "succeeded"), ("budget", 1, "awaiting_approval")]  # fmt: skip
-    assert {w["workflow_id"] for w in catalog["workflows"]} == {"operations.daily_report"}
+    served = {w["workflow_id"] for w in catalog["workflows"]}
+    assert "operations.daily_report" in served and "testing.approval_budget" not in served
     (approval,) = [a for a in pending
                    if a["source"]["workflow_run_id"] == str(started.run_id)]  # fmt: skip
     approval_id = UUID(approval["approval_id"])
