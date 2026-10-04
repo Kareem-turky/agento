@@ -9,8 +9,8 @@ The ONLY substitutions are TEST-ONLY, through seams that already exist:
 
 * the integration catalog: ``build_integration_management(..., catalog=)`` and
   ``build_conversations(..., catalog=)`` receive a generic test catalog (``example-chat``,
-  ``example-commerce``, ``example-messaging``). The production default stays EMPTY; it is
-  never mutated;
+  ``example-commerce``, ``example-messaging``). The production default catalog is never
+  mutated and never receives a TEST-ONLY definition;
 * the Agent model: the ``model=`` test seam with a deterministic ``ScriptedToolModel``;
 * the Product log stream: ``build_deployment_observability(..., stream=)``.
 

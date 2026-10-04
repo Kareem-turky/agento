@@ -1,12 +1,15 @@
-"""PRODUCT CORE ACCEPTANCE (Task 040): the static release-gate invariants.
+"""PRODUCT REGRESSION ACCEPTANCE: static architecture invariants (Task 040, Task 041).
 
-Task 040 is ACCEPTANCE ONLY. These guards pin, against the Task 040 base
-(82be2ec1896ac7a55ab57ace7d30570bc6a03557: Task 039 plus the pre-Core-Ready
-Operations safe-validation hardening), that no production runtime code, migration,
-dependency, Dockerfile or deployment runtime file changed; that the production catalogs
-are exactly the Product definitions (integration catalog and messaging registry EMPTY);
-that no TEST-ONLY action, Workflow, fake or acceptance hook reached production code; that
-no injection route exists; and that CI runs the named "Product Core acceptance" gate.
+Task 040 pinned the exact Product Core release. Task 041 keeps those facts as HISTORICAL
+evidence (docs/PRODUCT_CORE_RELEASE_BASELINE.md, plus the unchanged release decision and
+acceptance record, all checked here byte for byte). It no longer requires the evolving
+``main`` to equal the release. The ENDURING invariants stay active and fail closed:
+- migrations stay a valid, single-headed chain that keeps 0001-0008 byte-identical;
+- the existing Product catalog entries cannot silently disappear;
+- no TEST-ONLY action, fake, acceptance switch or injection route reaches production;
+- the provider boundary holds;
+- CI runs the named "Product regression acceptance" gate.
+See docs/PRODUCT_REGRESSION_ACCEPTANCE.md.
 """
 
 import ast
@@ -14,6 +17,8 @@ import hashlib
 import importlib
 import pkgutil
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,11 +28,16 @@ ROOT = Path(__file__).resolve().parents[2]
 API = ROOT / "apps" / "api"
 APP = API / "app"
 WEB = ROOT / "apps" / "web"
+DOCS = ROOT / "docs"
 ACCEPTANCE = ROOT / "tests" / "acceptance"
 SUPPORT = ROOT / "tests" / "support" / "product_core.py"
+MIGRATIONS = API / "migrations" / "versions"
 
-# ----- 1. no production runtime change (Task 040 is acceptance only) --------------------------
+# ----- 1. the Product Core release: historical evidence, exactly preserved ----------------------
 
+# The release production-digest algorithm (kept so the record can be re-verified on a
+# checkout of the release commit; see docs/PRODUCT_CORE_RELEASE_BASELINE.md). It is NOT
+# applied to the evolving main.
 PINNED_TREES = (
     APP, API / "migrations", WEB / "app", WEB / "components", WEB / "lib",
     ROOT / "deployments" / "template",
@@ -38,10 +48,50 @@ PINNED_FILES = (
     WEB / "package.json", WEB / "package-lock.json", WEB / "next.config.ts",
     WEB / "tsconfig.json",
 )  # fmt: skip
-# SHA-256 over "<relative path>\0<sha256 of the file>\n" of every pinned file, sorted by
-# path, computed on a clean worktree of the Task 040 base 82be2ec (335 files). A change
-# here is a production change: it needs its own reviewed task, never Task 040.
-PRODUCTION_DIGEST = "be4fc7038373c6dd873812fe95a52c6895f2d2e2bcd793ad7d91d7a85df49c18"
+
+RELEASE = {
+    "release_commit": "a69fb36ffe5b50957425e7a40df89aeaa63c8166",
+    "release_tree": "ea84aa981beedb24f5c6f5e96b603bd9cdaaf270",
+    "task_040_base": "82be2ec1896ac7a55ab57ace7d30570bc6a03557",
+    "push_main_ci_run": "37158103014",
+    "production_digest": "be4fc7038373c6dd873812fe95a52c6895f2d2e2bcd793ad7d91d7a85df49c18",
+    "production_file_count": "335",
+    "migrations": "0001-0008",
+    "migration_head": "0008",
+    "agents": "{operations}",
+    "skills": "{operations.order_inspection, operations.daily_analysis, "
+              "operations.ticket_escalation}",
+    "tasks": "{operations.inspect_order, operations.analyze_daily, operations.escalate_issue}",
+    "workflows": "{operations.daily_report}",
+    "integration_catalog": "empty",
+    "messaging_registry": "empty",
+    "backend_registry": "{mock}",
+    "ticket_create_risk": "LOW_RISK_WRITE",
+    "agno_pin": "agno[os,postgres,openai,anthropic]==3.0.11",
+}  # fmt: skip
+# The release decision and acceptance record describe the release commit; never rewritten.
+RELEASE_DOCUMENTS = {
+    "PRODUCT_CORE_ACCEPTANCE": "7c3a6e1fea6abf7563421701c9e862d111d57b00e3b0f0783aee913ee5e799be",
+    "PRODUCT_CORE_READY": "7d33de791723095657c408662cd251b58ea3908c8cf42ea996a04ba6fe44264f",
+}
+# Migrations 0001-0008 exactly as released: later tasks add revisions, never rewrite these.
+RELEASE_MIGRATIONS = {
+    "0001": "66a1f14e4fcae5f6c17802cda7499591c9cb00693dbd5244cc3f464ea89297f2",
+    "0002": "b0512d7f743451349f22f77d5b7e079e37ce49c00cba77f05cbd1c861e449ca9",
+    "0003": "e5aab3a40f51835f8a3c4606eb521fa53fc772627cd05853551fc7d72fad4ad5",
+    "0004": "22436e6a09a51a5bc031f3eece6994ed5dd9c02eb8f650731c2f254675a01786",
+    "0005": "3984d4a3f3a3f9318511489da49fd0035b4d7246065b05e940f5223292bee8dc",
+    "0006": "ca308ddd3f2f63f8f3b171a5643da2d6832da7c4c712c2f3338174cc53a59b2a",
+    "0007": "0bab564c73a9bcc9a1e24568c1627e707b813f37fcd172d41a48df26b280fde4",
+    "0008": "baf48dc6ba3b47d75fb65b9da0ccc3c3b15a7a66d1d71d9490155c8a2aa04ab2",
+}  # fmt: skip
+RELEASE_TABLES = (
+    "agent_configurations", "alembic_version", "approval_events", "approval_requests",
+    "audit_events", "company_operating_model_current", "company_operating_model_versions",
+    "conversation_messages", "conversations", "integration_connections", "knowledge_chunks",
+    "knowledge_document_versions", "knowledge_documents", "message_delivery_events",
+    "workflow_events", "workflow_runs", "workflow_step_runs", "write_commands",
+)  # fmt: skip
 
 
 def production_files() -> list[Path]:
@@ -58,52 +108,79 @@ def production_digest() -> str:
     return digest.hexdigest()
 
 
-def test_no_production_runtime_dependency_or_deployment_file_changed() -> None:
-    assert len(production_files()) > 300  # the pinned scope is the whole runtime
-    assert production_digest() == PRODUCTION_DIGEST
+def baseline_record() -> dict[str, str]:
+    text = (DOCS / "PRODUCT_CORE_RELEASE_BASELINE.md").read_text()
+    block = text.split("```text\n", 1)[1].split("```", 1)[0]
+    return dict(
+        (key.strip(), value.strip())
+        for key, value in (line.split(":", 1) for line in block.splitlines() if line.strip())
+    )
 
 
-def test_migration_history_is_exactly_0001_to_0008_with_a_single_head() -> None:
+def test_the_release_baseline_record_keeps_the_exact_release_facts() -> None:
+    text = (DOCS / "PRODUCT_CORE_RELEASE_BASELINE.md").read_text()
+    assert "THIS IS HISTORICAL RELEASE EVIDENCE." in text
+    assert "not** a constraint that future `main`" in text
+    assert baseline_record() == RELEASE
+    # The digest algorithm the record refers to is still here (re-verifiable on a release
+    # checkout), but it is deliberately NOT asserted against the evolving main.
+    assert len(production_files()) > 300
+
+
+def test_the_release_documents_are_unchanged_historical_records() -> None:
+    for name, sha in RELEASE_DOCUMENTS.items():
+        assert hashlib.sha256((DOCS / f"{name}.md").read_bytes()).hexdigest() == sha, name
+
+
+# ----- 2. migrations: an extensible, single-headed chain that keeps 0001-0008 ------------------
+
+
+def test_release_migrations_are_kept_byte_identical() -> None:
+    for revision, sha in RELEASE_MIGRATIONS.items():
+        (path,) = MIGRATIONS.glob(f"{revision}_*.py")  # exactly one file per revision
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == sha, revision
+
+
+def test_the_migration_chain_is_single_headed_and_descends_from_the_release() -> None:
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    names = sorted(p.name for p in (API / "migrations" / "versions").glob("*.py"))
-    assert [n[:4] for n in names] == [f"{i:04d}" for i in range(1, 9)]
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["0008"]
+    heads = script.get_heads()
+    assert len(heads) == 1, heads  # one head: no branch, no orphan revision
     chain = [r.revision for r in script.walk_revisions()]
-    assert chain == ["0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
+    for revision in script.walk_revisions():
+        down = revision.down_revision
+        assert down is None or isinstance(down, str), revision.revision  # no merge points
+        assert (down is None) == (revision.revision == "0001"), revision.revision
+    assert chain[-8:] == ["0008", "0007", "0006", "0005", "0004", "0003", "0002", "0001"]
+    # Every revision added after the release descends linearly from 0008.
+    assert chain[0] == heads[0] and len(chain) == len(set(chain))
+    files = {p.name[:4] for p in MIGRATIONS.glob("*.py")}
+    assert {f"{i:04d}" for i in range(1, 9)} <= files
 
 
 @pytest.mark.integration
-def test_task_040_adds_no_table(migrated, engine) -> None:
+def test_every_release_table_still_exists(migrated, engine) -> None:
     import sqlalchemy as sa
 
     with engine.connect() as connection:
-        tables = sorted(connection.execute(sa.text(
+        tables = set(connection.execute(sa.text(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'product'"
         )).scalars())  # fmt: skip
-    assert tables == [
-        "agent_configurations", "alembic_version", "approval_events", "approval_requests",
-        "audit_events", "company_operating_model_current", "company_operating_model_versions",
-        "conversation_messages", "conversations", "integration_connections",
-        "knowledge_chunks", "knowledge_document_versions", "knowledge_documents",
-        "message_delivery_events", "workflow_events", "workflow_runs", "workflow_step_runs",
-        "write_commands",
-    ]  # fmt: skip
+    assert set(RELEASE_TABLES) <= tables  # data of Tasks 001-040 never silently disappears
 
 
-def test_agno_pin_and_product_dependencies_are_unchanged() -> None:
+def test_agno_stays_an_exact_pin() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text()
-    assert '"agno[os,postgres,openai,anthropic]==3.0.11"' in pyproject
-    web = (WEB / "package.json").read_text()
-    assert "playwright" not in web.lower()  # the browser suite stays local-only
+    pins = re.findall(r'"(agno\[[a-z,]+\])([^"]*)"', pyproject)
+    assert len(pins) == 1 and re.fullmatch(r"==\d+\.\d+\.\d+", pins[0][1]), pins
 
 
-# ----- 2. production catalogs are exactly the Product definitions ------------------------------
+# ----- 3. the existing Product definitions never silently disappear --------------------------
 
 
-def test_production_catalogs_and_registries() -> None:
+def test_existing_product_definitions_remain_and_extensions_are_allowed() -> None:
     from app.agent_management.catalog import build_default_agent_catalog
     from app.agent_management.skills import build_default_skill_catalog
     from app.agent_management.tasks import build_default_task_catalog
@@ -114,22 +191,26 @@ def test_production_catalogs_and_registries() -> None:
     from app.operations import OPERATIONS_ACTIONS
     from app.workflow_management.catalog import build_default_workflow_catalog
 
-    assert build_default_agent_catalog().agent_ids == frozenset({"operations"})
-    assert sorted(s.skill_id for s in build_default_skill_catalog().definitions()) == [
-        "operations.daily_analysis", "operations.order_inspection",
-        "operations.ticket_escalation"]  # fmt: skip
-    assert sorted(t.task_id for t in build_default_task_catalog().definitions()) == [
-        "operations.analyze_daily",
-        "operations.escalate_issue",
-        "operations.inspect_order",
-    ]
-    assert build_default_workflow_catalog().workflow_ids == frozenset({"operations.daily_report"})
+    assert "operations" in build_default_agent_catalog().agent_ids
+    assert {"operations.order_inspection", "operations.daily_analysis",
+            "operations.ticket_escalation"} <= {
+        s.skill_id for s in build_default_skill_catalog().definitions()}  # fmt: skip
+    assert {"operations.inspect_order", "operations.analyze_daily",
+            "operations.escalate_issue"} <= {
+        t.task_id for t in build_default_task_catalog().definitions()}  # fmt: skip
+    workflows = build_default_workflow_catalog().workflow_ids
+    assert "operations.daily_report" in workflows
+    assert not [w for w in workflows if w.startswith(("test", "example"))]
+    # Local, test and acceptance installations run on the deterministic mock backend.
+    assert "mock" in build_default_backend_registry().backend_ids
+    # Integrations may be installed by reviewed tasks; TEST-ONLY definitions never are.
     integrations = build_default_integration_catalog()
-    assert len(integrations) == 0
-    assert len(build_default_messaging_registry(integrations)) == 0
-    assert build_default_backend_registry().backend_ids == frozenset({"mock"})
+    installed = {d.integration_id for d in integrations.definitions()}
+    assert not [i for i in installed if i.startswith(("example-", "test"))]
+    messaging = build_default_messaging_registry(integrations)
+    assert messaging.integration_ids <= installed  # an adapter only for an installed one
     (ticket,) = [a for a in OPERATIONS_ACTIONS if a.name == "operations.ticket.create"]
-    assert ticket.risk is ActionRisk.LOW_RISK_WRITE  # no production approval requirement
+    assert ticket.risk is ActionRisk.LOW_RISK_WRITE  # changed only by a reviewed task
 
 
 def production_actions() -> list:
@@ -146,18 +227,15 @@ def production_actions() -> list:
     return found
 
 
-def test_no_test_only_or_risky_action_exists_in_production() -> None:
-    from app.governance import ActionRisk
-
+def test_no_test_only_action_exists_in_production() -> None:
     actions = production_actions()
     names = {a.name for a in actions}
     assert "operations.ticket.create" in names and "system.read" in {
         a.required_permission for a in actions}  # fmt: skip
     assert not [n for n in names if n.startswith(("test.", "testing."))]
-    assert {a.risk for a in actions} <= {ActionRisk.READ, ActionRisk.LOW_RISK_WRITE}
 
 
-# ----- 3. no fake, hook, backdoor or injection route in production -----------------------------
+# ----- 4. no fake, hook, backdoor or injection route in production -----------------------------
 
 
 def production_sources() -> list[tuple[Path, str]]:
@@ -213,25 +291,94 @@ def test_no_product_route_injects_messages_approvals_workflow_state_or_executes(
                                                    "/api/v1/conversations"))]  # fmt: skip
 
 
-# ----- 4. acceptance stays provider-free and TEST-ONLY -----------------------------------------
+# ----- 5. the provider boundary (real adapters are allowed, behind it) -------------------------
+
+INTEGRATIONS = APP / "integrations"
+
+
+def adapter_packages() -> set[str]:
+    """Concrete adapter packages: app/integrations/<category>/<adapter>/ directories. The
+    category packages themselves (commerce, messaging, ...) hold only the contracts."""
+    return {
+        f"app.integrations.{category.name}.{adapter.name}"
+        for category in INTEGRATIONS.iterdir() if category.is_dir()
+        for adapter in category.iterdir()
+        if adapter.is_dir() and (adapter / "__init__.py").exists()
+    }  # fmt: skip
+
+
+def imported_modules(source: str) -> set[str]:
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            found.add(node.module)
+            found.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.Import):
+            found.update(a.name for a in node.names)
+    return found
+
+
+def test_only_the_composition_root_imports_a_concrete_adapter() -> None:
+    adapters = adapter_packages()
+    assert "app.integrations.commerce.mock" in adapters  # the guard sees real packages
+    for path, source in production_sources():
+        relative = path.relative_to(APP.parent).with_suffix("").as_posix().replace("/", ".")
+        if relative.startswith("app.composition"):
+            continue  # the composition root wires adapters to Product contracts
+        for module in imported_modules(source):
+            for adapter in adapters:
+                if module == adapter or module.startswith(adapter + "."):
+                    assert relative.startswith(adapter), (relative, module)
+
+
+def test_contract_packages_never_load_an_adapter() -> None:
+    contracts = sorted({a.rsplit(".", 1)[0] for a in adapter_packages()}
+                       | {"app.integrations.messaging"})  # fmt: skip
+    code = (
+        f"import sys; import {', '.join(contracts)}; "
+        f"print(sorted(m for m in sys.modules if m.startswith({tuple(adapter_packages())!r})))"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and code
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=API,
+    )  # fmt: skip
+    assert result.stdout.strip() == "[]"
+
+
+def test_the_agent_and_tool_layer_never_touches_integration_secrets() -> None:
+    """Provider credentials live behind integration management; the Agent / model / tool
+    layer can never import secret storage, so an LLM never receives a credential."""
+    for path, source in production_sources():
+        relative = path.relative_to(APP).as_posix()
+        if not relative.startswith(("agents/", "operations/", "workflows/", "runtime/")):
+            continue
+        for module in imported_modules(source):
+            assert not module.startswith(
+                (
+                    "app.integration_management.secrets",
+                    "app.integration_management.filesystem_secrets",
+                    "app.integration_management.drivers",
+                )
+            ), (path, module)
+
 
 _REAL_PROVIDERS = ("shopify", "woocommerce", "whatsapp", "twilio", "google ads",
                    "".join(("ful", "fly")))  # fmt: skip
+GENERIC_FAKES = (
+    SUPPORT, ROOT / "tests" / "support" / "integration_fakes.py",
+    ROOT / "tests" / "support" / "conversation_fakes.py",
+)  # fmt: skip
 
 
-def acceptance_sources() -> list[tuple[Path, str]]:
-    """Task 040 acceptance code (this guard, which only lists the prohibited names, aside)."""
-    files = [*sorted(ACCEPTANCE.glob("test_product_core_*.py")), SUPPORT]
-    return [(p, p.read_text()) for p in files if p.name != Path(__file__).name]
-
-
-def test_acceptance_code_models_no_real_provider() -> None:
-    for path, source in acceptance_sources():
-        code = "\n".join(line for line in source.lower().splitlines()
+def test_the_test_only_generic_fakes_never_impersonate_a_real_provider() -> None:
+    """The acceptance harness proves contract composability with GENERIC fakes. Real
+    provider adapters are allowed in production behind the boundary above; these TEST-ONLY
+    fakes simply must never model one."""
+    for path in GENERIC_FAKES:
+        code = "\n".join(line for line in path.read_text().lower().splitlines()
                          if not line.lstrip().startswith("#"))  # fmt: skip
         for provider in _REAL_PROVIDERS:
             assert provider not in code, (path.name, provider)
-        assert not re.search(r"\bmeta\b", code), path.name  # no social-platform provider
+        assert not re.search(r"\bmeta\b", code), path.name
 
 
 def test_the_acceptance_harness_injects_only_through_existing_seams() -> None:
@@ -246,14 +393,14 @@ def test_the_acceptance_harness_injects_only_through_existing_seams() -> None:
         assert seam in source
 
 
-# ----- 5. the explicit CI gate and the acceptance record ---------------------------------------
+# ----- 6. the explicit CI gate and the historical release documents -----------------------------
 
 
-def test_ci_runs_the_named_product_core_acceptance_gate() -> None:
+def test_ci_runs_the_named_product_regression_acceptance_gate() -> None:
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
     steps = workflow["jobs"]["backend"]["steps"]
     names = [s.get("name", "") for s in steps]
-    gate = names.index("Product Core acceptance")
+    gate = names.index("Product regression acceptance")
     full = next(i for i, s in enumerate(steps) if "pytest" in s.get("run", "")
                 and "tests/acceptance" not in s.get("run", ""))  # fmt: skip
     migrate = next(i for i, s in enumerate(steps) if "alembic" in s.get("run", ""))
@@ -265,7 +412,9 @@ def test_ci_runs_the_named_product_core_acceptance_gate() -> None:
     assert workflow["jobs"]["backend"]["env"]["REQUIRE_INTEGRATION_TESTS"] == "1"
 
 
-def test_the_acceptance_record_states_the_core_ready_boundaries() -> None:
+def test_the_historical_release_documents_state_the_release_boundaries() -> None:
+    """The release documents describe the Product Core release at its commit (they are
+    pinned byte for byte above); their limitations are historical, not current."""
     raw = (ROOT / "docs" / "PRODUCT_CORE_ACCEPTANCE.md").read_text()
     record = " ".join(raw.replace("**", "").split())  # prose may wrap across lines
     decision = (ROOT / "docs" / "PRODUCT_CORE_READY.md").read_text()
