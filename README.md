@@ -239,6 +239,23 @@ private to company + actor + store.
 The routes are `/api/v1/chat/*`, with Product auth only. See
 [`docs/EMPLOYEE_CHAT.md`](docs/EMPLOYEE_CHAT.md). This is not Customer Chat.
 
+### Product API
+
+The developer reference for the Agento Product API is
+[`docs/API_REFERENCE.md`](docs/API_REFERENCE.md). The portable, machine-readable
+integration contract is the Product-only OpenAPI file
+[`docs/openapi/agento-product-api-v1.json`](docs/openapi/agento-product-api-v1.json),
+which you can import into Swagger Editor, Postman or an SDK generator.
+
+- **Generated, not hand-written.** Both are generated from the Product source by
+  `uv run python apps/api/scripts/export_product_openapi.py`. The `--check` mode (and the
+  test suite) fails when they drift from the code.
+- **Development docs only.** The local `/docs`, `/redoc` and `/openapi.json` pages are
+  development conveniences and describe the whole process, including AgentOS.
+- **AgentOS is excluded.** The internal AgentOS runtime routes (protected by
+  `OS_SECURITY_KEY`) and the Web app's `/api/product/*` BFF routes are not part of the
+  Product API contract.
+
 ## 2. High-level architecture
 
 ```
