@@ -180,3 +180,36 @@ stable reasons only, never a URL, host, endpoint, identifier or secret. The Over
 read set is unchanged: it only links to System. The Web container health check uses the
 separate public, minimal BFF route `/api/product/health/ready`, which needs no Product
 API key.
+
+## Ask Agento (Task 042)
+
+The shell has a global **Ask Agento** button, in the sidebar and in the mobile top bar, on
+every page. It opens `components/chat/ChatDrawer.tsx`: a right-side drawer on desktop and
+a full-screen dialog below 860 px. Escape closes it.
+
+The drawer contains the Operations Agent identity, the store context, **New chat**,
+recent chats, the transcript, a composer and ticket proposal cards. It uses the same
+in-memory session and its Store UUID. Chat state is keyed by the **operations epoch**, so
+a Store change, a key replacement or a disconnect clears the selected thread and the
+transcript.
+
+Rules:
+
+- **No model call** happens on load, open, navigation, listing or thread selection: only
+  sending a message runs the Agent.
+- **Plain text:** answers are plain text (`white-space: pre-wrap`), never Markdown or HTML.
+- **Composer:** at most 8,000 characters. Enter sends and Shift+Enter adds a line. Send is
+  disabled while a turn is in flight.
+- **Proposals:** a proposal card shows the title and description as text, with
+  **Confirm and create ticket** and **Cancel**. The confirmation sends only the proposal
+  id and one `Idempotency-Key`, reused for that proposal's retries. **Ticket created** is
+  shown only for a `verified` ticket status.
+- **BFF routes:** five fixed BFF routes under `/api/product/chat/`. Only the confirmation
+  forwards an `Idempotency-Key`, and a chat message request is capped at 64 KiB.
+- **No streaming:** no WebSocket, SSE or polling, and no storage of any kind.
+
+The browser suite covers Ask Agento on every page, no request without a key, reads only
+on open and selection, Enter / Shift+Enter, plain-text answers, the in-flight guard, the
+explicit confirmation contract, cancellation, the disabled-Agent message, store change
+and disconnect clearing, and the mobile full-screen dialog. Static guards are in
+`tests/web/test_chat_drawer_architecture.py`. See [`EMPLOYEE_CHAT.md`](EMPLOYEE_CHAT.md).

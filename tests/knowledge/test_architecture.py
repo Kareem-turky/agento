@@ -214,9 +214,9 @@ def test_no_new_dependencies() -> None:
 def test_migrations_0001_to_0005_are_unchanged_and_0006_is_the_knowledge_migration() -> None:
     versions = ROOT / "apps/api/migrations/versions"
     names = sorted(p.name for p in versions.glob("*.py"))
-    # Task 036 adds 0007 (approvals) and Task 037 0008 (conversations) on top; 0006
-    # stays the Knowledge migration.
-    assert names[5] == "0006_create_knowledge_context.py" and len(names) == 8
+    # Task 036 adds 0007 (approvals), Task 037 0008 (conversations) and Task 042 0009
+    # (employee chat) on top; 0006 stays the Knowledge migration.
+    assert names[5] == "0006_create_knowledge_context.py" and len(names) == 9
     text = (versions / names[5]).read_text()
     assert 'revision: str = "0006"' in text and 'down_revision: str | None = "0005"' in text
     for word in ("CASCADE", "DROP SCHEMA", "agno_runtime", "write_commands", "audit_events",

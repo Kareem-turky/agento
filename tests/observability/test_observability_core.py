@@ -75,6 +75,8 @@ def test_stable_operation_and_outcome_vocabulary() -> None:
         "conversation.ingest", "conversation.read", "conversation.delivery",
         # Task 039: the Product-authenticated System Status read (label: overall status).
         "system.status",
+        # Task 042: Employee Chat (labels: enums only; never text or ids).
+        "chat.thread", "chat.turn", "chat.ticket_proposal",
     ]  # fmt: skip
     assert [o.value for o in ObservationOutcome] == [
         "completed", "denied", "invalid", "conflict", "not_found", "unavailable", "error",

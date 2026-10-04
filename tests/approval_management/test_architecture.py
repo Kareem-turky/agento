@@ -207,9 +207,9 @@ def test_protected_files_catalogs_knowledge_and_migrations_are_unchanged() -> No
 
 def test_0007_is_on_0006_and_keeps_data_on_downgrade() -> None:
     names = sorted(p.name for p in VERSIONS.glob("*.py"))
-    # Task 037 adds 0008 (conversations) on top of 0007.
+    # Task 037 adds 0008 (conversations) and Task 042 0009 (employee chat) on top of 0007.
     assert names == [*sorted(MIGRATIONS_0001_TO_0006), "0007_create_approvals.py",
-                     "0008_create_conversations.py"]  # fmt: skip
+                     "0008_create_conversations.py", "0009_create_employee_chat.py"]  # fmt: skip
     text = MIGRATION.read_text()
     assert 'revision: str = "0007"' in text and 'down_revision: str | None = "0006"' in text
     downgrade = code(MIGRATION).split("def downgrade")[1]

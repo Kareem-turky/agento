@@ -201,6 +201,56 @@ print("command", data["command_id"], "verified, ticket", data["ticket_id"])'
 command_status
 echo "201 verified, persistence complete; replay 200 with the same ids"
 
+step "Ask Agento (Task 042): a chat analysis, then a proposal confirmed explicitly"
+before="$(write_count)"
+post() { curl -s -w '\n%{http_code}' "${AUTH[@]}" -X POST -H 'Content-Type: application/json' "$@"; }
+created="$(post -d "{\"store_id\":\"$STORE\"}" "$WEB/api/product/chat/threads")"
+[[ "$(tail -n1 <<< "$created")" == 201 ]] || fail "chat thread answered $(tail -n1 <<< "$created")"
+THREAD="$(sed '$d' <<< "$created" | json 'print(data["thread"]["thread_id"])')"
+turn_body() { python3 -c 'import json, sys; print(json.dumps({"thread_id": sys.argv[1], "turn_id": sys.argv[2], "message": sys.argv[3]}))' "$THREAD" "$1" "$2"; }
+TURN="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+analysis="$(post -d "$(turn_body "$TURN" "Analyze operations for $DATE.")" "$WEB/api/product/chat/turns")"
+[[ "$(tail -n1 <<< "$analysis")" == 201 ]] || fail "chat turn answered $(tail -n1 <<< "$analysis")"
+sed '$d' <<< "$analysis" | SUMMARY="$SUMMARY" json '
+import os
+assert data["turn"]["status"] == "completed" and data["proposal"] is None, data
+assert data["turn"]["assistant_text"] == os.environ["SUMMARY"], data["turn"]["assistant_text"]'
+replayed="$(post -d "$(turn_body "$TURN" "Analyze operations for $DATE.")" "$WEB/api/product/chat/turns")"
+[[ "$(tail -n1 <<< "$replayed")" == 200 ]] || fail "chat replay answered $(tail -n1 <<< "$replayed")"
+sed '$d' <<< "$replayed" | json 'assert data["replayed"] is True, data'
+REQUEST='Create an operational ticket titled "Investigate failed shipment" with description "Review the failed shipment found in the demo operations report."'
+proposed="$(post -d "$(turn_body "$(python3 -c 'import uuid; print(uuid.uuid4())')" "$REQUEST")" "$WEB/api/product/chat/turns")"
+[[ "$(tail -n1 <<< "$proposed")" == 201 ]] || fail "chat proposal turn answered $(tail -n1 <<< "$proposed")"
+PROPOSAL="$(sed '$d' <<< "$proposed" | json '
+assert data["turn"]["assistant_text"] == "Ticket prepared. Confirm the action to create it.", data
+p = data["proposal"]
+assert (p["action"], p["state"], p["command_id"]) == ("operations.ticket.create", "proposed", None), p
+assert p["title"] == "Investigate failed shipment", p
+print(p["proposal_id"])')"
+[[ "$(write_count)" == "$before" ]] || fail "a chat turn or proposal wrote a command or audit event"
+[[ "$(post -d "{\"proposal_id\":\"$PROPOSAL\"}" "$WEB/api/product/chat/ticket-proposals/confirm" | tail -n1)" == 400 ]] \
+  || fail "a confirmation without an Idempotency-Key is not 400"
+CONFIRM_KEY="demo-chat-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+confirm() { post -H "Idempotency-Key: $CONFIRM_KEY" -d "{\"proposal_id\":\"$PROPOSAL\"}" \
+  "$WEB/api/product/chat/ticket-proposals/confirm"; }
+confirmed="$(confirm)"
+[[ "$(tail -n1 <<< "$confirmed")" == 201 ]] || fail "chat confirmation answered $(tail -n1 <<< "$confirmed")"
+CHAT_COMMAND="$(sed '$d' <<< "$confirmed" | json '
+t = data["ticket"]
+assert (t["status"], t["replayed"]) == ("verified", False) and t["ticket_id"], t
+assert data["proposal"]["state"] == "submitted" and data["proposal"]["command_id"] == t["command_id"], data
+print(t["command_id"])')"
+again="$(confirm)"
+[[ "$(tail -n1 <<< "$again")" == 200 ]] || fail "chat confirmation replay answered $(tail -n1 <<< "$again")"
+sed '$d' <<< "$again" | CHAT_COMMAND="$CHAT_COMMAND" json '
+import os
+assert data["ticket"]["replayed"] is True and data["ticket"]["command_id"] == os.environ["CHAT_COMMAND"], data'
+curl -sf "${AUTH[@]}" "$WEB/api/product/chat/thread?thread_id=$THREAD" | json '
+assert [t["sequence"] for t in data["turns"]] == [1, 2], data
+assert [p["state"] for p in data["proposals"]] == ["submitted"], data'
+echo "chat analysis = the deterministic summary; replay without a model call; proposal wrote nothing;"
+echo "explicit confirmation 201 verified (command $CHAT_COMMAND); same-key replay 200"
+
 step "./scripts/demo.sh down + up: PostgreSQL kept, the command is still verified"
 "$DEMO" down >/dev/null 2>&1 || fail "demo down failed"
 [[ -z "$(compose ps -q)" ]] || fail "services still running after down"

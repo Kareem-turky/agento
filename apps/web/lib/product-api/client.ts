@@ -7,6 +7,12 @@ import type {
   ApprovalListResponse,
   ApprovalResponse,
   ApprovalWorkflowResumeResponse,
+  ChatCancelResponse,
+  ChatConfirmResponse,
+  ChatThreadDetailResponse,
+  ChatThreadListResponse,
+  ChatThreadResponse,
+  ChatTurnResponse,
   ConversationListResponse,
   ConversationMessagesResponse,
   ConversationResponse,
@@ -87,6 +93,11 @@ const PATHS = {
   conversations: "/api/product/conversations",
   conversation: "/api/product/conversations/conversation",
   conversationMessages: "/api/product/conversations/messages",
+  chatThreads: "/api/product/chat/threads",
+  chatThread: "/api/product/chat/thread",
+  chatTurns: "/api/product/chat/turns",
+  chatConfirm: "/api/product/chat/ticket-proposals/confirm",
+  chatCancel: "/api/product/chat/ticket-proposals/cancel",
 } as const;
 
 type Guard<T> = (value: unknown) => value is T;
@@ -144,9 +155,14 @@ function beginAuthObservation(headers: HeadersInit | undefined): { observer: Aut
   return token === null ? null : { observer, token };
 }
 
-async function send<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
+async function send<T>(
+  path: string,
+  init: RequestInit,
+  guard: Guard<T>,
+  details: readonly string[] = [],
+): Promise<ProductResult<T>> {
   const observation = beginAuthObservation(init.headers);
-  const result = await exchange(path, init, guard);
+  const result = await exchange(path, init, guard, details);
   // Phase two: the outcome is reported for the CAPTURED epoch, never the current one.
   if (observation !== null) {
     observation.observer.complete(observation.token, { ok: result.ok, status: result.status });
@@ -154,7 +170,12 @@ async function send<T>(path: string, init: RequestInit, guard: Guard<T>): Promis
   return result;
 }
 
-async function exchange<T>(path: string, init: RequestInit, guard: Guard<T>): Promise<ProductResult<T>> {
+async function exchange<T>(
+  path: string,
+  init: RequestInit,
+  guard: Guard<T>,
+  details: readonly string[],
+): Promise<ProductResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, { ...init, cache: "no-store", credentials: "omit", redirect: "error" });
@@ -162,8 +183,15 @@ async function exchange<T>(path: string, init: RequestInit, guard: Guard<T>): Pr
     return { ok: false, status: null, error: "unavailable" };
   }
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    return { ok: false, status: response.status, error: classify(response.status) };
+    const failure: ProductResult<T> = { ok: false, status: response.status, error: classify(response.status) };
+    if (details.length === 0) {
+      await response.body?.cancel().catch(() => undefined);
+      return failure;
+    }
+    // Only a FIXED, allowlisted Product detail may pass (never a submitted value).
+    const body: unknown = await response.json().catch(() => null);
+    const detail = isObject(body) && isString(body.detail) && details.includes(body.detail) ? body.detail : undefined;
+    return detail === undefined ? failure : { ...failure, detail };
   }
   let data: unknown;
   try {
@@ -839,6 +867,126 @@ export function listConversationMessages(
   if (beforeSequence !== undefined) query.before_sequence = String(beforeSequence);
   const path = `${PATHS.conversationMessages}?${new URLSearchParams(query).toString()}`;
   return send(path, { method: "GET", headers: authorized(apiKey) }, isConversationMessages);
+}
+
+// ----- Employee Chat (Task 042) -------------------------------------------------------------
+// Explicit functions only. A turn carries a client-generated turn id (a retry of the same
+// message reuses it); a confirmation carries ONLY the proposal id and exactly one
+// Idempotency-Key (never the ticket title, description, action or store).
+
+/** The fixed Employee Chat error details the UI may show (Product constants only). */
+export const CHAT_ERROR_DETAILS = [
+  "Forbidden",
+  "Chat thread not found",
+  "Ticket proposal not found",
+  "Chat turn conflict",
+  "Chat turn in progress",
+  "Operations Agent is disabled",
+  "Ticket proposal was cancelled",
+  "Ticket proposal was already confirmed",
+  "Invalid Idempotency-Key",
+  "Idempotency-Key required",
+  "Idempotency conflict",
+  "Employee chat unavailable",
+] as const;
+
+const TURN_STATUSES = ["pending", "completed", "failed"];
+const PROPOSAL_STATES = ["proposed", "confirming", "submitted", "cancelled"];
+
+const isChatThread = (v: unknown): boolean =>
+  isObject(v) && isString(v.thread_id) && isString(v.store_id) && isString(v.agent_id) &&
+  isString(v.created_at) && isString(v.updated_at);
+
+const isChatTurn = (v: unknown): boolean =>
+  isObject(v) && isString(v.turn_id) && isNumber(v.sequence) && isString(v.user_text) &&
+  isNullableString(v.assistant_text) && isString(v.status) && TURN_STATUSES.includes(v.status) &&
+  isNullableString(v.failure) && isString(v.created_at) && isNullableString(v.completed_at);
+
+const isChatProposal = (v: unknown): boolean =>
+  isObject(v) && isString(v.proposal_id) && isString(v.turn_id) && isString(v.action) &&
+  isString(v.title) && isString(v.description) && isString(v.state) &&
+  PROPOSAL_STATES.includes(v.state) && isNullableString(v.command_id) &&
+  isString(v.created_at) && isString(v.updated_at);
+
+const isChatThreadList: Guard<ChatThreadListResponse> = (v): v is ChatThreadListResponse =>
+  isObject(v) && isString(v.request_id) && Array.isArray(v.threads) && v.threads.every(isChatThread);
+
+const isChatThreadResponse: Guard<ChatThreadResponse> = (v): v is ChatThreadResponse =>
+  isObject(v) && isString(v.request_id) && isChatThread(v.thread);
+
+const isChatThreadDetail: Guard<ChatThreadDetailResponse> = (v): v is ChatThreadDetailResponse =>
+  isObject(v) && isString(v.request_id) && isChatThread(v.thread) && Array.isArray(v.turns) &&
+  v.turns.every(isChatTurn) && Array.isArray(v.proposals) && v.proposals.every(isChatProposal);
+
+const isChatTurnResponse: Guard<ChatTurnResponse> = (v): v is ChatTurnResponse =>
+  isObject(v) && isString(v.request_id) && typeof v.replayed === "boolean" && isChatTurn(v.turn) &&
+  (v.proposal === null || isChatProposal(v.proposal));
+
+const isChatTicket = (v: unknown): boolean =>
+  isObject(v) && isString(v.command_id) && isString(v.status) && isNullableString(v.reason) &&
+  isNullableString(v.ticket_id) && typeof v.replayed === "boolean" &&
+  typeof v.persistence_complete === "boolean";
+
+const isChatConfirm: Guard<ChatConfirmResponse> = (v): v is ChatConfirmResponse =>
+  isObject(v) && isString(v.request_id) && isChatProposal(v.proposal) && isChatTicket(v.ticket);
+
+const isChatCancel: Guard<ChatCancelResponse> = (v): v is ChatCancelResponse =>
+  isObject(v) && isString(v.request_id) && isChatProposal(v.proposal);
+
+const jsonHeaders = (apiKey: string, extra: Record<string, string> = {}): Headers =>
+  authorized(apiKey, { "Content-Type": "application/json", ...extra });
+
+export function listChatThreads(apiKey: string, storeId: string): Promise<ProductResult<ChatThreadListResponse>> {
+  const path = `${PATHS.chatThreads}?${new URLSearchParams({ store_id: storeId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isChatThreadList, CHAT_ERROR_DETAILS);
+}
+
+export function createChatThread(apiKey: string, storeId: string): Promise<ProductResult<ChatThreadResponse>> {
+  return send(
+    PATHS.chatThreads,
+    { method: "POST", headers: jsonHeaders(apiKey), body: JSON.stringify({ store_id: storeId }) },
+    isChatThreadResponse,
+    CHAT_ERROR_DETAILS,
+  );
+}
+
+export function getChatThread(apiKey: string, threadId: string): Promise<ProductResult<ChatThreadDetailResponse>> {
+  const path = `${PATHS.chatThread}?${new URLSearchParams({ thread_id: threadId }).toString()}`;
+  return send(path, { method: "GET", headers: authorized(apiKey) }, isChatThreadDetail, CHAT_ERROR_DETAILS);
+}
+
+export function sendChatTurn(
+  apiKey: string,
+  turn: { threadId: string; turnId: string; message: string },
+): Promise<ProductResult<ChatTurnResponse>> {
+  const body = JSON.stringify({ thread_id: turn.threadId, turn_id: turn.turnId, message: turn.message });
+  return send(PATHS.chatTurns, { method: "POST", headers: jsonHeaders(apiKey), body }, isChatTurnResponse, CHAT_ERROR_DETAILS);
+}
+
+export function confirmTicketProposal(
+  apiKey: string,
+  proposalId: string,
+  idempotencyKey: string,
+): Promise<ProductResult<ChatConfirmResponse>> {
+  return send(
+    PATHS.chatConfirm,
+    {
+      method: "POST",
+      headers: jsonHeaders(apiKey, { "Idempotency-Key": idempotencyKey }),
+      body: JSON.stringify({ proposal_id: proposalId }),
+    },
+    isChatConfirm,
+    CHAT_ERROR_DETAILS,
+  );
+}
+
+export function cancelTicketProposal(apiKey: string, proposalId: string): Promise<ProductResult<ChatCancelResponse>> {
+  return send(
+    PATHS.chatCancel,
+    { method: "POST", headers: jsonHeaders(apiKey), body: JSON.stringify({ proposal_id: proposalId }) },
+    isChatCancel,
+    CHAT_ERROR_DETAILS,
+  );
 }
 
 /** A fresh idempotency key for one ticket intent (UUID v4). */

@@ -169,8 +169,8 @@ grep -q "does not match its checksum" "$WORK/refusal" || fail "unexpected refusa
 
 step "restore into the empty database, then the explicit Product migration"
 "$OPS/restore-into-empty.sh" --project "$PROJECT" --env-file "$ENV_FILE" "$dump"
-[[ "$(psql_value "SELECT version_num FROM product.alembic_version")" == 0008 ]] \
-  || fail "Product schema is not at 0008 after the restore"
+[[ "$(psql_value "SELECT version_num FROM product.alembic_version")" == 0009 ]] \
+  || fail "Product schema is not at 0009 after the restore"
 [[ "$(compose ps --status running --services | tr '\n' ' ')" == "postgres " ]] \
   || fail "the restore started a Product service"
 

@@ -77,6 +77,12 @@ EXPECTED_ROUTES = {
     # Task 039: public minimal readiness (Web container health) and System Status.
     "health/ready/route.ts": {"GET": "healthReady"},
     "system/status/route.ts": {"GET": "systemStatus"},
+    # Task 042: Employee Chat (the confirmation is the only one with an Idempotency-Key).
+    "chat/threads/route.ts": {"GET": "chatThreads", "POST": "chatThreadCreate"},
+    "chat/thread/route.ts": {"GET": "chatThread"},
+    "chat/turns/route.ts": {"GET": "chatTurns", "POST": "chatTurnSubmit"},
+    "chat/ticket-proposals/confirm/route.ts": {"POST": "chatProposalConfirm"},
+    "chat/ticket-proposals/cancel/route.ts": {"POST": "chatProposalCancel"},
 }  # fmt: skip
 # Server-only BFF routes the browser client never calls (Web container health check).
 SERVER_ONLY_ROUTES = {"health/ready/route.ts"}
@@ -132,6 +138,13 @@ UPSTREAM_PATHS = {
     "conversationMessages": ("GET", "/api/v1/conversations/messages"),
     "healthReady": ("GET", "/health/ready"),
     "systemStatus": ("GET", "/api/v1/system/status"),
+    "chatThreads": ("GET", "/api/v1/chat/threads"),
+    "chatThreadCreate": ("POST", "/api/v1/chat/threads"),
+    "chatThread": ("GET", "/api/v1/chat/thread"),
+    "chatTurns": ("GET", "/api/v1/chat/turns"),
+    "chatTurnSubmit": ("POST", "/api/v1/chat/turns"),
+    "chatProposalConfirm": ("POST", "/api/v1/chat/ticket-proposals/confirm"),
+    "chatProposalCancel": ("POST", "/api/v1/chat/ticket-proposals/cancel"),
 }
 
 
@@ -295,6 +308,9 @@ def test_client_exposes_explicit_functions_only() -> None:
                         # Task 037: read-only (no send/reply/ingest function).
                         "listConversations", "getConversation",
                         "listConversationMessages",
+                        # Task 042: Employee Chat (a confirmation sends only the proposal id).
+                        "listChatThreads", "createChatThread", "getChatThread",
+                        "sendChatTurn", "confirmTicketProposal", "cancelTicketProposal",
                         # Task 038: the one session's in-memory auth observer.
                         "observeAuthOutcomes",
                         # Task 039: read-only System Status (system.read).
@@ -677,10 +693,16 @@ def test_workflows_page_is_read_only_inspection() -> None:
 KNOWLEDGE_UI = WEB / "components" / "knowledge"
 
 
-def test_only_knowledge_document_writes_get_the_larger_request_cap() -> None:
+def test_only_knowledge_document_writes_and_chat_turns_get_a_larger_request_cap() -> None:
     larger = sorted(str(p.relative_to(API_ROUTES)) for p in API_ROUTES.rglob("route.ts")
                     if "maxRequestBytes" in code(p))  # fmt: skip
-    assert larger == ["knowledge/document/create/route.ts", "knowledge/document/version/route.ts"]
+    # Task 042: a chat message (at most 8,000 characters) gets MAX_CHAT_REQUEST_BYTES.
+    assert larger == ["chat/turns/route.ts", "knowledge/document/create/route.ts",
+                      "knowledge/document/version/route.ts"]  # fmt: skip
+    turns = code(API_ROUTES / "chat" / "turns" / "route.ts")
+    assert "maxRequestBytes" not in turns.split("export function POST", 1)[0]
+    assert "maxRequestBytes: MAX_CHAT_REQUEST_BYTES" in turns
+    assert "MAX_CHAT_REQUEST_BYTES = 64 * 1024" in code(PROXY)
     version = code(API_ROUTES / "knowledge" / "document" / "version" / "route.ts")
     assert "maxRequestBytes" not in version.split("export function POST", 1)[0]
     # Operating-model publishing is API-first: no BFF route reaches it.

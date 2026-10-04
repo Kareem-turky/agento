@@ -19,13 +19,18 @@ from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 
 from app import __version__
-from app.agent_management.runtime import AgentGatedOperationsRunService
+from app.agent_management.runtime import (
+    AgentGatedOperationsChatRunService,
+    AgentGatedOperationsRunService,
+)
 from app.agent_management.service import AgentManagementService
 from app.approval_management.service import ApprovalService
 from app.auth import build_actor_resolver, validate_credential_separation
 from app.config import Settings, get_settings
 from app.context import ActorResolver, RequestContextMiddleware
 from app.conversations.service import ConversationReadService
+from app.employee_chat.contracts import EmployeeChatRepository, OperationsChatRunService
+from app.employee_chat.service import EmployeeChatService
 from app.integration_management.service import IntegrationManagementService
 from app.knowledge.service import KnowledgeService
 from app.observability import (
@@ -45,6 +50,8 @@ from app.routes.approvals import APPROVALS_PATHS, APPROVALS_SERVICE_STATE_KEY
 from app.routes.approvals import router as approvals_router
 from app.routes.capabilities import CAPABILITIES_PATHS
 from app.routes.capabilities import router as capabilities_router
+from app.routes.chat import CHAT_PATHS, EMPLOYEE_CHAT_SERVICE_STATE_KEY
+from app.routes.chat import router as chat_router
 from app.routes.conversations import CONVERSATIONS_PATHS, CONVERSATIONS_SERVICE_STATE_KEY
 from app.routes.conversations import router as conversations_router
 from app.routes.integrations import INTEGRATIONS_PATHS, INTEGRATIONS_SERVICE_STATE_KEY
@@ -103,6 +110,8 @@ def create_app(
     approval_service: ApprovalService | None = None,
     conversation_service: ConversationReadService | None = None,
     system_probe: DatabaseReadinessProbe | None = None,
+    chat_repository: EmployeeChatRepository | None = None,
+    operations_chat_service: OperationsChatRunService | None = None,
 ) -> FastAPI:
     """``operations_service``, ``operations_ticket_service``,
     ``operations_ticket_query_service`` and ``daily_operations_service`` are composed by
@@ -147,6 +156,11 @@ def create_app(
     ``conversation_service`` is the read-only Product Conversation inspection (Task 037):
     canonical conversations and their transcripts (no ingest, webhook or send route).
     Without one the Conversation routes answer 503.
+    ``chat_repository`` and ``operations_chat_service`` compose Employee Chat (Task 042):
+    the employee's durable chat with the Operations Agent (gated by the same Agent state)
+    whose ticket proposals are confirmed only through ``operations_ticket_service``.
+    Without a repository the Chat routes answer 503; without a runner or ticket service
+    the matching operations answer 503 (nothing falls back).
     ``system_probe`` is the bounded PostgreSQL / Product schema readiness probe (Task 039),
     composed by the caller. ``/health/live`` never uses it; ``/health/ready`` and the
     Product-authenticated ``/api/v1/system/status`` evaluate it FRESH on every call
@@ -199,6 +213,10 @@ def create_app(
         )
         if operations_service is not None:
             operations_service = AgentGatedOperationsRunService(operations_service, agent_service)
+        if operations_chat_service is not None:
+            operations_chat_service = AgentGatedOperationsChatRunService(
+                operations_chat_service, agent_service
+            )
     setattr(app.state, AGENTS_SERVICE_STATE_KEY, agent_service)
     setattr(
         app.state,
@@ -222,6 +240,14 @@ def create_app(
     setattr(app.state, KNOWLEDGE_SERVICE_STATE_KEY, knowledge_service)
     setattr(app.state, APPROVALS_SERVICE_STATE_KEY, approval_service)
     setattr(app.state, CONVERSATIONS_SERVICE_STATE_KEY, conversation_service)
+    setattr(
+        app.state,
+        EMPLOYEE_CHAT_SERVICE_STATE_KEY,
+        EmployeeChatService(
+            chat_repository, operations_chat_service,
+            getattr(app.state, OPERATIONS_TICKET_SERVICE_STATE_KEY), observability=observer,
+        ) if chat_repository is not None else None,
+    )  # fmt: skip
 
     def lifecycle() -> LifecycleSnapshot:
         return LifecycleSnapshot(
@@ -266,6 +292,7 @@ def create_app(
     app.include_router(knowledge_router)
     app.include_router(approvals_router)
     app.include_router(conversations_router)
+    app.include_router(chat_router)
     app.include_router(system_router)
 
     # Excluded from the AgentOS key: the Product-authenticated paths, plus the public
@@ -288,6 +315,7 @@ def create_app(
             *KNOWLEDGE_PATHS,
             *APPROVALS_PATHS,
             *CONVERSATIONS_PATHS,
+            *CHAT_PATHS,
             *SYSTEM_PATHS,
             *PUBLIC_HEALTH_PATHS,
         ),

@@ -353,3 +353,62 @@ select {
   margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
   max-height: 24rem; overflow: auto;
 }
+
+/* ----- Ask Agento: Employee Chat drawer (Task 042) ---------------------------------- */
+
+.ask-agento { align-self: stretch; justify-content: center; }
+.app__mobilebar .ask-agento { align-self: center; }
+
+.chat-layer { position: fixed; inset: 0; z-index: 40; display: flex; justify-content: flex-end; }
+.chat-backdrop { position: absolute; inset: 0; border: 0; padding: 0; background: rgba(15, 27, 45, 0.35); cursor: default; }
+.chat-drawer {
+  position: relative; width: min(30rem, 100%); height: 100%; display: flex; flex-direction: column;
+  gap: 0.75rem; padding: 1rem 1.1rem; background: var(--surface); border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(16, 24, 40, 0.12); overflow: hidden;
+}
+.chat-drawer:focus { outline: none; }
+.chat-drawer__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; }
+.chat-drawer__title { margin: 0; font-size: 1.2rem; }
+.chat-drawer__identity { margin: 0.1rem 0 0; color: var(--text-muted); font-size: 0.85rem; }
+.chat-drawer__store { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.chat-session { display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; flex: 1; }
+.chat-section-title { margin: 0; font-size: 0.9rem; }
+.chat-muted { color: var(--text-muted); font-size: 0.85rem; margin: 0; }
+.chat-threads { display: flex; flex-direction: column; gap: 0.4rem; }
+.chat-threads__header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.chat-threads__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; max-height: 7.5rem; overflow-y: auto; }
+.chat-thread {
+  width: 100%; text-align: left; font: inherit; font-size: 0.85rem; padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); color: var(--text); cursor: pointer;
+}
+.chat-thread--active { border-color: var(--accent); background: var(--pending-bg); }
+.chat-thread:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.chat-transcript {
+  list-style: none; margin: 0; padding: 0.25rem 0; flex: 1; min-height: 6rem; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.6rem;
+}
+.chat-transcript__empty { padding: 0.5rem 0; }
+.chat-msg { display: flex; flex-direction: column; gap: 0.2rem; max-width: 100%; padding: 0.55rem 0.7rem; border-radius: 9px; }
+.chat-msg--user { align-self: flex-end; background: var(--pending-bg); max-width: 88%; }
+.chat-msg--agent { align-self: flex-start; background: var(--surface-muted); border: 1px solid var(--border); width: 100%; }
+.chat-msg__author { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
+/* Plain text only: newlines are kept, nothing is interpreted as Markdown or HTML. */
+.chat-msg__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.chat-proposal { margin-top: 0.5rem; padding: 0.6rem 0.7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 0.3rem; }
+.chat-proposal__header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.chat-proposal__label { margin: 0.2rem 0 0; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
+.chat-proposal__outcome { margin: 0.2rem 0 0; font-size: 0.85rem; }
+.chat-proposal__actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.3rem; }
+
+.chat-composer { display: flex; flex-direction: column; gap: 0.3rem; }
+.chat-composer__input { resize: vertical; min-height: 4.5rem; max-height: 14rem; font: inherit; }
+.chat-composer__footer { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+@media (max-width: 860px) {
+  /* Mobile: a full-screen dialog. */
+  .chat-drawer { width: 100%; border-left: 0; padding: 0.9rem 1rem; }
+  .chat-backdrop { display: none; }
+}

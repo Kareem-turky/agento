@@ -13,11 +13,17 @@ current request (stateless, so concurrent runs cannot interfere):
     report tool result present after the user message
         -> a fixed-format summary of THAT result (the Product workflow calculated every
            figure, finding and recommended action; nothing is computed or invented here)
+    Employee Chat only (the chat-only proposal tool is offered): a user message
+    ``... titled "<title>" with description "<description>"``
+        -> ONE native tool call: propose_operational_ticket(title, description)
+    proposal tool result present after the user message
+        -> "Ticket prepared. Confirm the action to create it." (or the refusal)
     anything else
         -> a fixed usage hint
 
 It never calls any other tool, in particular never ``create_operational_ticket``: the
-Operations analysis surface stays read-only whatever the user asks.
+Operations analysis surface stays read-only whatever the user asks, and in Employee Chat
+a ticket is only PROPOSED (a human confirms it through the Product API).
 """
 
 import json
@@ -32,6 +38,9 @@ from agno.models.response import ModelResponse
 DEMO_MODEL_PROVIDER = "demo"
 DEMO_MODEL_ID = "deterministic-operations-demo"
 REPORT_TOOL = "get_daily_operations_report"
+PROPOSE_TOOL = "propose_operational_ticket"
+TICKET_PREPARED = "Ticket prepared. Confirm the action to create it."
+_TICKET_REQUEST = re.compile(r'titled "([^"]{1,160})" with description "([^"]{1,4000})"')
 _ISO_DATE = re.compile(r"(?<![0-9])([0-9]{4}-[0-9]{2}-[0-9]{2})(?![0-9])")
 
 USAGE_HINT = (
@@ -110,6 +119,17 @@ def summarize_report_result(content: str) -> str:
     return "\n".join(lines)
 
 
+def summarize_proposal_result(content: str) -> str:
+    try:
+        result = json.loads(content)
+    except ValueError:
+        result = None
+    if isinstance(result, dict) and result.get("status") == "proposed":
+        return TICKET_PREPARED
+    reason = result.get("reason") if isinstance(result, dict) else None
+    return f"No ticket was prepared (reason: {reason or 'unknown'})."
+
+
 def demo_response(messages: Any, tools: Any) -> ModelResponse:
     """The deterministic answer for one model request (a pure function of its input)."""
     messages = list(messages or ())
@@ -123,8 +143,27 @@ def demo_response(messages: Any, tools: Any) -> ModelResponse:
             return ModelResponse(
                 role="assistant", content=summarize_report_result(_text(_field(message, "content")))
             )
-    business_date = extract_business_date(_text(_field(messages[last_user], "content")))
-    if business_date is None or REPORT_TOOL not in _tool_names(tools):
+    for message in reversed(messages[last_user + 1 :]):
+        if _field(message, "role") == "tool" and _field(message, "tool_name") == PROPOSE_TOOL:
+            return ModelResponse(
+                role="assistant",
+                content=summarize_proposal_result(_text(_field(message, "content"))),
+            )
+    user_text = _text(_field(messages[last_user], "content"))
+    offered = _tool_names(tools)
+    ticket = _TICKET_REQUEST.search(user_text)
+    if ticket is not None and PROPOSE_TOOL in offered:
+        title, description = ticket.groups()
+        return ModelResponse(role="assistant", tool_calls=[{
+            "id": "demo_call_propose_ticket",
+            "type": "function",
+            "function": {
+                "name": PROPOSE_TOOL,
+                "arguments": json.dumps({"title": title, "description": description}),
+            },
+        }])  # fmt: skip
+    business_date = extract_business_date(user_text)
+    if business_date is None or REPORT_TOOL not in offered:
         return ModelResponse(role="assistant", content=USAGE_HINT)
     call = {
         "id": "demo_call_daily_report",

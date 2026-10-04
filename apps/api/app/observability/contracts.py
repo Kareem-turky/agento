@@ -49,6 +49,10 @@ class ProductOperation(StrEnum):
     CONVERSATION_READ = "conversation.read"
     CONVERSATION_DELIVERY = "conversation.delivery"
     SYSTEM_STATUS = "system.status"
+    # Task 042: Employee Chat (never message, answer, title, description or any id).
+    CHAT_THREAD = "chat.thread"
+    CHAT_TURN = "chat.turn"
+    CHAT_TICKET_PROPOSAL = "chat.ticket_proposal"
 
 
 class ObservationOutcome(StrEnum):
