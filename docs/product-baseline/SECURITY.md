@@ -1,149 +1,79 @@
-# Security
+# Security requirements for Integration 001
 
-> **Status:** Security requirements baseline. This is not a claim that an implementation has passed security review.
+> **Status:** "Existing controls" is `VERIFIED_CURRENT_PRODUCT`. FulFly-specific
+> requirements are `APPROVED_INTEGRATION_DECISION` (principles) and apply to any future
+> adapter. This is not a claim that any FulFly code exists or passed a security review.
 
-## Security objectives
+## Existing controls this integration relies on
 
-- Preserve physical isolation between company deployments.
-- Prevent unauthorised tool use and privilege expansion.
-- Prevent LLM content from bypassing deterministic policy.
-- Protect integration credentials and customer PII.
-- Make externally visible actions attributable and auditable.
-- Detect provider-contract violations and incomplete data.
-- Recover safely without duplicating high-impact actions.
+- Product API key authentication; governance (`GovernanceGate` → policy →
+  `ExecutionCoordinator` → audit) on every business action.
+- Credential values only in `IntegrationSecretStore` (never PostgreSQL, responses, logs,
+  audit or error details); config fields that look like credentials are refused.
+- Secure outbound transport `app/integrations/http/` for reviewed adapters only; Agents,
+  Workflows and models never receive a transport or credentials.
+- Agent and tool output are untrusted; the Operations Agent has a fixed tool set.
+- Canonical models reject unknown fields; adapters raise `IntegrationDataError` instead
+  of guessing.
 
-## Trust boundaries
+## FulFly-specific requirements
 
-Untrusted by default:
+### Credentials and JWT
 
-- User prompts.
-- Customer names, messages, addresses, and notes.
-- FulFly and other provider responses.
-- Webhook payloads.
-- Retrieved documents and websites.
-- Model output.
-- MCP/server tool descriptions and output.
+- `email` and `password` live only in the chosen secret mechanism (gate 5).
+- The JWT is derived from the credentials, cached only short-term in process, never
+  stored as metadata or in a database, never returned, never logged, never audited, and
+  refreshed by re-authentication after an appropriate authentication failure.
+- The `Authorization` header and the `currency` header value are redacted from any
+  diagnostic output.
 
-Trusted only after explicit validation:
+### Untrusted provider data
 
-- Authenticated identity claims.
-- Permission and policy decisions from platform code.
-- Validated configuration.
-- Deterministic workflow calculations.
-- Tool results that pass schema and post-execution verification.
+- Every FulFly field (customer names, notes, product titles, error messages) is
+  untrusted data. Provider text never becomes instructions, tool choices or policy.
+- Provider error text is never forwarded to Product clients or the model.
+- Customer PII (names, phones, addresses) is not mapped into canonical models and must
+  not be logged.
 
-## Threats and controls
+### Honest data
 
-### Prompt injection
+- No fabricated entities: no `Shipment` from order statuses, no inferred SLAs from
+  `deliveredIn`, no zero or default values for missing money, items or timestamps.
+- No completeness claim from page counts (see
+  [workflows/DAILY_OPERATIONS_ANALYSIS.md](workflows/DAILY_OPERATIONS_ANALYSIS.md#pagination-coverage-blocker)).
 
-Controls:
+### No provider writes
 
-- Treat provider/customer text as quoted data, never instructions.
-- Expose only capability-filtered tools.
-- Keep policy enforcement outside model prompts.
-- Never place credentials in model context.
-- Test adversarial strings in product titles, customer names, notes, and knowledge documents.
+FulFly Integration 001 introduces no external/provider write capability. The adapter
+must not call any FulFly write endpoint (order create/cancel, product create, image
+upload, XLSX export). Existing Agento internal/governed ticket and approval capabilities
+remain unchanged.
 
-### Tool abuse
+## Webhook discovery notes
 
-Controls:
+> **Status:** `VERIFIED_PROVIDER_DOC` for FulFly behaviour; ingestion is
+> `PROPOSED_FUTURE` and out of scope.
 
-- Narrow tools with strict schemas.
-- Default-deny permission and agent manifests.
-- Risk classification and approval for writes.
-- Resource ownership checks inside the tool, not only in the UI.
-- Timeouts, bounded retries, and concurrency limits.
+The initial scope is polling / authenticated reads only. Webhook ingestion would be a
+separate reviewed task (the Product has no webhook or ingest route today).
 
-### Credential exposure
+What FulFly documents: one POST about three seconds after a status change, five-second
+timeout, no retry, no notification on creation, `updatedAt` is send time, and **no
+signature, shared secret, event id or replay protection**.
 
-Controls:
+Implications for any future ingestion design:
 
-- Secret manager references in configuration.
-- Redaction in logs, traces, errors, and audits.
-- Short-lived token storage.
-- Separate development and production credentials.
-- Rotation and incident procedure.
+- A webhook body is only an untrusted hint; it must never change state directly.
+- Any state must come from an authenticated re-read of the order.
+- A missed webhook is normal (no retry), so polling remains the source of truth.
+- A public inbound endpoint would also require the reviewed TLS/ingress design that the
+  Product does not have yet.
 
-### Webhook forgery and replay
+## Release minimums before live FulFly data (`PROPOSED_FUTURE`)
 
-FulFly's documented webhook has no signature or event ID. Until stronger authentication is supplied:
-
-- Accept webhook input as an untrusted hint.
-- Validate schema and size.
-- Apply endpoint rate limits.
-- Do not mutate order state solely from the webhook.
-- Re-read the order/history through authenticated API calls.
-- Deduplicate best-effort using order, status, and timestamp.
-- Store minimal raw metadata with retention controls.
-
-### PII leakage
-
-Controls:
-
-- Restrict PII fields to operational access roles.
-- Mask phone numbers in logs and standard reports.
-- Avoid sending PII to models unless the use case explicitly requires it.
-- Set retention and deletion policies before production ingestion.
-- Encrypt data in transit and at rest.
-
-### Incomplete or misleading analytics
-
-Controls:
-
-- Track page coverage and source freshness.
-- Mark partial runs explicitly.
-- Suppress whole-population KPIs when coverage is incomplete.
-- Preserve metric and workflow versions.
-- Require evidence references for anomalies.
-
-## Secrets
-
-Never store:
-
-- Provider passwords or JWTs in Git.
-- Secrets in YAML committed to source control.
-- Secrets in agent memory or knowledge bases.
-- Full authorisation headers in logs or traces.
-- Production payloads in test fixtures.
-
-Production secret access should be scoped to the service that needs it and audited.
-
-## Network controls
-
-- HTTPS for all provider and public API traffic.
-- Database and Redis not exposed publicly.
-- Outbound allowlisting where practical.
-- Separate ingress for API and webhook paths.
-- Request-body limits and timeouts.
-- Administrative endpoints restricted to trusted networks or strong authentication.
-
-## Audit integrity
-
-Audit records should be append-only for application identities. Corrections are new linked records, not silent edits. High-value records should be protected by database permissions, retention controls, and optionally tamper-evident hashing.
-
-## Incident minimums
-
-An incident procedure must cover:
-
-- Credential exposure and rotation.
-- Provider compromise or unexpected payload behaviour.
-- Cross-company data exposure.
-- Unauthorised external action.
-- Prompt-injection success.
-- Audit/logging outage.
-- Corrupted or misleading reports.
-
-## Production security gate
-
-Before live customer data:
-
-- Threat model reviewed.
-- Secrets and redaction verified.
-- Permission and policy tests pass.
-- Prompt-injection suite passes.
-- Dependency and container scans pass at the agreed severity threshold.
-- Backups and restore tested.
-- Logs contain no tokens or unmasked phone numbers.
-- FulFly webhook limitation is accepted and mitigated.
-- No write tool is available in the MVP runtime.
-
+- The implementation gate is closed ([INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md#implementation-gate)).
+- Adapter passes the commerce conformance harness and FulFly contract tests on
+  synthetic fixtures.
+- Log and audit scans show no JWT, password, `Authorization` header or unmasked phone.
+- Prompt-injection strings in provider text fields do not change Agent behaviour.
+- No FulFly write endpoint is reachable from the adapter.

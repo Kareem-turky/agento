@@ -1,38 +1,26 @@
-# Local Development
+# Local development and Integration 001
 
-> **Status:** Supplemental environment expectations. Exact executable commands must be verified against the repository's current manifests.
+> **Status:** `VERIFIED_CURRENT_PRODUCT` for existing facts (from the repository
+> [`README.md`](../../../README.md)); Integration 001 rules are
+> `APPROVED_INTEGRATION_DECISION`.
 
-## Intended services
+## Current local setup (authoritative: the repository README)
 
-- Backend API and worker.
-- Next.js frontend.
-- PostgreSQL with pgvector.
-- Redis.
-- S3-compatible local object storage when report artifacts require it.
-- OpenTelemetry collector or a documented local no-op configuration.
+- `./scripts/demo.sh up` / `down` / `reset` / `credentials` / `status` runs the Product
+  demo against the deterministic `mock` business backend.
+- The root `docker-compose.yml` provides local PostgreSQL (pgvector) and Redis bound to
+  `127.0.0.1`. Redis is not a readiness dependency.
+- The OpenAPI artifact is regenerated and checked with
+  `uv run python apps/api/scripts/export_product_openapi.py` (`--check`).
 
-## Local safety rules
+Use the README for exact commands; this file does not repeat them.
 
-- Use demo fixtures by default.
-- Never connect production credentials from a developer checkout unless an approved diagnostic procedure requires it.
-- Keep local secret files ignored by Git.
-- Bind databases and Redis to local interfaces only.
-- Use clearly labelled development buckets and databases.
-- Disable external write tools.
+## Integration 001 rules for local work
 
-## Expected developer checks
-
-A clean local setup must prove:
-
-1. Services start from documented manifests.
-2. Migrations complete.
-3. Demo data loads.
-4. Backend health succeeds.
-5. Frontend can authenticate against the local backend.
-6. Daily operations analysis completes on demo data.
-7. Report, audit, and metrics records exist.
-8. All automated test suites pass.
-
-## Required future documentation
-
-Reconcile this file with exact prerequisites, setup commands, ports, seed commands, reset procedures, and expected output from a clean machine. Do not document destructive database reset commands without explicit scope and recovery warnings.
+- CI and default local runs make **no** live FulFly calls. Adapter work uses synthetic
+  fixtures with no production PII or credentials.
+- Live FulFly checks are opt-in, manual, and use a dedicated non-production FulFly
+  account when one exists.
+- Never place FulFly credentials or JWTs in the repository, fixtures, screenshots,
+  prompts or logs.
+- No FulFly write endpoint is ever called, locally or otherwise.

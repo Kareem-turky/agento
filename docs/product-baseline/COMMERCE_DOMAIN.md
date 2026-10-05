@@ -1,167 +1,154 @@
-# Commerce Domain
+# FulFly → existing Core mapping analysis
 
-> **Status:** Provider-neutral domain baseline for the read-only MVP.
+> **Status:** mixed. Core model facts are `VERIFIED_CURRENT_PRODUCT` (from
+> `apps/api/app/commerce/domain/` and `apps/api/app/integrations/commerce/`). FulFly
+> field facts are `VERIFIED_PROVIDER_DOC` (from
+> [integrations/FULFLY_CONTRACT.md](integrations/FULFLY_CONTRACT.md)). The mapping as a
+> whole is **incomplete and BLOCKED** for `Order` until gates 1, 2 and 6 of the
+> [implementation gate](INTEGRATION_001_DECISIONS.md#implementation-gate) close.
 
-## Design principles
+## Ground rules
 
-- Domain objects use Agento terminology, not provider response types.
-- Provider IDs are retained as external references.
-- Raw status and raw payload version are retained for traceability.
-- Missing provider data remains missing; it is never inferred by an LLM.
-- Money always carries currency.
-- Timestamps carry timezone or are normalised to UTC.
-- Customer PII is separated from operational reporting fields.
-- A provider field is not promoted to a domain entity without sufficient semantics.
+- The existing canonical domain is the target. Integration 001 introduces **no** new
+  domain model, no new status enum, no new tool, permission, route or persistence.
+- Target types: `Order`, `OrderItem`, `OrderStatus`, `Shipment`, `ShipmentStatus`,
+  `InventoryLevel`, `Warehouse`, `Product`, `Variant`, `Store` (plus `Money` and
+  `ExternalReference`).
+- The business seam is `CommerceIntegration`: `get_store`, `get_order`, `list_orders`,
+  `get_shipment`, `list_shipments`, `get_inventory`, with `OrderQuery` and
+  `ShipmentQuery`. It is read-only.
+- Values are never invented. When a required Core field cannot be produced from
+  provider data, the record cannot be mapped; the adapter raises
+  `IntegrationDataError` ("nothing is coerced or guessed"), it does not fill defaults.
+- Every canonical model is frozen and rejects unknown fields (`extra="forbid"`).
 
-## MVP aggregates
+## Classification legend
 
-### Company
-
-Represents the isolated deployment owner.
-
-Required fields:
-
-- `id`
-- `display_name`
-- `timezone`
-- `default_currency`
-
-### Store
-
-Represents an operational sales source when the provider exposes one. FulFly's documented API does not guarantee a store in read responses, so this relationship is optional in Integration 001.
-
-### CommerceOrder
-
-Provider-neutral order snapshot.
-
-| Field | Meaning |
+| Class | Meaning |
 |---|---|
-| `id` | Internal immutable identifier |
-| `company_id` | Owning company |
-| `provider` | For example `fulfly` |
-| `provider_order_id` | Provider `_id` |
-| `external_reference` | Provider-visible reference such as FulFly `track` |
-| `provider_status` | Exact unmodified provider status |
-| `normalised_status` | Agento status when mapping is approved |
-| `direction` | Forward, exchange, or provider-specific unknown |
-| `created_at` | Provider creation time |
-| `currency` | Currency identifier/code |
-| `net_amount` | Net amount when explicitly provided |
-| `shipping_amount` | Explicit shipping amount |
-| `provider_total_cost` | Provider field retained without redefining its semantics |
-| `payment_status_raw` | Provider payment status |
-| `inventory_hold` | Explicit waiting-for-stock flag |
-| `customer_snapshot` | Restricted PII snapshot |
-| `shipping_region` | Provider region reference |
-| `items` | Order item snapshots |
-| `source_updated_at` | Provider update time when available |
-| `ingested_at` | Agento ingestion time |
-| `raw_contract_version` | Mapping version used |
+| **direct map** | The provider value maps to a Core field without interpretation (parsing and validation only). |
+| **ExternalReference** | Kept only as `ExternalReference(system, external_id)`; never the canonical `id`. |
+| **source status** | Kept verbatim in `source_status`; mapped to the canonical enum separately. |
+| **insufficient** | The provider supplies something, but not enough to satisfy the Core constraint on its own. |
+| **unavailable** | No documented provider source. |
+| **requires core extension decision** | Representing it faithfully would need a generic Core change; not done in Integration 001 without a reviewed decision. |
 
-### OrderItemSnapshot
+## `Order`
 
-Only populate fields present in the provider payload. Typical fields are provider variant/product identifiers, title, code/SKU, quantity, and unit/line price. FulFly's documented order-detail example does not specify all these fields, so the MVP mapper must accept partial items.
+Core constraints (`apps/api/app/commerce/domain/orders.py`):
 
-### OrderStatusEvent
+| Core field | Constraint | FulFly source | Class |
+|---|---|---|---|
+| `id` | `UUID`, Product-owned | `_id` (24-hex) cannot be the id | **requires decision** (gate 2: ID strategy) |
+| `external_refs` | `frozenset[ExternalReference]` | `_id` → `ExternalReference("fulfly", _id)`; `track` → only if its meaning is confirmed | **ExternalReference** (`track`: open, see FULFLY_CONTRACT §12 q8) |
+| `store_id` | `UUID`, required | no store-profile endpoint; `store` on create is attribution only | **requires decision** (gate 2: Store anchoring) |
+| `customer_id` | `UUID \| None` | name/phone only, no customer id documented | **unavailable** → `None`; PII is not mapped into a customer |
+| `status` | `OrderStatus` | `status` | see [Status mapping](#status-mapping) |
+| `source_status` | optional text | `status` verbatim | **source status** |
+| `items` | `tuple[OrderItem, ...]`, **min length 1** | list summaries: none. Detail (`GET /orders/order`): "product snapshots", field schema undocumented | **insufficient** from list; detail **REQUIRES_LIVE_VALIDATION** (gate 6) |
+| `total` | `Money` (exact decimal + 3-letter code) | `totalCost.amount` (summary/detail) + response `currency.name` | **insufficient**: accounting meaning of `totalCost` vs `netPrice`/`totalPayment` unconfirmed; `currency.name` not documented as ISO 4217 |
+| `created_at` | aware datetime | `createdAt` (ISO-8601 with `Z`) | **direct map** when the value carries `Z`/offset; a naive value cannot be mapped (UTC guarantee unconfirmed) |
+| `updated_at` | aware datetime or `None` | not documented on orders | **unavailable** → `None` |
 
-| Field | Meaning |
-|---|---|
-| `provider_event_id` | Provider history-entry ID |
-| `provider_order_id` | Related order |
-| `provider_status` | Exact status |
-| `occurred_at` | Provider `createdAt` |
-| `ingested_at` | Agento ingestion time |
+Additional invariant: every item's `unit_price.currency` must equal `total.currency`.
 
-FulFly returns these events oldest-first.
+### Is `affiliate-orders` sufficient?
 
-### InventorySnapshot
+No. Order summaries from `GET /orders/affiliate-orders` contain no items, and
+`Order.items` requires at least one. A Core-valid `Order` therefore needs
+`GET /orders/order` for **every** order returned by `list_orders`, unless a reviewed
+Core extension decision changes the contract (none is proposed here). Consequences:
+one detail request per order (N+1), the per-order failure policy, and the provider's
+undocumented rate limits all become part of gate 1.
 
-| Field | Meaning |
-|---|---|
-| `provider_variant_id` | Variant ID |
-| `provider_product_id` | Product ID when supplied |
-| `available_quantity` | Explicit provider `availableStock` only |
-| `price` | Explicit variant price with currency |
-| `is_approved` | Provider approval flag |
-| `observed_at` | Ingestion time unless provider supplies a stock timestamp |
+Until item title, quantity, unit price and currency are proven for the chosen role,
+the `Order` mapping is **BLOCKED**.
 
-Absence of a variant is not equivalent to zero inventory.
+## `OrderItem`
 
-### ShippingRegionReference
-
-Represents reference data, not a shipment:
-
-- Provider governorate ID and name.
-- Currency.
-- Shipping cost.
-- Return cost.
-- Expected delivery duration in provider-documented units.
-- Optional area IDs and names.
-
-### AgentRun and ToolCall
-
-Record an agent/workflow invocation and its controlled tool activity. They must include correlation identifiers, caller, timing, status, selected capability, redacted arguments, result metadata, error classification, and verification state.
-
-### AuditLog
-
-Immutable security and business audit event. Audit logs must not contain authentication secrets or unmasked customer PII.
+| Core field | Constraint | FulFly source | Class |
+|---|---|---|---|
+| `id` | `UUID` | item `_id` if present in snapshots (undocumented) | **requires decision** (gate 2) + **REQUIRES_LIVE_VALIDATION** |
+| `variant_id` | `UUID \| None` | variant `_id` if present | optional; mapped only via the ID strategy |
+| `sku` | optional | not documented | **unavailable** → `None` |
+| `title` | non-empty text, required | snapshot title (undocumented) | **REQUIRES_LIVE_VALIDATION** |
+| `quantity` | decimal `> 0`, required | create body uses `number`; snapshot field undocumented | **REQUIRES_LIVE_VALIDATION** |
+| `unit_price` | `Money`, required | snapshot price (undocumented); `priceAdjustmentArray` exists on create | **REQUIRES_LIVE_VALIDATION**; price overrides make "unit price" ambiguous |
+| `external_refs` | | item/variant `_id` | **ExternalReference** |
 
 ## Status mapping
 
-FulFly statuses currently documented:
+> **Status:** rows marked "candidate" are `APPROVED_INTEGRATION_DECISION` only for the
+> principle (raw value preserved, no invented status); exact values remain reviewable.
+> Rows marked "Core decision" are `OPEN_ARCHITECTURE_DECISION`.
 
-```text
-New
-Confirmed
-Waiting
-Printed
-Packed
-Shipped
-Delivered
-Complete
-Return Request
-Returned
-Cancelled
-```
+Only the existing `OrderStatus` values are used: `draft`, `pending`, `confirmed`,
+`processing`, `fulfilled`, `cancelled`, `completed`, `unknown`. The raw FulFly value is
+always kept in `source_status`. Unknown or new raw values map to `unknown` (the daily
+report raises an `order_status_unknown` finding for them).
 
-Recommended initial normalisation:
+| FulFly `status` | `OrderStatus` | Notes |
+|---|---|---|
+| `New` | `pending` (candidate) | Created, not yet confirmed. |
+| `Confirmed` | `confirmed` (candidate) | |
+| `Waiting` | `processing` (candidate) or `unknown` — **Core decision** | Waiting for stock or other hold; `isWaitingForStock` is a separate flag. No "on hold" status exists in the Core, and none is added. |
+| `Printed` | `processing` (candidate) | Fulfilment preparation. |
+| `Packed` | `processing` (candidate) | Fulfilment preparation. Not a shipment. |
+| `Shipped` | `fulfilled` (candidate) or `unknown` — **Core decision** | An order status only. **Never** creates a `Shipment`. Whether "handed to courier" equals Core `fulfilled` must be decided. |
+| `Delivered` | `fulfilled` (candidate) or `unknown` — **Core decision** | An order status only; no `Shipment.delivered_at` is produced. |
+| `Complete` | `completed` (candidate) | Accounting/settlement meaning unconfirmed. |
+| `Return Request` | `unknown` — **Core decision** | No return concept exists in `OrderStatus`; mapping it to `cancelled` or `completed` would misstate it. |
+| `Returned` | `unknown` — **Core decision** | Same. Not a `ShipmentStatus.returned` shipment. |
+| `Cancelled` | `cancelled` (candidate) | |
+| anything else | `unknown` | Raw value preserved. |
 
-| FulFly status | Agento status |
+`draft` has no FulFly counterpart.
+
+## `Store`
+
+| Core field | FulFly source | Class |
+|---|---|---|
+| `id`, `company_id` | none | **requires decision** (gate 2): anchored by Product configuration, never derived from provider data |
+| `name` | none documented for the affiliate account | **unavailable** from provider |
+| `currency` (3-letter) | `currency.name` of responses, if ISO 4217 | **REQUIRES_LIVE_VALIDATION** |
+| `timezone` (IANA) | none; timestamps are `Z` | **unavailable** from provider; Product configuration |
+
+The daily workflow requires `store.company_id` to equal the caller's scope company and
+uses `store.timezone` for the business day. Neither value can come from FulFly.
+
+## `Shipment`
+
+| Core field | FulFly source | Class |
+|---|---|---|
+| all fields | no shipment, courier or tracking API | **unavailable** |
+
+`list_shipments` and `get_shipment` have no FulFly source. Returning an empty tuple
+would assert "no shipments" (false); deriving shipments from order statuses would
+fabricate them. Both are forbidden. See
+[workflows/DAILY_OPERATIONS_ANALYSIS.md](workflows/DAILY_OPERATIONS_ANALYSIS.md#capability-mismatch-shipments).
+
+## `Product`, `Variant`, `InventoryLevel`, `Warehouse`
+
+| Core type | FulFly source | Class |
+|---|---|---|
+| `Product` (`store_id`, `title`, `status`) | no documented product list for all roles | **unavailable** / gate 7 |
+| `Variant` | `all-product-variants` (item schema undocumented) or Seller-only `get-product-variants` (`_id`, `price`, `availableStock`, `isApproved`) | **insufficient**; **REQUIRES_LIVE_VALIDATION** |
+| `InventoryLevel` (`variant_id`, **`warehouse_id`** required, `available`) | `availableStock` (Seller-only) | **insufficient**: no warehouse identity |
+| `Warehouse` | none | **unavailable**; a synthetic warehouse would need a Core extension decision (gate 7) |
+
+## Fields with no Core target
+
+| FulFly field | Treatment |
 |---|---|
-| New | `NEW` |
-| Confirmed | `CONFIRMED` |
-| Waiting | `ON_HOLD` |
-| Printed | `FULFILMENT_PROCESSING` |
-| Packed | `READY_TO_SHIP` |
-| Shipped | `SHIPPED` |
-| Delivered | `DELIVERED` |
-| Complete | `COMPLETED` |
-| Return Request | `RETURN_REQUESTED` |
-| Returned | `RETURNED` |
-| Cancelled | `CANCELLED` |
-
-The raw status remains authoritative. Business owners must approve whether `Delivered` and `Complete` have distinct operational meanings before KPI definitions use one or both as successful delivery.
-
-## Entities intentionally not created in Integration 001
-
-- `Shipment`: no documented shipment resource or tracking-event API.
-- `Courier`: no documented courier API.
-- `Warehouse`: only a warehouse ID appears in a product-write input.
-- `Return`: only order statuses and regional return cost are available.
-- `Refund`: no refund contract.
-- `COD` and `Settlement`: no explicit COD or settlement contract.
-
-These entities remain in the long-term domain but cannot be populated from assumptions.
+| `name`, `phone`, `otherPhone`, address fields | PII; not mapped. The Core `Order` has no such fields. |
+| `direction` (`Forward`/`Exchange`), `exchangeForTrack` | No Core field; not mapped (would require a Core extension decision). |
+| `paymentStatus`, `totalPayment`, `netPrice`, `shippingCost` | No Core field; accounting meaning unconfirmed; not mapped. |
+| `isWaitingForStock` | No Core field; not mapped. |
+| `shipping.govId` | Reference data only; no Core field. |
+| `tickets`, `reminders` (order detail) | FulFly records; unrelated to Agento tickets; not mapped. |
 
 ## Money rules
 
-- Store amount and currency together.
-- Do not add amounts from different currencies.
-- Do not interpret FulFly `totalCost`, `netPrice`, or `totalPayment.aff` beyond their documented names until FulFly confirms their accounting definitions.
-- Preserve raw values for later reconciliation.
-- Decimal arithmetic is required; binary floating-point is not acceptable for financial calculations.
-
-## Data freshness and provenance
-
-Every snapshot used in a report must carry provider, ingestion time, query coverage, and any pagination or partial-failure warning. Reports must not describe stale or partial data as current or complete.
-
+`Money` is an exact `Decimal` with a 3-letter upper-case code; floats are rejected.
+JSON numbers from FulFly must be parsed as decimals without binary rounding. There is
+no exchange-rate logic. `Order.total` is taken as reported, never derived from items.

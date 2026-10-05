@@ -1,106 +1,65 @@
-# Configuration
+# Configuration for Integration 001
 
-> **Status:** Configuration ownership and proposed Integration 001 schema. Exact names must be reconciled with the repository's settings implementation and `.env.example` before adoption.
+> **Status:** "Existing mechanisms" is `VERIFIED_CURRENT_PRODUCT` (from
+> [`../INTEGRATIONS.md`](../INTEGRATIONS.md), `apps/api/app/integration_management/`,
+> `apps/api/app/composition/`). The FulFly connection model is
+> `OPEN_ARCHITECTURE_DECISION` until gate 5 closes. Nothing here is implemented.
 
-## Configuration layers
+## Existing mechanisms (authoritative)
 
-Configuration should be resolved in this order:
+There is no separate `integrations.fulfly` YAML file or company YAML that configures
+providers, and this package does not introduce one. Integration configuration uses the
+existing mechanisms:
 
-1. Safe platform defaults.
-2. Company deployment configuration.
-3. Environment-specific configuration.
-4. Secret references resolved at runtime.
+| Mechanism | What it holds | Where values live |
+|---|---|---|
+| `IntegrationDefinition` | Declared non-secret fields (`text`, `url`, `boolean`) and secret field names | Reviewed Product code |
+| `IntegrationConnection` | One connection's non-secret `config`, `enabled`, last test result, names of configured secret fields | PostgreSQL `product.integration_connections` |
+| `IntegrationSecretStore` | Credential values | `APP_INTEGRATION_SECRETS_DIR` (filesystem store, one file per connection, unencrypted on that volume) |
+| `APP_BUSINESS_BACKEND` + `BusinessBackendRegistry` | Which business backend the Product composes | Deployment configuration; only `mock` is registered |
+| `BusinessBackendInputs` | Startup config/secret inputs declared by a backend registration | `APP_BACKEND_CONFIG_DIR` / `APP_BACKEND_SECRETS_DIR` |
 
-Secrets must never be stored in company YAML, source control, agent prompts, or knowledge files.
+Connections manage lifecycle only and do not change the business backend. Which of the
+last two paths would feed a FulFly business adapter is gate 5.
 
-## Proposed company configuration
+`IntegrationDefinition` refuses a non-secret field whose name looks like a credential
+(`password`, `secret`, `token`, `api_key`, …), so credentials cannot be placed in
+`config` by mistake.
 
-```yaml
-company:
-  id: fulfly
-  display_name: Fulfly
-  timezone: Africa/Cairo
-  default_currency: EGP
+## Proposed FulFly connection model (`OPEN_ARCHITECTURE_DECISION`)
 
-agents:
-  operations:
-    enabled: true
-    mode: read_report_only
+| Field | Kind | Placement | Notes |
+|---|---|---|---|
+| `base_url` | `url` | config | `https://apiv2.fulfly.net/`; HTTPS only |
+| `currency_id` | `text` | config | Opaque FulFly currency id. Not a credential (it is sent in a header on every request, including public endpoints), so it is likely config, not secret. **Verify** with FulFly before treating it as non-sensitive. |
+| `account_role` | `text` | config | Expected FulFly role (Affiliate for the documented order list). Validated by `test_connection`, never trusted as a grant. |
+| `email` | secret | `IntegrationSecretStore` | Never in PostgreSQL, responses, logs or audit. |
+| `password` | secret | `IntegrationSecretStore` | Same. |
 
-integrations:
-  fulfly:
-    enabled: true
-    base_url: https://apiv2.fulfly.net/
-    account_role: affiliate
-    currency_id_secret: secret://fulfly/currency-id
-    email_secret: secret://fulfly/email
-    password_secret: secret://fulfly/password
+### JWT handling (`APPROVED_INTEGRATION_DECISION`)
 
-operations_report:
-  business_day_timezone: Africa/Cairo
-  terminal_statuses:
-    - Complete
-    - Returned
-    - Cancelled
-  anomaly_thresholds:
-    waiting_hours: null
-    packed_hours: null
-    shipped_over_expected_days: null
-```
+The FulFly JWT is runtime-derived state, not configuration:
 
-Thresholds remain `null` until business owners approve their meaning. They must not be invented by the model.
+- derived from the stored credentials by logging in;
+- held only in a short-lived in-process cache (never longer than its 12-hour validity);
+- never stored as connection metadata or in any database;
+- never returned by any route;
+- never logged;
+- never audited;
+- refreshed by re-authenticating after an appropriate authentication failure (for
+  example a `401`), with a bounded number of attempts.
 
-## Configuration categories
+## Not configuration in Integration 001
 
-### Platform
+- **Business thresholds, terminal-status lists and anomaly rules.** The daily report has
+  a fixed, Product-owned rule set; Integration 001 adds no configurable rules.
+- **Status mapping.** Part of the reviewed adapter code, not runtime configuration.
+- **Store timezone and currency.** Come from the `Store` returned by `get_store`; how a
+  FulFly-backed Store is anchored is gate 2.
 
-- Runtime environment.
-- Public API origin.
-- Database, Redis, and object-storage connections.
-- Model-provider selection and approved models.
-- Runtime and model timeouts.
-- Telemetry destinations.
+## Dependencies
 
-### Company
-
-- Stable company identifier and display name.
-- Business timezone and supported currencies.
-- Enabled agents and features.
-- Report schedule and recipients, when scheduling is implemented.
-
-### Permissions and policies
-
-- Role-to-capability assignments.
-- Agent manifests.
-- Risk classification overrides.
-- Approval requirements and expiry.
-
-### Integrations
-
-- Provider base URL.
-- Account role and capability flags.
-- Secret references.
-- Request timeout, retry budget, and concurrency limit.
-- Webhook enablement and verification configuration.
-
-### Business rules
-
-- Status normalisation map.
-- Terminal statuses.
-- Anomaly thresholds.
-- Report coverage and freshness limits.
-
-## Validation rules
-
-- Unknown configuration keys fail validation in production.
-- Required fields fail startup before serving traffic.
-- Secret references are resolved without printing their values.
-- URLs must use HTTPS outside local development.
-- Timezones use IANA names such as `Africa/Cairo`.
-- Thresholds include explicit units.
-- Provider role and currency must be verified during integration health checks.
-- Production cannot start with demo credentials or permissive development policies.
-
-## Reload behaviour
-
-The future implementation must document which settings require restart. Security, permission, integration, or model changes should create an auditable configuration-change event. Silent hot reload is not acceptable for high-impact policy changes.
+- PostgreSQL is the only required data store.
+- Redis is present in the local Compose file but is **not** a readiness dependency, and
+  Integration 001 must not require it.
+- No object storage (S3 or similar) is used or required.

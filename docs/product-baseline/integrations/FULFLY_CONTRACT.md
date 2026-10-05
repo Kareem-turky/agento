@@ -2,7 +2,13 @@
 
 > **Discovery source:** FulFly API Reference at `https://fulfly.net/docs/api-reference-client/integrations-docs.html`  
 > **Reviewed:** 2026-10-05  
-> **Status:** Documentation discovery complete; live credential and response validation not yet performed.
+> **Status:** `VERIFIED_PROVIDER_DOC` unless a line says otherwise. Facts below come from
+> FulFly's published documentation only; nothing was validated against a live account
+> (`REQUIRES_LIVE_VALIDATION` for every behaviour that matters to Agento). Integration 001
+> decisions and Agento mappings are marked separately and live in
+> [`../INTEGRATION_001_DECISIONS.md`](../INTEGRATION_001_DECISIONS.md) and
+> [`../COMMERCE_DOMAIN.md`](../COMMERCE_DOMAIN.md). This document is the provider
+> discovery source; it does not describe Agento behaviour.
 
 ## 1. Connection
 
@@ -47,7 +53,9 @@ Authorization: Bearer <token>
 currency: <currency-id>
 ```
 
-The documentation says the `currency` header is required on every request, including login and public endpoints. Money and stock are expressed in the selected currency.
+The documentation says the `currency` header is required on every request, including login and public endpoints. Monetary amounts (prices, costs, payments) are expressed in the selected currency. Stock quantities are counts, not currency-denominated values; the documentation does not state whether stock visibility itself differs by currency (`REQUIRES_LIVE_VALIDATION`).
+
+The currency id is an opaque FulFly id, not an ISO 4217 code. Responses also carry a `currency` object (for example `{"_id": "...", "name": "EGP"}`); whether `name` is always an ISO 4217 code is not documented (`REQUIRES_LIVE_VALIDATION`).
 
 ## 3. Account types
 
@@ -93,7 +101,7 @@ Body fields:
 
 Response `200`: `{ "_id": "<order-id>", "track": "<8-char-hex>" }`.
 
-This endpoint is excluded from the read-only MVP.
+Integration 001 decision: excluded (no provider writes).
 
 ### `GET /orders/affiliate-orders`
 
@@ -129,7 +137,7 @@ Response `200`:
 }
 ```
 
-No date, status, update, or search filter is documented.
+No date, status, update, or search filter is documented. No cursor, snapshot token, sort order or consistency guarantee across pages is documented either (see section 9).
 
 ### `PUT /orders/cancel-orders`
 
@@ -137,7 +145,7 @@ Roles: Affiliate, Seller, Moderator, Buyer.
 
 Body table documents `ordersIds` required and `label` optional/reserved. The example additionally sends `status: "Cancelled"`, but `status` is missing from the parameter table. Treat this as an unresolved contract inconsistency.
 
-Orders are eligible only in `New`, `Confirmed`, `Waiting`, or `Printed`. The call returns stock and adjusts fulfilment expenses. It is excluded from the MVP.
+Orders are eligible only in `New`, `Confirmed`, `Waiting`, or `Printed`. The call returns stock and adjusts fulfilment expenses. Integration 001 decision: excluded (no provider writes).
 
 ### `POST /orders/export-xlsx`
 
@@ -149,7 +157,7 @@ Roles: Buyer, Affiliate, Seller, Moderator.
 
 Header: `orderId` containing the order `_id`.
 
-Response contains `{order, totalTickets, tickets, reminders}`. Documented order fields include `_id`, `track`, `barcode`, `status`, customer fields, `netPrice`, `shippingCost`, `totalCost`, `paymentStatus`, product snapshots, currency, and `createdAt`. Fields are role-scoped and therefore optional in the adapter contract.
+Response contains `{order, totalTickets, tickets, reminders}`. Documented order fields include `_id`, `track`, `barcode`, `status`, customer fields, `netPrice`, `shippingCost`, `totalCost`, `paymentStatus`, product snapshots, currency, and `createdAt`. Fields are role-scoped and therefore must be treated as optional when parsing. The field-level schema of the product snapshots (title, quantity, unit price) is not fully documented (`REQUIRES_LIVE_VALIDATION`; gate 6 in [`../INTEGRATION_001_DECISIONS.md`](../INTEGRATION_001_DECISIONS.md#implementation-gate)). The `tickets` and `reminders` here are FulFly records, unrelated to Agento operational tickets.
 
 ### `GET /orders/order-status-history`
 
@@ -174,7 +182,7 @@ Events are sorted oldest-first.
 
 | Method and path | Role | Contract |
 |---|---|---|
-| `POST /products/add-product` | Seller | Creates product; excluded from MVP |
+| `POST /products/add-product` | Seller | Creates product; excluded (no provider writes) |
 | `POST /products/add-product-variant` | Seller | Creates hidden/unapproved variant; excluded |
 | `PUT /products/add-variant-images` | Seller | Multipart upload; excluded |
 | `GET /products/all-product-variants` | Affiliate/Seller/Moderator | Returns unpaginated `{variants}`; item schema is undocumented |
@@ -199,11 +207,13 @@ Public, but currency is still required. Optional `subCatId`; otherwise returns a
 
 Authenticated. Returns available governorates with `_id`, `englishName`, `cost`, `returnCost`, and `deliveredIn` for the selected currency.
 
+`deliveredIn` MUST NOT be read as an SLA, a delivery promise or a duration until FulFly confirms its unit and semantics (`REQUIRES_LIVE_VALIDATION`). No Agento metric, finding or threshold may be derived from it before then.
+
 ### `GET /shipping/get-specific-governments-areas`
 
 Authenticated. Header `govId`. Returns area `_id`, `englishName`, government ID, and currency ID.
 
-These endpoints provide shipping reference data, not shipment tracking resources.
+These endpoints provide shipping reference data, not shipment tracking resources. They cannot produce an Agento `Shipment`.
 
 ## 7. Status webhook
 
@@ -258,11 +268,23 @@ No rate-limit contract, `429`, or `Retry-After` behaviour is documented.
 
 Timestamp examples use ISO-8601 with `Z`, but the documentation does not explicitly guarantee UTC for every timestamp or define the business timezone. Agento stores raw timestamps, parses `Z` as UTC, and defines business-day boundaries from company configuration.
 
-Order pagination terminates by accounting against `totalOrders`; page size limits require live verification. Product-specific variants use 1-based pages of 100. Cross-product variants and categories are unpaginated.
+`GET /orders/affiliate-orders` is page-based (1-indexed `page`, `recordsPerPage`) over a live, mutable order set. The documentation defines no snapshot, no stable sort order, no cursor and no filters. Consequences for any consumer:
 
-## 10. Integration 001 allowlist
+- New orders created, or orders changing, while pages are read can shift records between pages, so a record can be **skipped** or **duplicated**.
+- `received_count == totalOrders` therefore does **not** prove completeness: a skip and a duplicate cancel out in the count, and `totalOrders` itself may change between pages.
+- De-duplicating by `_id` removes duplicates but cannot detect skips.
+- A second reconciliation pass reduces risk but does not prove completeness.
 
-Enabled:
+Until FulFly confirms stable ordering and snapshot (or cursor) semantics, any coverage derived from this endpoint is `unverified` / `partial`, never complete (gate 4 in [`../INTEGRATION_001_DECISIONS.md`](../INTEGRATION_001_DECISIONS.md#implementation-gate)). Default and maximum `recordsPerPage` are undocumented (`REQUIRES_LIVE_VALIDATION`).
+
+Product-specific variants use 1-based pages of 100. Cross-product variants and categories are unpaginated.
+
+## 10. Integration 001 candidate read allowlist
+
+> **Status:** `OPEN_ARCHITECTURE_DECISION`. This is the maximum provider surface an
+> adapter could use, not an approved or implemented list. Nothing is enabled anywhere.
+
+Candidate reads:
 
 - `/auth/login`
 - `GET /orders/affiliate-orders`
@@ -272,25 +294,29 @@ Enabled:
 - `GET /shipping/get-specific-governments-areas`
 - `GET /products/all-product-variants` only in a contract-probe environment until its schema is verified
 
-Disabled:
+Never used by Integration 001 (`APPROVED_INTEGRATION_DECISION`):
 
-- All order and product writes.
+- All order and product writes (FulFly Integration 001 introduces no external/provider write capability).
 - XLSX export.
 - Seller stock analytics unless role/product discovery is resolved.
 
 ## 11. Unavailable domain capabilities
 
-The reviewed documentation contains no dedicated APIs for shipments, couriers, warehouses, return records, refunds, COD, or settlements. Agento must not construct those entities from names or implied meaning.
+The reviewed documentation contains no dedicated APIs for shipments, couriers, warehouses, return records, refunds, COD, or settlements. Agento must not construct those entities from names or implied meaning. In particular, an order whose `status` is `Shipped` or `Delivered` is an order status, not a shipment: no Agento `Shipment` may be created from it.
+
+Because Agento's existing daily operations workflow requires shipment reads, FulFly is **not** a drop-in backend for it. See [`../workflows/DAILY_OPERATIONS_ANALYSIS.md`](../workflows/DAILY_OPERATIONS_ANALYSIS.md#capability-mismatch-shipments).
 
 ## 12. Questions requiring FulFly confirmation
+
+> **Status:** `REQUIRES_LIVE_VALIDATION` / provider confirmation.
 
 1. Integration account role and capability flags.
 2. Seller/moderator order-list endpoint, if one exists.
 3. Full schemas for orders, order items, and all visible variants.
-4. Order page-size default and maximum.
+4. Order page-size default and maximum, sort order, and whether paging is stable while orders change (snapshot or cursor semantics).
 5. Timestamp timezone guarantee.
 6. Incremental/date/status filters.
-7. Accounting meaning of cost and payment fields.
+7. Accounting meaning of cost and payment fields, and the unit and meaning of `deliveredIn`.
 8. Whether `track` is an order reference or shipment tracking number.
 9. Rate limits.
 10. Webhook authentication/signature.

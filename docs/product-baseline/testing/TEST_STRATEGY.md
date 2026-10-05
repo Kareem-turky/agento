@@ -1,112 +1,64 @@
-# Test Strategy
+# Test strategy for a future FulFly adapter
 
-> **Status:** Required strategy and MVP acceptance suite.
+> **Status:** `PROPOSED_FUTURE`. Existing test infrastructure named here is
+> `VERIFIED_CURRENT_PRODUCT`. No FulFly test exists, and none is added by this PR.
 
-## Test layers
+## Rules
 
-### Unit tests
+- **No live calls in CI.** All FulFly tests use synthetic fixtures with no production
+  PII or credentials. Live checks are opt-in, manual, and never part of the CI gate.
+- **The Core is the oracle.** Tests assert canonical outputs (`Order`, `OrderItem`,
+  `Money`, `ExternalReference`, contract errors), not provider shapes.
+- **No fabrication.** Tests prove the adapter refuses rather than invents.
 
-- Status mapping.
-- Money and timezone handling.
-- Provider error normalisation.
-- Input validation and redaction.
-- Anomaly rules and severity.
-- Report rendering from deterministic results.
+## 1. Core conformance (existing harness)
 
-### Adapter contract tests
+The adapter must pass the existing `CommerceIntegration` conformance harness
+(`tests/commerce_conformance/`), as the `mock` adapter does
+(`tests/integrations/test_mock_conformance.py`). Where FulFly cannot provide a
+capability (shipments), the expected conformance behaviour depends on gate 3 and must
+be decided before the adapter is written.
 
-- Request method, URL, headers, and body.
-- Authentication and 12-hour token refresh behaviour.
-- Currency header on every FulFly request.
-- Pagination and `totalOrders` accounting.
-- Optional/role-scoped response fields.
-- Multiple error-envelope shapes.
-- Provider contract violations and unknown fields.
+## 2. Provider adapter contract tests
 
-Use recorded synthetic fixtures that contain no production PII or credentials.
+- Request shape: method, path, `Authorization`, `currency` on every request, `page`,
+  `recordsPerPage`, `orderId` headers.
+- Login, JWT reuse within validity, re-authentication after `401`, bounded attempts.
+- Error envelopes: `errArr`/`type`, bare string, `{msg}`, multiple errors; `401`,
+  `404` (login), `422`, `500 Invalid currency` → the right contract error.
+- Mapping: every row of [COMMERCE_DOMAIN.md](../COMMERCE_DOMAIN.md); raw status in
+  `source_status`; unknown statuses → `unknown`; FulFly ids only in `ExternalReference`.
+- Refusal: missing items, missing/ambiguous money, non-ISO currency, naive timestamps
+  and unknown shapes raise `IntegrationDataError`.
+- Identity: the same FulFly record maps to the same UUID across runs; different entity
+  types never collide.
+- Secrets: JWT, password and `Authorization` never appear in logs, errors, audit or
+  model context.
 
-### Integration tests
+## 3. Capability-mismatch tests
 
-- PostgreSQL persistence and migrations.
-- Redis queue/lock behaviour.
-- Report artifact storage.
-- Audit and telemetry emission.
-- Workflow retries and partial-state persistence.
+- `list_shipments` / `get_shipment` never return shipments derived from order statuses
+  (`Shipped`, `Delivered`), and never an empty tuple presented as "no shipments".
+- Whatever gate 3 decides (Option A, Option B or unsupported) is tested end to end
+  through the existing daily report route and the Operations Agent tools.
 
-### Permission and policy tests
+## 4. Mutable-pagination tests
 
-- Allowed user + allowed agent.
-- User denied.
-- Agent manifest denied.
-- Unknown capability denied.
-- Cross-scope provider ID rejected.
-- Policy service failure fails closed.
-- No write tool exposed in MVP.
+Fixtures simulate a live order set changing while pages are read:
 
-### Workflow tests
+- an order inserted at the head during paging (records shift → one skipped, one
+  duplicated, count still equals `totalOrders`);
+- `totalOrders` changing between pages;
+- duplicates across pages;
+- a failed page.
 
-- Empty day.
-- Single and multiple pages.
-- Duplicate orders between pages.
-- Invalid timestamp.
-- Detail/history partial failure.
-- Inventory unavailable.
-- Token expires during run.
-- Invalid currency.
-- Provider timeout and recovery.
-- Stable rerun results.
+Assertions: the adapter never reports complete coverage from count equality; duplicates
+are detected; a failed page is never silently skipped. The exact coverage outcome
+follows the gate 4 decision.
 
-### Agent tests
+## 5. Existing suites stay green
 
-- Numeric values remain identical to deterministic input.
-- Facts and interpretations are separated.
-- Evidence is cited for anomalies.
-- PII is omitted.
-- Missing sources are disclosed.
-- No unsupported root cause is asserted.
-- Prompt injection in every text-bearing provider field is ignored.
-
-### End-to-end tests
-
-From authenticated report request to stored report, audit trail, and metrics. Run first with demo data and then against an approved FulFly sandbox/test account if available.
-
-## FulFly fixture matrix
-
-Include:
-
-- All documented statuses.
-- Role-scoped missing fields.
-- Multiple currencies and invalid currency.
-- `401`, `404`, `422`, and documented `500` envelopes.
-- Bare string and `{msg}` errors.
-- Empty variants response.
-- Oldest-first status history.
-- Webhook duplicate, delayed, invalid, and unverifiable events.
-
-## Security tests
-
-- Secret redaction in logs, errors, traces, audits, and model context.
-- Oversized webhook and API bodies.
-- Malformed IDs and header injection.
-- Prompt injection in customer name, notes, product title, and retrieved knowledge.
-- SSRF protections for configurable URLs.
-- Authentication and authorisation bypass attempts.
-- Dependency and container vulnerability scanning.
-
-## MVP release acceptance
-
-- All unit and integration tests pass.
-- FulFly adapter contract suite passes.
-- Operations workflow produces correct fixture KPIs.
-- Incomplete pagination produces `PARTIAL`, not `COMPLETED`.
-- Inventory failure does not break the order report.
-- No write endpoint is called in any MVP test.
-- Reports contain timezone, freshness, coverage, evidence, and limitations.
-- Logs contain no JWT, password, full authorisation header, or unmasked phone number.
-- Audit events exist for run, policy decisions, tool calls, and final result.
-- Critical security tests pass with no unresolved critical finding.
-
-## Test evidence
-
-CI should preserve test summaries, coverage reports, contract-fixture version, migration checks, security-scan results, and the application image digest used for release.
-
+The Product regression and acceptance suites
+([`../../PRODUCT_REGRESSION_ACCEPTANCE.md`](../../PRODUCT_REGRESSION_ACCEPTANCE.md)) and
+the OpenAPI contract test must keep passing unchanged; Integration 001 changes no
+Product route.

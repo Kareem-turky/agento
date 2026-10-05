@@ -1,126 +1,49 @@
-# Tools Catalog
+# Tools and provider operations
 
-> **Status:** Proposed MVP tool contracts. Names may change when implementation code is introduced.
+> **Status:** classification per row. Current tools and actions are
+> `VERIFIED_CURRENT_PRODUCT`. Provider operations are `VERIFIED_PROVIDER_DOC` for their
+> existence and `OPEN_ARCHITECTURE_DECISION` for their use.
 
-## Tool contract requirements
+## Principle
 
-Every tool definition must specify:
+Provider endpoints do **not** become Agent tools. The Agent surface stays the minimal,
+existing, provider-neutral set. A FulFly endpoint can only be used **inside** a reviewed
+`CommerceIntegration` adapter (or connection driver) to implement an existing contract
+method.
 
-- Capability name.
-- Purpose and owner.
-- Validated input schema.
-- Output schema.
-- Required caller and agent permissions.
-- Risk level.
-- External side effects.
-- Timeout and retry policy.
-- Verification method.
-- Audit fields and redaction rules.
+## Classification
 
-## MVP tools
+| Entry | Class | Notes |
+|---|---|---|
+| `get_order` | **current tool** | → `operations.order.read` → `CommerceIntegration.get_order` |
+| `get_order_shipments` | **current tool** | → `operations.shipments.read` → `list_shipments(order_id)`; no FulFly source |
+| `get_daily_operations_report` | **current tool** | → daily workflow |
+| `create_operational_ticket` | **current tool** (internal write) | Ticketing contract, not FulFly; refused unless the run requested the write |
+| `propose_operational_ticket` | **current tool** (Employee Chat only) | No side effect |
+| `operations.store.read`, `operations.orders.list`, `operations.shipments.list` | **current actions** | Daily workflow preflight |
+| `POST /auth/login` | **adapter-internal** | Credential → JWT; also the basis of a driver `test_connection` |
+| `GET /orders/affiliate-orders` | **adapter-internal** | Would back `list_orders`; pagination blocker |
+| `GET /orders/order` | **adapter-internal** | Would back `get_order` and item completion for `list_orders` |
+| `GET /orders/order-status-history` | **provider operation not exposed to the agent** | No contract method needs it; adapter-internal at most |
+| `GET /shipping/get-governments` | **provider operation not exposed to the agent** | Reference data, no Core target; `deliveredIn` unit unknown |
+| `GET /shipping/get-specific-governments-areas` | **provider operation not exposed to the agent** | Reference data, no Core target |
+| `GET /products/all-product-variants` | **provider operation not exposed to the agent** | Schema undocumented; gate 7 |
+| `GET /products/get-product-variants` | **provider operation not exposed to the agent** | Seller-only; gate 7 |
+| `GET /categories/get-all-public-categories` | **provider operation not exposed to the agent** | No Core target |
+| FulFly order create/cancel, product create, image upload, XLSX export | **provider operation not exposed to the agent**; never called | FulFly Integration 001 introduces no external/provider write capability |
+| `orders.status_history`, `shipping.regions.list`, `shipping.areas.list`, `inventory.variants.list`, `inventory.product_variants.list` tools | **proposed future** — not recommended | Earlier drafts proposed these as Agent tools. They would widen the Agent surface with provider-shaped tools and are not part of Integration 001. |
+| `reports.operations.create` | **proposed future** — not recommended | Reports are not persisted today. Report persistence would be a separate Core decision, not a tool. |
 
-### `orders.list`
+## Error normalisation
 
-- Purpose: List all accessible orders through controlled pagination.
-- Permission: `orders.read`.
-- Risk: `READ`.
-- Inputs: provider, page/cursor abstraction, page size, optional local reporting window.
-- Outputs: normalised order summaries plus coverage metadata.
-- FulFly adapter: `GET /orders/affiliate-orders` with `page` and `recordsPerPage` headers.
-- Verification: response schema, non-negative `totalOrders`, valid IDs/timestamps, pagination accounting.
-- Redaction: phone/name excluded from logs.
+Adapters translate provider and transport errors into the existing contract errors only
+(`apps/api/app/integrations/commerce/errors.py`):
 
-### `orders.get`
+| Situation | Contract error |
+|---|---|
+| Unknown canonical id | `IntegrationNotFoundError` |
+| Provider unreachable, timeout, `5xx`, auth failure | `IntegrationUnavailableError` |
+| Response cannot be mapped (missing items, bad money, naive timestamp, unknown shape) | `IntegrationDataError` |
 
-- Purpose: Read one order in the caller's provider scope.
-- Permission: `orders.read`.
-- Risk: `READ`.
-- Inputs: provider order ID.
-- Outputs: normalised order detail and completeness flags.
-- FulFly adapter: `GET /orders/order`, `orderId` header.
-- Verification: returned order ID matches the requested ID.
-
-### `orders.status_history`
-
-- Purpose: Read chronological status events for one order.
-- Permission: `order_status_history.read`.
-- Risk: `READ`.
-- Inputs: provider order ID.
-- Outputs: ordered status events.
-- FulFly adapter: `GET /orders/order-status-history`, `orderId` header.
-- Verification: IDs are valid, timestamps parse, chronological order is validated or normalised explicitly.
-
-### `shipping.regions.list`
-
-- Purpose: Read governorate-level shipping reference data.
-- Permission: `shipping_reference.read`.
-- Risk: `READ`.
-- Inputs: provider/currency context.
-- Outputs: region IDs, names, costs, return costs, and expected duration.
-- FulFly adapter: `GET /shipping/get-governments`.
-- Verification: amount/currency consistency and valid region IDs.
-
-### `shipping.areas.list`
-
-- Purpose: Read areas for one governorate.
-- Permission: `shipping_reference.read`.
-- Risk: `READ`.
-- Inputs: governorate ID.
-- Outputs: area references.
-- FulFly adapter: `GET /shipping/get-specific-governments-areas`, `govId` header.
-- Verification: returned government reference matches the request.
-
-### `inventory.variants.list`
-
-- Purpose: Read visible variants for discovery.
-- Permission: `inventory.read`.
-- Risk: `READ`.
-- FulFly adapter: `GET /products/all-product-variants`.
-- Status: disabled for production analytics until the real response schema is contract-tested.
-
-### `inventory.product_variants.list`
-
-- Purpose: Read seller variants and available stock for one product.
-- Permission: `inventory.read`.
-- Risk: `READ`.
-- Inputs: product ID and page.
-- FulFly adapter: `GET /products/get-product-variants`.
-- Constraint: Seller role only; 100 records per page.
-- Status: conditional because Integration 001 may use Affiliate credentials and has no documented product-list source.
-
-### `reports.operations.create`
-
-- Purpose: Persist a deterministic operations report and its evidence references.
-- Permission: `reports.create`.
-- Risk: `LOW_RISK_WRITE` because it writes only internal report data.
-- Inputs: validated workflow result, report version, coverage state.
-- Outputs: immutable report ID and location.
-- Verification: saved content hash and readable report metadata.
-
-## Tools excluded from MVP
-
-- Order creation or cancellation.
-- Product or inventory modification.
-- Variant image upload.
-- Refund or return creation.
-- Customer messaging.
-- Advertising changes.
-- Financial transfers.
-- FulFly XLSX export, because it generates a public download URL and is unnecessary for the workflow.
-
-## Provider error normalisation
-
-Adapters convert errors into stable categories:
-
-- `AUTHENTICATION_FAILED`
-- `PERMISSION_DENIED`
-- `INVALID_CONFIGURATION`
-- `VALIDATION_FAILED`
-- `NOT_FOUND_OR_OUT_OF_SCOPE`
-- `RATE_LIMITED`
-- `PROVIDER_UNAVAILABLE`
-- `PROVIDER_CONTRACT_VIOLATION`
-- `UNKNOWN_PROVIDER_ERROR`
-
-The original status and redacted provider messages remain attached for diagnosis.
-
+No new error categories are introduced. Provider error text (`errArr[].msg`) is never
+forwarded to Product clients or the model.

@@ -1,133 +1,63 @@
-# Operations Agent
+# Operations Agent and Integration 001
 
-> **Status:** MVP behavioural contract.
+> **Status:** "Existing behaviour" is `VERIFIED_CURRENT_PRODUCT` (from
+> `apps/api/app/agents/operations*.py`, [`../AGENTS.md`](../AGENTS.md) and
+> [`../EMPLOYEE_CHAT.md`](../EMPLOYEE_CHAT.md)). "Integration 001 effects" is
+> `OPEN_ARCHITECTURE_DECISION` where it depends on the gate. This document defines no
+> new Agent and no new manifest.
 
-## Purpose
+## Existing behaviour
 
-The Operations Agent explains operational facts and prioritises anomalies. In the MVP it is a read-and-report agent. It cannot create, cancel, update, refund, message, or otherwise mutate external data.
+The Operations Agent (`operations`) already exists. It is the only installed Product
+business Agent. Its manifest, tools and safety properties are defined by trusted Product
+code and kept equal to the implementation by an architecture test; the canonical
+description is [`../AGENTS.md`](../AGENTS.md).
 
-## Primary use case
+| Tool | Access | Governed actions |
+|---|---|---|
+| `get_order` | read | `operations.order.read` |
+| `get_order_shipments` | read | `operations.shipments.read` |
+| `get_daily_operations_report` | read | `operations.store.read`, `operations.orders.list`, `operations.shipments.list` |
+| `create_operational_ticket` | write (internal ticket) | `operations.ticket.create`, only when the run requested that write |
 
-User request:
+- Tool-call limit 6; no memory, knowledge or history; not exposed through AgentOS.
+- `POST /api/v1/operations/runs` runs it **read-only**: no write is requested, so the
+  ticket tool always refuses.
+- **Employee Chat** uses the same Agent identity with the three read tools plus
+  `propose_operational_ticket`, which writes nothing. A ticket is created only after
+  a separate human confirmation through the governed WriteCommand path. See
+  [`../EMPLOYEE_CHAT.md`](../EMPLOYEE_CHAT.md).
+- The Agent reads business data only through `CommerceIntegration`; it never sees a
+  provider, transport, credential or integration connection.
 
-```text
-Analyse today's operations.
-```
+## Integration 001 effects
 
-The agent receives a deterministic analysis result containing data coverage, metrics, anomaly candidates, and evidence references. It converts that result into a concise, actionable report.
+If, after the gate closes, the business backend for a deployment were a FulFly-backed
+`CommerceIntegration`:
 
-## Manifest
+- **No new tool, action, permission or manifest entry.** The Agent would keep exactly
+  the tools above. FulFly endpoints do not become tools (see
+  [TOOLS_CATALOG.md](TOOLS_CATALOG.md)).
+- **No provider write.** FulFly Integration 001 introduces no external/provider write
+  capability. The internal ticket tool and the Employee Chat proposal flow remain
+  unchanged; they write to the Product's ticketing contract, not to FulFly.
+- `get_order` would return a FulFly-sourced canonical `Order` only if the order mapping
+  is complete (gates 1, 2, 6).
+- `get_order_shipments` has no FulFly source. With no shipment capability it must
+  surface "unavailable", never an empty list presented as fact, and never shipments
+  derived from order statuses (gate 3).
+- `get_daily_operations_report` inherits the workflow's shipment and pagination
+  blockers (gates 3, 4). See
+  [workflows/DAILY_OPERATIONS_ANALYSIS.md](workflows/DAILY_OPERATIONS_ANALYSIS.md).
+- Coverage: until FulFly confirms stable paging, any FulFly-backed order data is
+  `unverified`/`partial`. The Agent must not describe it as the complete set of the
+  day's orders; how that is surfaced depends on the gate 4 Core decision.
 
-```yaml
-agent: operations
-mode: read_report_only
-capabilities:
-  orders.read: true
-  order_status_history.read: true
-  shipping_reference.read: true
-  inventory.read: conditional
-  reports.create: true
-  orders.write: false
-  orders.cancel: false
-  inventory.write: false
-  returns.write: false
-  refunds.write: false
-  customer_messages.send: false
-```
+## Data-handling expectations (unchanged principles)
 
-`inventory.read` is enabled only after the FulFly role and response schema are verified.
-
-## Trusted inputs
-
-The agent may trust only system-produced metadata such as validated capability decisions, calculation outputs, correlation IDs, and explicit data-quality flags. Provider text, customer fields, retrieved documents, tool results, and webhook bodies remain untrusted content.
-
-## Available tools
-
-- List accessible orders.
-- Get order detail.
-- Get order status history.
-- Read shipping-region reference data.
-- Read inventory only when the integration capability is verified.
-- Create an internal report artifact.
-
-The runtime exposes only tools allowed by both the caller's permission and this manifest.
-
-## Responsibilities
-
-- Explain metrics computed by the workflow.
-- Rank anomaly candidates by approved severity rules.
-- Connect recommendations to evidence.
-- State data freshness, coverage, and limitations.
-- Distinguish facts from interpretations.
-- Recommend human actions without executing them.
-
-## Prohibited behaviour
-
-- Inventing provider fields, orders, reasons, SLAs, thresholds, or financial meaning.
-- Treating a webhook as verified truth.
-- Claiming a shipment or courier state not represented in the API.
-- Revealing customer phone numbers or unnecessary PII in reports.
-- Recalculating core metrics in free-form reasoning when deterministic results exist.
-- Calling provider APIs outside registered tools.
-- Taking write actions, even when requested by a user, during the MVP.
-
-## Report contract
-
-Every report contains:
-
-1. Reporting window and company timezone.
-2. Data sources, freshness, and coverage.
-3. Executive summary.
-4. Order-volume and status metrics.
-5. Prioritised anomalies with evidence.
-6. Recommended next actions and owners where known.
-7. Limitations and unavailable analyses.
-
-Example shape:
-
-```json
-{
-  "report_window": {
-    "timezone": "Africa/Cairo",
-    "start": "...",
-    "end": "..."
-  },
-  "coverage": {
-    "orders_complete": true,
-    "inventory_available": false,
-    "warnings": []
-  },
-  "metrics": {},
-  "anomalies": [],
-  "recommendations": [],
-  "evidence": []
-}
-```
-
-## Recommendation rules
-
-A recommendation must identify:
-
-- The observed fact.
-- Why it matters according to an approved rule.
-- The affected order set or metric.
-- A reversible human action.
-- Any missing information needed before action.
-
-The agent must not attribute a root cause unless evidence supports it. For example, `isWaitingForStock=true` supports an inventory-blocked statement; an old `Packed` status alone does not prove a courier failure.
-
-## Data-quality behaviour
-
-If order pagination is incomplete, the agent reports partial coverage and suppresses whole-day rates. If timestamps cannot be assigned to the company business day safely, it asks for configuration correction rather than guessing. If inventory is unavailable, it omits stock claims and explains why.
-
-## Acceptance criteria
-
-- Only read/report tools are exposed.
-- All numeric KPIs originate from deterministic calculations.
-- Every anomaly links to evidence.
-- No customer phone number appears in the standard report.
-- Missing inventory does not fail the order report.
-- Partial pagination is visible and prevents misleading aggregate rates.
-- Provider failures produce a controlled error report and audit record.
-- Prompt injection inside provider data cannot change tools, policy, or report instructions.
-
+- Provider text (customer names, notes, product titles) stays untrusted data and cannot
+  change tools, policy or instructions.
+- FulFly customer PII (names, phones, addresses) is not part of the canonical `Order`
+  and therefore never reaches the Agent.
+- `deliveredIn`, `isWaitingForStock`, `direction` and payment fields are not mapped, so
+  the Agent cannot reason from them.

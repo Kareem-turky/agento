@@ -1,54 +1,24 @@
-# Getting Started
+# Getting started with this package
 
-> **Status:** Supplemental onboarding checklist. The `Kareem-turky/agento` repository contains application code and manifests, but their exact commands were not independently executed while preparing this document.
+> **Status:** `VERIFIED_CURRENT_PRODUCT` (navigation only).
 
-## What you can do in this workspace
+This package is documentation only. It does not change how the Product is installed or
+run; use the repository [`README.md`](../../README.md) for that (`./scripts/demo.sh up`
+runs the demo against the deterministic `mock` backend).
 
-- Read the approved product and architecture decisions.
-- Review the verified FulFly API discovery.
-- Review the intended MVP workflow and acceptance criteria.
-- Use these documents as implementation contracts.
+Suggested reading order for a reviewer:
 
-Use the repository root README and checked-in manifests as the current authority for installation and startup. This document records the verification standard expected from those instructions.
+1. [README.md](README.md) — scope, status vocabulary, canonical docs.
+2. [INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md) — capability matrix and
+   the implementation gate.
+3. [integrations/FULFLY_CONTRACT.md](integrations/FULFLY_CONTRACT.md) — what FulFly
+   documents.
+4. [COMMERCE_DOMAIN.md](COMMERCE_DOMAIN.md) — field-by-field mapping onto the existing
+   Core models.
+5. [workflows/DAILY_OPERATIONS_ANALYSIS.md](workflows/DAILY_OPERATIONS_ANALYSIS.md) —
+   shipment and pagination blockers.
+6. The remaining documents as needed.
 
-## Required repository artifacts
-
-The implementation repository must provide:
-
-- Python project manifest and lock file.
-- FastAPI application entry point.
-- Next.js project manifest and lock file.
-- Database schema and migration configuration.
-- Dockerfiles and a local compose file.
-- An example environment file containing names only, never secrets.
-- Test commands and fixtures.
-- Seeded demo data for the first read-only workflow.
-
-## Expected onboarding flow
-
-1. Install the documented versions of Docker and the language runtimes.
-2. Copy the example environment file to a local ignored environment file.
-3. Add development-only secrets through the approved secret mechanism.
-4. Start PostgreSQL and Redis.
-5. Run database migrations.
-6. Seed internal demo data.
-7. Start the backend and frontend.
-8. Run unit, integration, policy, and workflow tests.
-9. Execute the daily operations workflow against demo data.
-10. Confirm that the report, audit records, and metrics are created.
-
-## First implementation milestone
-
-Before connecting live FulFly credentials, the system should support the full daily operations workflow using deterministic demo fixtures. This proves domain mapping, policy enforcement, reporting, audit logging, and failure handling without exposing customer data.
-
-## Rules for credentials
-
-- Never commit credentials or access tokens.
-- Never paste secrets into prompts, logs, fixtures, screenshots, or reports.
-- Use distinct development and production credentials.
-- Redact phone numbers and customer identifiers in logs.
-- Rotate a credential immediately if it is accidentally exposed.
-
-## Completion condition for this document
-
-Reconcile this checklist with the repository's exact, tested commands. Every command must be executed successfully from a clean checkout before being marked verified here.
+Before any FulFly code is written, every gate item must be closed and recorded as
+`APPROVED_INTEGRATION_DECISION`. Live FulFly checks are manual and opt-in; never use
+production credentials in a developer checkout or in CI.

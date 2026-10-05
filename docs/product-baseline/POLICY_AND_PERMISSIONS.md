@@ -1,96 +1,67 @@
-# Policy and Permissions
+# Policy and permissions
 
-> **Status:** Approved control model; implementation not yet verified.
+> **Status:** `VERIFIED_CURRENT_PRODUCT` (from `apps/api/app/operations/actions.py`,
+> `apps/api/app/workflows/operations_daily.py`, [`../AGENTS.md`](../AGENTS.md),
+> [`../INTEGRATIONS.md`](../INTEGRATIONS.md), [`../APPROVALS.md`](../APPROVALS.md)) unless
+> a section says otherwise. Integration 001 adds **no** permission and **no** action.
 
-## Decision layers
+## How decisions are made today
 
-An action proceeds only when all layers allow it:
+Every governed action goes through: trusted actor → `GovernanceGate` → policy →
+`ExecutionCoordinator` → verification → audit. Permissions are Product permissions
+granted to a Product API key. Agent manifests are descriptive metadata, not an
+authorization authority. See [`../AGENTS.md`](../AGENTS.md).
 
-1. The authenticated user has the required company capability.
-2. The selected agent manifest allows the capability.
-3. The requested resource belongs to the current company deployment and provider scope.
-4. Inputs pass schema and business validation.
-5. The policy engine allows the action at its classified risk.
-6. Any required approval is valid at execution time.
+## Operations actions (current)
 
-The most restrictive decision wins.
+| Action | Risk | Required permission | Scope | Used by |
+|---|---|---|---|---|
+| `operations.order.read` | `READ` | `orders.read` | store | Agent tool `get_order` |
+| `operations.shipments.read` | `READ` | `shipments.read` | store | Agent tool `get_order_shipments` |
+| `operations.store.read` | `READ` | `stores.read` | store | Daily workflow preflight |
+| `operations.orders.list` | `READ` | `orders.read` | store | Daily workflow preflight |
+| `operations.shipments.list` | `READ` | `shipments.read` | store | Daily workflow preflight |
+| `operations.ticket.create` | `LOW_RISK_WRITE` | `tickets.create` | store | `POST /api/v1/operations/tickets`; Employee Chat confirmation; Agent tool `create_operational_ticket` only when a run requested that write |
 
-## MVP roles
+The daily report (`GET /api/v1/operations/reports/daily`, and the Agent tool
+`get_daily_operations_report`) requires **all** of `operations.store.read`,
+`operations.orders.list` and `operations.shipments.list` to be allowed, i.e. the
+permissions `stores.read`, `orders.read` and `shipments.read`.
 
-The first implementation may begin with:
+There is **no** `operations.report.read`, `operations.report.run`, `reports.create`,
+`order_status_history.read`, `shipping_reference.read`, `inventory.read` or
+`integrations.health.read` permission. Earlier drafts of this package used those
+names; they were never part of the Product.
 
-| Role | Capabilities |
+## Other permissions touched by Integration 001
+
+| Permission | Purpose |
 |---|---|
-| Operations Viewer | Run and read operations reports |
-| Operations Analyst | Viewer capabilities plus order/detail evidence access |
-| Company Admin | Configure users, integrations, and approved thresholds |
-| System Service | Execute scheduled read-only workflows |
+| `integrations.read` | Read the integration catalog and connections |
+| `integrations.manage` | Create, update, replace credentials, test, enable, disable, delete connections |
 
-External provider roles such as FulFly Affiliate or Seller are integration attributes, not Agento user roles.
+Agents have neither; Agent tools cannot reach integration management.
 
-## Operations Agent manifest
+## Provider roles are not Agento roles
 
-```yaml
-orders.read: true
-order_status_history.read: true
-shipping_reference.read: true
-inventory.read: conditional
-reports.create: true
-orders.write: false
-inventory.write: false
-refund.create: false
-customer_messages.send: false
-```
+FulFly account types (Seller, Affiliate, Moderator, Buyer) and FulFly capability flags
+are attributes of the provider credential, not Agento permissions. They decide which
+FulFly endpoints the adapter can call; they never grant anything inside Agento.
 
-## Policy decision record
+## Writes and approvals
 
-Each decision records:
+- FulFly Integration 001 introduces no external/provider write capability.
+- Existing Agento internal/governed ticket and approval capabilities remain unchanged:
+  - `operations.ticket.create` is a governed internal write through the ticketing
+    contract (WriteCommand, `Idempotency-Key`, verification, audit).
+  - Employee Chat can only **propose** that ticket; a separate human confirmation runs
+    the governed WriteCommand path.
+  - A durable approval foundation exists (`requested → approved | rejected | expired |
+    cancelled`, permissions `approvals.read`, `approvals.decide`, `approvals.cancel`).
+    No real business action currently requires an approval.
 
-- Correlation and run IDs.
-- Company, caller, and agent.
-- Capability and resource scope.
-- Policy version.
-- Input classification and risk level.
-- Decision: allow, deny, or approval required.
-- Reason code safe for machine handling.
-- Timestamp and approval reference where relevant.
+## Integration 001 effect
 
-Secrets and unnecessary PII are excluded.
-
-## Approval model
-
-Approval is not needed for the read-only MVP. Future writes use:
-
-```text
-Requested → Approved → Executed → Verified
-          ↘ Rejected
-          ↘ Expired
-          ↘ Cancelled
-```
-
-An approval is bound to exact action type, resource, old value, new value, requester, and expiry. Material argument changes invalidate the approval.
-
-## Default-deny rules
-
-- Unknown capability: deny.
-- Missing manifest entry: deny.
-- Missing company/resource scope: deny.
-- Unvalidated provider identifier: deny.
-- Unavailable policy engine: deny external tool execution.
-- Unknown write risk: classify as high risk and deny pending policy definition.
-- Agent request to expand its own tools: deny.
-
-## Separation of duties
-
-High-risk actions should not be approved by the same identity that requested them. Production integration administration and business-action approval should be separate capabilities even if a small deployment initially assigns both to one named administrator.
-
-## Testing requirements
-
-- Allow and deny cases for every capability.
-- User permission allowed but agent manifest denied.
-- Agent manifest allowed but user permission denied.
-- Cross-company/resource reference rejected.
-- Approval expired or arguments changed.
-- Policy unavailable fails closed.
-- Tool list does not expose denied capabilities to the model.
-
+None on policy. A FulFly adapter, if built, would be reached only through the
+existing actions above. Any new permission or action would be a `PROPOSED_FUTURE`
+Core change and requires its own reviewed task.

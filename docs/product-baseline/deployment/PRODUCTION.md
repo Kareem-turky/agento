@@ -1,75 +1,42 @@
-# Production Deployment
+# Production deployment and Integration 001
 
-> **Status:** Deployment requirements baseline; current repository manifests have not yet been verified against every requirement in this supplemental document.
+> **Status:** "Current deployment" is `VERIFIED_CURRENT_PRODUCT` (from
+> [`../../PRODUCTION_OPERATIONS.md`](../../PRODUCTION_OPERATIONS.md) and
+> [`../../MVP_RELEASE_ACCEPTANCE.md`](../../MVP_RELEASE_ACCEPTANCE.md)). "Integration 001
+> additions" is `PROPOSED_FUTURE`.
 
-## Isolation
+## Current deployment (authoritative: the canonical docs)
 
-Each company receives a dedicated deployment with separate:
+What already exists:
 
-- Application and worker processes.
-- PostgreSQL database.
-- Redis instance or physically isolated service.
-- Object-storage namespace and credentials.
-- Secrets and integration credentials.
-- Knowledge and configuration.
-- Backups and telemetry access.
+- Docker images for the API and Web, and the packaged `deployments/template` Compose
+  installation (PostgreSQL, migrations, API with AgentOS, Web/BFF), non-root and with a
+  read-only root filesystem.
+- `GET /health/live` and `GET /health/ready` (public). Readiness requires the application
+  lifespan, the attached Agent runtime, a reachable PostgreSQL and the expected schema
+  revision; it never depends on the Operations Agent, a model, an integration, a
+  connection test, Redis or telemetry.
+- `GET /api/v1/system/status` (`system.read`).
+- Operator online backup and restore-into-empty tooling, proven by the CI backup/restore
+  drill.
+- Deployment smoke and demo smoke in the Infrastructure CI job, and the Product release
+  and regression gate.
 
-There is no shared multi-company database or central tenant control plane.
+Current limitations that Integration 001 does **not** remove:
 
-## Release requirements
+- There is no reviewed public reverse proxy / TLS ingress design. Only the Web is
+  published, on `127.0.0.1`; the API is never exposed directly.
+- There is no real business backend, so staging and production refuse to start.
 
-- Immutable versioned application image.
-- Pinned Agno and dependency versions.
-- Reproducible build with dependency lock files.
-- Database migration plan and tested backup.
-- Health, readiness, and dependency checks.
-- Resource limits and restart policy.
-- TLS for public ingress.
-- Secret injection at runtime.
-- Centralised redacted logs and metrics.
-- Rollback procedure tested against the release.
+## Integration 001 additions (`PROPOSED_FUTURE`, after the gate)
 
-## Deployment sequence
-
-1. Validate configuration and secret references.
-2. Back up data and verify backup completion.
-3. Apply compatible database migrations.
-4. Deploy backend and workers with write capabilities disabled for the MVP.
-5. Run internal health and integration contract checks.
-6. Deploy frontend.
-7. Run smoke tests using non-sensitive records.
-8. Enable schedules only after manual verification.
-9. Observe error rate, latency, provider failures, and report coverage.
-
-## FulFly controls
-
-- Restrict outbound calls to the documented HTTPS base URL.
-- Store the login JWT only in protected short-lived storage.
-- Configure low concurrency until rate limits are confirmed.
-- Use bounded retry for transient failures.
-- Treat `500 Invalid currency` as configuration failure, not transient server failure.
-- Reconcile webhook notifications through authenticated reads.
-- Never enable documented write endpoints in the Integration 001 tool allowlist.
-
-## Backup and recovery
-
-Define recovery-point and recovery-time objectives before production. Backups must cover PostgreSQL, report artifacts, configuration versions, and required audit data. Redis should not be the sole durable store for workflow or approval state.
-
-Restore must be tested, not inferred from backup success.
-
-## Observability gate
-
-Dashboards and alerts should cover:
-
-- API and workflow success/failure.
-- FulFly latency and error classification.
-- Pagination completeness and partial reports.
-- Token refresh failures.
-- Queue depth and worker health.
-- Model latency, token usage, and cost.
-- Audit-write failures.
-- Unusual webhook volume.
-
-## Rollback
-
-Rollback must account for database compatibility. If a migration is not backward-compatible, release promotion requires a tested forward-fix or restore plan. Never roll back application code blindly across an incompatible schema.
+- Outbound access to the FulFly HTTPS origin only, through `app/integrations/http/`.
+- FulFly credentials only in the chosen secret mechanism (gate 5); never in images,
+  Compose files, Git or logs.
+- Low request concurrency until FulFly documents rate limits; bounded retries for
+  transient failures; `500 Invalid currency` treated as a configuration error, not
+  retried.
+- No inbound endpoint for FulFly (no webhook route; polling/authenticated reads only).
+- Readiness stays independent of FulFly.
+- A FulFly-backed staging/production start requires a reviewed backend registration and
+  its own release acceptance; none exists.
