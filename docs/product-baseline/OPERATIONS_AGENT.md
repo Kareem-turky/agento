@@ -43,9 +43,9 @@ If, after the gate closes, the business backend for a deployment were a FulFly-b
   unchanged; they write to the Product's ticketing contract, not to FulFly.
 - `get_order` would return a FulFly-sourced canonical `Order` only if the order mapping
   is complete (gates 1, 2, 6).
-- `get_order_shipments` has no FulFly source. With no shipment capability it must
-  surface "unavailable", never an empty list presented as fact, and never shipments
-  derived from order statuses (gate 3).
+- `get_order_shipments` has no FulFly source. It must never present an empty list as
+  fact and never return shipments derived from order statuses. The exact generic
+  unsupported-capability behaviour is gate 8; its effect on the daily report is gate 3.
 - `get_daily_operations_report` inherits the workflow's shipment and pagination
   blockers (gates 3, 4). See
   [workflows/DAILY_OPERATIONS_ANALYSIS.md](workflows/DAILY_OPERATIONS_ANALYSIS.md).

@@ -72,8 +72,9 @@ Implications for any future ingestion design:
 ## Release minimums before live FulFly data (`PROPOSED_FUTURE`)
 
 - The implementation gate is closed ([INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md#implementation-gate)).
-- Adapter passes the commerce conformance harness and FulFly contract tests on
-  synthetic fixtures.
+- Gate 8 has produced a generic capability-aware conformance model; the adapter passes
+  every applicable generic check for each capability it advertises, unadvertised
+  capabilities fail closed, and the FulFly contract tests pass on synthetic fixtures.
 - Log and audit scans show no JWT, password, `Authorization` header or unmasked phone.
 - Prompt-injection strings in provider text fields do not change Agent behaviour.
 - No FulFly write endpoint is reachable from the adapter.

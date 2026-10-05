@@ -19,9 +19,10 @@
 | Get order | `GET /orders/order` (`orderId` header) returns order, tickets, reminders; fields are role-scoped; item ("product snapshot") schema not fully documented. | `get_order(UUID) -> Order`; `Order.items` requires ≥ 1 `OrderItem` with `title`, `quantity > 0`, `unit_price: Money`; `total: Money`; aware `created_at`. | `REQUIRES_LIVE_VALIDATION` (gate 6). Mapping is **blocked** until items and money are proven. |
 | Order status | 11 documented values (see [COMMERCE_DOMAIN.md](COMMERCE_DOMAIN.md#status-mapping)). | `OrderStatus`: `draft`, `pending`, `confirmed`, `processing`, `fulfilled`, `cancelled`, `completed`, `unknown`; raw value kept in `source_status`. | Partial mapping `APPROVED_INTEGRATION_DECISION`; ambiguous values `OPEN_ARCHITECTURE_DECISION`. |
 | Order status history | `GET /orders/order-status-history`, oldest-first. | No history method on the contract. | Adapter-internal at most; no Core change in Integration 001. |
-| Shipments | **No shipment, courier or tracking API.** `track` meaning unconfirmed. Shipping endpoints are reference data (governorates, areas). | `get_shipment`, `list_shipments(ShipmentQuery)`; the daily workflow **requires** `operations.shipments.list` and calls `list_shipments`. | `OPEN_ARCHITECTURE_DECISION` (gate 3). Shipments must never be fabricated. |
-| Inventory | `GET /products/all-product-variants` (schema undocumented); `GET /products/get-product-variants` Seller-only, per product, 100/page. | `get_inventory(variant_id, warehouse_id?) -> tuple[InventoryLevel, ...]`; `InventoryLevel` needs `variant_id` and `warehouse_id` UUIDs. The daily report never includes inventory (`coverage.inventory = not_included`). | `OPEN_ARCHITECTURE_DECISION` (gate 7) + `REQUIRES_LIVE_VALIDATION`. |
+| Shipments | **No shipment, courier or tracking API.** `track` meaning unconfirmed. Shipping endpoints are reference data (governorates, areas). | `get_shipment`, `list_shipments(ShipmentQuery)`; the daily workflow **requires** `operations.shipments.list` and calls `list_shipments`. | `OPEN_ARCHITECTURE_DECISION` (gate 3 for the workflow; gate 8 for unsupported-method behaviour). Shipments must never be fabricated. |
+| Inventory | `GET /products/all-product-variants` (schema undocumented); `GET /products/get-product-variants` Seller-only, per product, 100/page. | `get_inventory(variant_id, warehouse_id?) -> tuple[InventoryLevel, ...]`; `InventoryLevel` needs `variant_id` and `warehouse_id` UUIDs. The daily report never includes inventory (`coverage.inventory = not_included`). | `OPEN_ARCHITECTURE_DECISION` (gate 7; gate 8 for unsupported-method behaviour) + `REQUIRES_LIVE_VALIDATION`. |
 | Warehouses | Not documented. | `Warehouse` model; `InventoryLevel.warehouse_id` is required. | Unavailable from FulFly; gate 7. |
+| Commerce conformance | Partial capabilities only, from published docs: orders (list and detail); no shipment API; no warehouse resource; inventory role- and schema-limited and unresolved. | The `CommerceIntegration` Protocol declares all six read methods (`get_store`, `get_order`, `list_orders`, `get_shipment`, `list_shipments`, `get_inventory`). The conformance harness (`tests/commerce_conformance/suite.py`) asserts `descriptor.capabilities == frozenset(IntegrationCapability)` (all of `orders_read`, `shipments_read`, `inventory_read`) and exercises every method, including `get_shipment`, `list_shipments` and `get_inventory`. Its fixture (`tests/commerce_conformance/contract.py`) requires two stores each with an order that has a shipment, shipment ids, an unshipped shipment, a variant with stock in a warehouse. No capability-conditional checks exist. An order-only provider cannot pass it as written. | `OPEN_ARCHITECTURE_DECISION` (gate 8). |
 | Connection lifecycle | `POST /auth/login` (email, password, `currency` header) → JWT (12 h). | `IntegrationDefinition` + `IntegrationConnectionDriver` (`validate_config`, `test_connection`, `aclose`) + `IntegrationSecretStore`. Production catalog is empty. | `OPEN_ARCHITECTURE_DECISION` (gate 5) for credential source and role. |
 | Business backend selection | n/a | `APP_BUSINESS_BACKEND` → `BusinessBackendRegistry` (allowlist is `{"mock"}`; inputs via `BusinessBackendInputs`). Connections do not change the business backend. | `OPEN_ARCHITECTURE_DECISION` (gate 5). |
 | Outbound HTTP | HTTPS JSON; custom headers (`currency`, `page`, `recordsPerPage`, `orderId`, `govId`). | `app/integrations/http/` (`IntegrationHttpTransport`, `IntegrationHttpPolicy`), not wired to any provider. | `VERIFIED_CURRENT_PRODUCT`; use is a future implementation detail. |
@@ -31,8 +32,8 @@
 ## Implementation gate
 
 Coding of any FulFly adapter, driver, registration or workflow change **must not start**
-until all seven decisions below are closed, reviewed and recorded here with the label
-`APPROVED_INTEGRATION_DECISION`. All seven are currently `OPEN_ARCHITECTURE_DECISION`.
+until all eight decisions below are closed, reviewed and recorded here with the label
+`APPROVED_INTEGRATION_DECISION`. All eight are currently `OPEN_ARCHITECTURE_DECISION`.
 
 1. **Order completeness.** Can every `Order` field the Core requires be produced for
    every order without inventing values? This includes whether `GET /orders/order` is
@@ -60,4 +61,50 @@ until all seven decisions below are closed, reviewed and recorded here with the 
    chosen role, plus page-size limits and timestamp timezone.
 7. **Inventory usability.** Whether any FulFly inventory read can satisfy
    `InventoryLevel` (variant and warehouse identity) for the chosen role, or whether
-   inventory stays out of scope for Integration 001.
+   inventory stays out of scope for Integration 001. FulFly must not advertise
+   `inventory_read` unless it can satisfy the canonical `InventoryLevel` contract (and,
+   per gate 8, every applicable generic conformance check for it).
+8. **Capability-aware `CommerceIntegration` conformance.** Gate 8 is the generic
+   contract/testing decision; gate 3 remains the Workflow/shipment decision and gate 7
+   remains the inventory decision.
+
+   *Current facts* (`VERIFIED_CURRENT_PRODUCT`): the Protocol has all six read methods
+   and no notion of an unsupported method. `IntegrationDescriptor.capabilities` already
+   distinguishes `orders_read`, `shipments_read` and `inventory_read`, but the
+   conformance harness requires all three (`descriptor.capabilities ==
+   READ_CAPABILITIES`), runs every shipment and inventory check unconditionally, and
+   needs full shipment, variant, warehouse and stock fixtures. A partial-capability
+   provider such as FulFly therefore cannot pass it as currently written, and no adapter
+   may claim conformance by advertising a capability it cannot satisfy.
+
+   Before any partial-capability provider is implemented, the Product must decide a
+   provider-agnostic model that answers at least:
+
+   1. **Harness scope.** Whether `tests/commerce_conformance/` becomes capability-aware,
+      running each group of checks only for capabilities the adapter's
+      `IntegrationDescriptor.capabilities` advertises, with fixtures that are required
+      only for advertised capabilities. No provider-specific branches in the harness.
+   2. **Unadvertised methods.** What an implementation must do when a Protocol method's
+      capability is not advertised (for example `get_shipment` and `list_shipments`
+      without `shipments_read`). The behaviour must be explicit and generic. Returning an
+      empty tuple is **not** an acceptable default: it is a successful read with zero
+      entities and would falsely assert "there are no shipments".
+   3. **Error semantics.** Whether an existing contract error is semantically correct for
+      "capability not supported" — today's `IntegrationUnavailableError` means the system
+      could not be reached or failed to respond, `IntegrationNotFoundError` means an
+      unknown canonical id, `IntegrationDataError` means unmappable data, none of which
+      says "unsupported" — or whether a future generic contract extension is required.
+      This docs-only PR invents no error; it records the question.
+   4. **Proof obligations.** How the generic harness proves both: an advertised
+      capability fully conforms (every applicable existing check passes), and an
+      unadvertised capability fails closed and can never be mistaken for successful empty
+      data.
+   5. **Workflow interaction.** How the result composes with gate 3: the daily workflow
+      preflights `operations.shipments.list` and calls `list_shipments`, so the
+      unsupported-capability behaviour decided here determines what Option A or Option B
+      can rely on, and the current all-capabilities harness stays the baseline for
+      full-capability adapters such as `mock`.
+   6. **Inventory.** The same rules apply to `inventory_read`: it is advertised only when
+      `get_inventory` can satisfy `InventoryLevel` (variant and warehouse identity) and
+      the applicable generic checks; otherwise `get_inventory` follows the unadvertised
+      behaviour from item 2 (see gate 7).

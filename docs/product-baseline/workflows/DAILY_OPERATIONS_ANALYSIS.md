@@ -63,7 +63,9 @@ permission in the Product; earlier drafts of this package used those names in er
   `status == "Shipped"` or `"Delivered"`), and must not return an empty tuple to mean
   "no shipments", because the report would then state `shipments_shipped = 0` as fact.
 - Raising `IntegrationUnavailableError` from `list_shipments` would make every daily
-  report fail (`503`), which is honest but makes the report unusable.
+  report fail (`503`), which is honest but makes the report unusable. Whether that
+  error is even the right signal for "capability not supported" is part of gate 8
+  (generic `CommerceIntegration` conformance).
 
 Two generic options are documented. **Neither is chosen in this PR**; the choice is
 gate 3 of the [implementation gate](../INTEGRATION_001_DECISIONS.md#implementation-gate).

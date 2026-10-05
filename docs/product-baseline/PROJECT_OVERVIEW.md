@@ -66,6 +66,7 @@ webhook. No shipment, warehouse, return or settlement API.
 | No store profile, timezone or Product ids from FulFly | Store anchoring and ID strategy needed | [COMMERCE_DOMAIN.md](COMMERCE_DOMAIN.md#store) |
 | Several FulFly statuses have no faithful `OrderStatus` | Map to `unknown` or decide in Core | [COMMERCE_DOMAIN.md](COMMERCE_DOMAIN.md#status-mapping) |
 | Credentials: business backend inputs vs connection secrets | Credential source must be chosen | [CONFIGURATION.md](CONFIGURATION.md) |
+| Conformance harness assumes a full-capability adapter (all read capabilities, shipment and inventory fixtures) | A partial-capability provider cannot pass it as written; a generic capability-aware model is needed first | [INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md#implementation-gate) (gate 8) |
 
 ## 5. Identity (`OPEN_ARCHITECTURE_DECISION`, gate 2)
 
@@ -85,7 +86,7 @@ collisions across entity types; the provider id is never the canonical identity.
 
 ## 6. Decisions and gate
 
-The capability matrix and the seven-decision implementation gate are in
+The capability matrix and the eight-decision implementation gate are in
 [INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md). No FulFly code may be
 written until the gate is closed.
 

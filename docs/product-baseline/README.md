@@ -41,7 +41,7 @@ says otherwise.
 
 | Document | Content | Dominant status |
 |---|---|---|
-| [INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md) | Capability decision matrix and the implementation gate (7 decisions) | Mixed; gate is `OPEN_ARCHITECTURE_DECISION` |
+| [INTEGRATION_001_DECISIONS.md](INTEGRATION_001_DECISIONS.md) | Capability decision matrix and the eight-decision implementation gate | Mixed; gate is `OPEN_ARCHITECTURE_DECISION` |
 | [integrations/FULFLY_CONTRACT.md](integrations/FULFLY_CONTRACT.md) | Provider discovery from FulFly's published docs | `VERIFIED_PROVIDER_DOC` |
 | [COMMERCE_DOMAIN.md](COMMERCE_DOMAIN.md) | FulFly field → existing Core model mapping analysis | Mixed; mapping is incomplete |
 | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | What Integration 001 is and is not | Mixed |

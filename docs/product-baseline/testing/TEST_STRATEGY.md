@@ -11,13 +11,28 @@
   `Money`, `ExternalReference`, contract errors), not provider shapes.
 - **No fabrication.** Tests prove the adapter refuses rather than invents.
 
-## 1. Core conformance (existing harness)
+## 1. Core conformance (gate 8)
 
-The adapter must pass the existing `CommerceIntegration` conformance harness
-(`tests/commerce_conformance/`), as the `mock` adapter does
-(`tests/integrations/test_mock_conformance.py`). Where FulFly cannot provide a
-capability (shipments), the expected conformance behaviour depends on gate 3 and must
-be decided before the adapter is written.
+Current facts (`VERIFIED_CURRENT_PRODUCT`):
+
+- The existing harness (`tests/commerce_conformance/`) is the canonical
+  **full-capability** baseline. The `mock` adapter passes it
+  (`tests/integrations/test_mock_conformance.py`).
+- As implemented, it requires `descriptor.capabilities` to equal all read capabilities
+  (`orders_read`, `shipments_read`, `inventory_read`), runs every shipment and inventory
+  check unconditionally, and its fixture requires orders with shipments, shipment ids,
+  a variant, a warehouse and stock.
+- An order-only or otherwise partial-capability adapter therefore cannot pass it as
+  written.
+
+Requirements once gate 8 is decided (`OPEN_ARCHITECTURE_DECISION` until then):
+
+- Gate 8 decides the generic, capability-aware conformance model, with no
+  FulFly-specific branches in the harness.
+- Every capability a FulFly adapter advertises must pass all applicable generic checks.
+- Every capability it does not advertise must be tested to fail closed and must never
+  masquerade as successful empty data (for example `list_shipments` returning `()`).
+- The full-capability baseline keeps applying unchanged to full-capability adapters.
 
 ## 2. Provider adapter contract tests
 
@@ -39,8 +54,12 @@ be decided before the adapter is written.
 
 - `list_shipments` / `get_shipment` never return shipments derived from order statuses
   (`Shipped`, `Delivered`), and never an empty tuple presented as "no shipments".
+- The unsupported-method behaviour is whatever gate 8 decides, tested through the
+  generic capability-aware harness.
 - Whatever gate 3 decides (Option A, Option B or unsupported) is tested end to end
   through the existing daily report route and the Operations Agent tools.
+- `inventory_read` is advertised only if `get_inventory` satisfies `InventoryLevel`
+  (gate 7) and the applicable generic checks (gate 8).
 
 ## 4. Mutable-pagination tests
 
